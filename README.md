@@ -6,7 +6,7 @@ determination_. The primary use case is for building a CI system.
 
 ## Project structure
 
-The project is structed as three binaries:
+The project is structured as three binaries:
 
 - `targets` to dump the necessary information from the Buck2 graph.
 - `btd` to take the information and figure out the impacted targets.
