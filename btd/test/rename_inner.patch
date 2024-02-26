@@ -1,0 +1,13 @@
+diff --git a/inner/BUCK.v2 b/inner/BUCK
+rename from inner/BUCK.v2
+rename to inner/BUCK
+--- a/inner/BUCK.v2
++++ b/inner/BUCK
+@@ -3,7 +3,6 @@
+     srcs = glob(["*.txt"]),
+     labels = [
+         "hello",
+-        "world",
+     ],
+     visibility = ["PUBLIC"],
+ )

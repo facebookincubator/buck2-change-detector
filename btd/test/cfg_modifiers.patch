@@ -1,0 +1,11 @@
+diff --git a/inner/PACKAGE b/inner/PACKAGE
+--- a/inner/PACKAGE
++++ b/inner/PACKAGE
+@@ -1,4 +1,6 @@
+-modifiers = []
++modifiers = [
++    "ovr_config//os:linux",
++]
+
+ # This is an isolated repo without access to actual modifier bzl's.
+ # For now, let's use the underlying method to write modifiers.

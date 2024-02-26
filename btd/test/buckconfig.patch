@@ -1,0 +1,9 @@
+diff --git a/.buckconfig b/.buckconfig
+--- a/.buckconfig
++++ b/.buckconfig
+@@ -6,4 +6,4 @@
+ file_watcher = notify
+
+ [random_key]
+-value=1
++value=2

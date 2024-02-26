@@ -1,0 +1,9 @@
+[repositories]
+root = .
+prelude = prelude
+
+[buck2]
+file_watcher = notify
+
+[random_key]
+value=1

@@ -1,0 +1,6 @@
+diff --git a/inner/src1.txt b/inner/src1.txt
+--- a/inner/src1.txt
++++ b/inner/src1.txt
+@@ -1,1 +1,1 @@
+-src1
++src11

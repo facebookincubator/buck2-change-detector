@@ -1,0 +1,26 @@
+[package]
+name = "btd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "btd"
+path = "bin/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = {version = "4.1.4", features = ["derive"]}
+rayon = "1.7.0"
+derive_more = "0.99.3"
+fbinit = { workspace = true }
+glob = "0.3.0"
+itertools = "0.10.5"
+serde = {version = "1.0", features = ["derive"]}
+serde_json = "1.0.66"
+tempfile = "3.1.0"
+thiserror = "1.0.36"
+tracing = "0.1.22"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+td_util = {path = "../td_util"}
+targets = {path = "../targets"}

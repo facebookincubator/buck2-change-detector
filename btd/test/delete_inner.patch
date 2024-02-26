@@ -1,0 +1,14 @@
+diff --git a/inner/BUCK.v2 b/inner/BUCK.v2
+deleted file mode 100644
+--- a/inner/BUCK.v2
++++ /dev/null
+@@ -1,6 +0,0 @@
+-my_rule(
+-    name = "baz",
+-    srcs = glob(["*.txt"]),
+-    labels = [
+-        "hello",
+-        "world",
+-    ],
+-    visibility = ["PUBLIC"],
+-)

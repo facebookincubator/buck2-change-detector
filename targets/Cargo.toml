@@ -1,0 +1,15 @@
+[package]
+name = "targets"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "targets"
+path = "bin/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = {version = "4.1.4", features = ["derive"]}
+fbinit = { workspace = true }
+
+td_util = {path = "../td_util"}

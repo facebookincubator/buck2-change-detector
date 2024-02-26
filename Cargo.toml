@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "btd",
+    "supertd",
+    "targets",
+    "td_util",
+]
+
+[workspace.dependencies]
+fbinit = { git = "https://github.com/facebookexperimental/rust-shed" }
+scuba = { git = "https://github.com/facebookexperimental/rust-shed" }
+
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
