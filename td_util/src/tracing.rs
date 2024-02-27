@@ -33,6 +33,7 @@ pub fn init_tracing() {
             "ranker=debug",
             "scheduler=debug",
             "targets=debug",
+            "verifiable=debug",
             "verifiable_matcher=debug",
             "verse=debug",
         ];
