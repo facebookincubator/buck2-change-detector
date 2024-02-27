@@ -30,6 +30,7 @@ pub fn init_tracing() {
         // Debug log for target determinator packages
         let directives = [
             "btd=debug",
+            "clients=debug",
             "ranker=debug",
             "scheduler=debug",
             "targets=debug",
