@@ -28,7 +28,7 @@ pub fn init_tracing() {
         // Enable info log by default
         env_filter = env_filter.add_directive(LevelFilter::INFO.into());
         // Debug log for target determinator packages
-        let directives = vec![
+        let directives = [
             "btd=debug",
             "ranker=debug",
             "scheduler=debug",
