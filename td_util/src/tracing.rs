@@ -15,6 +15,7 @@ use std::io::stdout;
 use std::io::IsTerminal;
 
 use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
@@ -24,9 +25,10 @@ use tracing_subscriber::Layer;
 pub fn init_tracing() {
     let mut env_filter = EnvFilter::from_default_env();
     if std::env::var_os("RUST_LOG").is_none() {
-        // Enable info log by default, debug log for target determinator packages
+        // Enable info log by default
+        env_filter = env_filter.add_directive(LevelFilter::INFO.into());
+        // Debug log for target determinator packages
         let directives = vec![
-            "info",
             "btd=debug",
             "verifiable_matcher=debug",
             "ranker=debug",
