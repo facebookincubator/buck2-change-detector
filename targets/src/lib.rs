@@ -34,6 +34,10 @@ pub struct Args {
     #[arg(long)]
     dry_run: bool,
 
+    // Isolation directory to use for buck invocations.
+    #[arg(long)]
+    isolation_dir: Option<String>,
+
     /// Arguments passed onwards - typically patterns.
     #[arg(value_name = "ARGS")]
     arguments: Vec<String>,
@@ -58,7 +62,13 @@ pub fn targets_arguments() -> &'static [&'static str] {
 }
 
 pub fn main(args: Args) -> anyhow::Result<()> {
-    run(&args.buck, args.output, args.dry_run, &args.arguments)
+    run(
+        &args.buck,
+        args.output,
+        args.dry_run,
+        args.isolation_dir,
+        &args.arguments,
+    )
 }
 
 /// This function runs the `buck2 targets` command, utilizing various arguments to optimize its behavior for BTD/Citadel.
@@ -69,15 +79,23 @@ pub fn main(args: Args) -> anyhow::Result<()> {
 /// * `buck` - The command to run Buck, typically "buck2".
 /// * `output_file` - Optional path to the file where the output will be written. If not provided, the output is written to stdout.
 /// * `dry_run` - If set to `true`, the command will print the command that would have been executed instead of executing it, without executing it.
+/// * `isolation_dir` - If set, the buck invocation will use this isolation prefix.
 /// * `arguments` - Additional arguments typically provided as patterns to be passed to the `buck2 targets` command.
 pub fn run(
     buck: &str,
     output_file: Option<PathBuf>,
     dry_run: bool,
+    isolation_dir: Option<String>,
     arguments: &[String],
 ) -> anyhow::Result<()> {
     let t = std::time::Instant::now();
     let mut command = Command::new(buck);
+
+    // This is an argument for buck.
+    if let Some(prefix) = isolation_dir {
+        command.args(["--isolation-dir", &prefix]);
+    }
+
     command.args(targets_arguments());
     if let Some(x) = &output_file {
         command.arg("--output");
