@@ -28,7 +28,6 @@ pub fn init_tracing() {
         let directives = vec![
             "info",
             "btd=debug",
-            "citadel=debug",
             "verifiable_matcher=debug",
             "ranker=debug",
             "scheduler=debug",
