@@ -30,10 +30,10 @@ pub fn init_tracing() {
         // Debug log for target determinator packages
         let directives = vec![
             "btd=debug",
-            "verifiable_matcher=debug",
             "ranker=debug",
             "scheduler=debug",
             "targets=debug",
+            "verifiable_matcher=debug",
             "verse=debug",
         ];
         for directive in directives {
