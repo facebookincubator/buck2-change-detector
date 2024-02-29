@@ -8,11 +8,11 @@
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import uuid
-from distutils.dir_util import copy_tree
 from pathlib import Path
 
 import pytest
@@ -54,6 +54,18 @@ def write_file(path, contents):
 def read_file(path):
     with open(path, "r") as file:
         return file.read()
+
+
+def copy_tree(src, dst):
+    if not os.path.exists(dst):
+        os.makedirs(dst)
+    for item in os.listdir(src):
+        s = os.path.join(src, item)
+        d = os.path.join(dst, item)
+        if os.path.isdir(s):
+            copy_tree(s, d)
+        else:
+            shutil.copy2(s, d.removesuffix(".test"))
 
 
 def apply(base, patch):

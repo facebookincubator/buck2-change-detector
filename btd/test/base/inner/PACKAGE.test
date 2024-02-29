@@ -1,0 +1,9 @@
+modifiers = []
+
+# This is an isolated repo without access to actual modifier bzl's.
+# For now, let's use the underlying method to write modifiers.
+write_package_value(
+    # buildifier: disable=positional-args
+    "buck.cfg_modifiers",
+    modifiers,
+)

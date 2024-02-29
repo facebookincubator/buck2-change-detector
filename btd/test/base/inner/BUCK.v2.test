@@ -1,0 +1,9 @@
+my_rule(
+    name = "baz",
+    srcs = glob(["*.txt"]),
+    labels = [
+        "hello",
+        "world",
+    ],
+    visibility = ["PUBLIC"],
+)
