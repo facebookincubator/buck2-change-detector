@@ -61,17 +61,6 @@ choices as to what should be done:
   state, but the error message is different, we consider it the same error. The
   rationale is that error messages are not always 100% deterministic.
 
-## BTD at Meta
-
-BTD is used as part of the target determinator workflow, for selecting which
-tests to run on a diff.
-
-- If you want to understand why target determinator didn't run, see
-  [this wiki page](<https://www.internalfb.com/intern/wiki/Fbcode_CI/FAQ:_Frequently_Asked_Questions/Why_didn't_my_job_build_test_run_on_D_(I'm_sad_trunk_broke)/>).
-- If you want to run BTD approximately how it might have been run on a given
-  commit (e.g. running `hg` and `buck2` for you), try
-  [`run_btd_on_this_commit.sh`](https://www.internalfb.com/code/fbsource/tools/utd/btd/run_btd_on_this_commit.sh).
-
 ## Caching
 
 The output of BTD is deterministic. If you pass both `--base` and `--diff` then
