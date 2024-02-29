@@ -52,8 +52,10 @@ pub enum ScheduleType {
     Landcastle, // Should this be just "land"?
 }
 
-/// Mobile build TDs use schedule_type to decide whether we need to run build for changeset (e.g. diff and landcastle)
-/// See UTD implementation: <https://fburl.com/code/wfps6pag>
-pub fn is_changeset_schedule_type(schedule_type: ScheduleType) -> bool {
-    CHANGESET_SCHEDULE_TYPES.contains(schedule_type.to_string().as_str())
+impl ScheduleType {
+    /// Mobile build TDs use schedule_type to decide whether we need to run build for changeset (e.g. diff and landcastle)
+    /// See UTD implementation: <https://fburl.com/code/wfps6pag>
+    pub fn is_changeset_schedule_type(&self) -> bool {
+        CHANGESET_SCHEDULE_TYPES.contains(self.to_string().as_str())
+    }
 }

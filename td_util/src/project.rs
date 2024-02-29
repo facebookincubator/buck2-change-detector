@@ -28,6 +28,12 @@ pub enum TdProject {
     Xplat,
 }
 
+impl TdProject {
+    pub fn is_mobile(&self) -> bool {
+        matches!(self, Self::Fbandroid | Self::Fbobjc)
+    }
+}
+
 pub fn get_repo_root() -> anyhow::Result<PathBuf> {
     let output = Command::new("hg").arg("root").output()?;
     let stdout = String::from_utf8_lossy(&output.stdout).replace('\n', "");
