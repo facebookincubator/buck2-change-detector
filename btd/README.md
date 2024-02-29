@@ -1,22 +1,22 @@
 # Buck Target Determinator
 
 Given a set of file changes, map that to a set of Buck target changes, including
-recursive dependencies. E.g. if `fbcode/project/file.c` changes, BTD might
-report that `fbcode//project:library` changed directly and
-`fbcode//project:binary` depends on that. BTD requires both the list of changed
-files, and information from Buck about the targets before/after. BTD is
-available as a dotslash binary at `tools/utd/btd/btd` in the repo.
+recursive dependencies. E.g. if `cell/project/file.c` changes, BTD might report
+that `cell//project:library` changed directly and `cell//project:binary` depends
+on that. BTD requires both the list of changed files, and information from Buck
+about the targets before/after. BTD is available as a dotslash binary at
+`tools/utd/btd/btd` in the repo.
 
 As an example:
 
 ```shell
-btd --cells ~/data/cells.json --changes ~/data/changes.txt --base ~/data/fbcode_base.jsonl --diff ~/data/fbcode_diff.jsonl
+btd --cells ~/data/cells.json --changes ~/data/changes.txt --base ~/data/base.jsonl --diff ~/data/diff.jsonl
 ```
 
 Or to have BTD run Buck2 itself:
 
 ```shell
-btd --cells ~/data/cells.json --changes ~/data/changes.txt --base ~/data/fbcode_base.jsonl --universe fbcode//...
+btd --cells ~/data/cells.json --changes ~/data/changes.txt --base ~/data/base.jsonl --universe cell//...
 ```
 
 Where:
@@ -27,12 +27,11 @@ Where:
   repo.
 - `changes.txt` is the output of
   `hg status --rev hash_before::hash_after -amr --root-relative`.
-- `fbcode_base.jsonl` is the output of
-  `supertd targets fbcode//... --output fbcode_base.jsonl` in the base state,
-  before the changes. Pass `--dry-run` to see the `buck2` command that is
-  equivalent to.
-- `fbcode_diff.jsonl` is the output of that above command run on the diff state,
-  after the changes.
+- `base.jsonl` is the output of `supertd targets cell//... --output base.jsonl`
+  in the base state, before the changes. Pass `--dry-run` to see the `buck2`
+  command that is equivalent to.
+- `diff.jsonl` is the output of that above command run on the diff state, after
+  the changes.
 
 BTD reports the list of changed targets at level 0 (immediate impact), and
 increasing levels (dependencies of something in a lower level).
