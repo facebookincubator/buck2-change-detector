@@ -4,8 +4,7 @@ Given a set of file changes, map that to a set of Buck target changes, including
 recursive dependencies. E.g. if `cell/project/file.c` changes, BTD might report
 that `cell//project:library` changed directly and `cell//project:binary` depends
 on that. BTD requires both the list of changed files, and information from Buck
-about the targets before/after. BTD is available as a dotslash binary at
-`tools/utd/btd/btd` in the repo.
+about the targets before/after.
 
 As an example:
 
