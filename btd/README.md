@@ -71,8 +71,11 @@ derived from the inputs you pass. If you omit `--diff`, then BTD will invoke
 The `buck2 targets` command can be cached between revisions if none of the
 following files have changed.
 
-1. `BUCK`, `BUCK.v2`, `TARGETS` or `TARGETS.v2` files.
+1. `BUCK`, `BUCK.v2`, `TARGETS` or `TARGETS.v2` files (or any other files you
+   use with your `buildfile.name` setting).
 2. `PACKAGE` files.
-3. Files with the `.bzl` extension (but can exclude `.td.bzl` files).
+3. Files with the `.bzl` extension (but can exclude non-Buck Starlark files such
+   as `.td.bzl`).
 4. Files with the `.bcfg` and `.buckconfig` extensions.
-5. Files in `**/mode/**` or `**/buckconfigs/**`.
+5. Files in `**/mode/**` or `**/buckconfigs/**`, assuming these might be
+   included into `.buckconfig` files.
