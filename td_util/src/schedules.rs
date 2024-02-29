@@ -59,3 +59,28 @@ impl ScheduleType {
         CHANGESET_SCHEDULE_TYPES.contains(self.to_string().as_str())
     }
 }
+
+#[derive(
+    ValueEnum,
+    Serialize,
+    Deserialize,
+    Default,
+    Debug,
+    Display,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash
+)]
+#[display(style = "snake_case")]
+#[clap(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuousRunMode {
+    #[serde(rename = "aarch64")]
+    Aarch64,
+    #[default]
+    Dev,
+    Opt,
+    OptHourly,
+}
