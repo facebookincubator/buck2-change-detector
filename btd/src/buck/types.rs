@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::string::InternString;
 
-use crate::buck::config::cell_build_file;
+use crate::buck::config::cell_build_files;
 use crate::buck::labels::Labels;
 
 /// Example: `fbcode//buck2:buck2`
@@ -380,12 +380,14 @@ impl CellPath {
         // Until then look at the cell first.
         let contents = self.0.as_str();
         let cell = contents.split_once("//").unwrap().0;
-        let suffix = contents.strip_suffix(".v2").unwrap_or(contents);
-        if let Some(suffix) = suffix.strip_suffix(cell_build_file(cell)) {
-            suffix.ends_with('/')
-        } else {
-            false
+        for build_file in cell_build_files(cell) {
+            if let Some(suffix) = contents.strip_suffix(build_file) {
+                if suffix.ends_with('/') {
+                    return true;
+                }
+            }
         }
+        false
     }
 
     /// ```

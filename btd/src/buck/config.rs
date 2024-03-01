@@ -11,11 +11,11 @@
 
 /// What is the build file for a given cell.
 /// Use `&str` rather than `CellName` since it is cheaper to construct from an existing string.
-pub fn cell_build_file(cell: &str) -> &'static str {
+pub fn cell_build_files(cell: &str) -> &'static [&'static str] {
     if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
-        "TARGETS"
+        &["TARGETS.v2", "TARGETS"]
     } else {
-        "BUCK"
+        &["BUCK.v2", "BUCK"]
     }
 }
 

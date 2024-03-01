@@ -21,7 +21,7 @@ use tempfile::NamedTempFile;
 use tracing::debug;
 
 use crate::buck::cells::CellResolver;
-use crate::buck::config::cell_build_file;
+use crate::buck::config::cell_build_files;
 use crate::buck::types::Package;
 use crate::buck::types::TargetPattern;
 
@@ -110,11 +110,9 @@ impl Buck2 {
         x: &Package,
     ) -> anyhow::Result<bool> {
         let root = self.root()?;
-        let suffix = cell_build_file(x.cell().as_str());
-        let files = [suffix, &format!("{}.v2", suffix)];
-        for file in files {
+        for build_file in cell_build_files(x.cell().as_str()) {
             if root
-                .join(cells.resolve(&x.join_path(file))?.as_str())
+                .join(cells.resolve(&x.join_path(build_file))?.as_str())
                 .exists()
             {
                 return Ok(true);
