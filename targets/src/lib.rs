@@ -9,7 +9,9 @@
 
 // We use a separate lib since doctests in a binary are ignored,
 // and we'd like to use doctests.
+
 #![feature(iter_intersperse)]
+#![forbid(unsafe_code)]
 
 use std::ffi::OsStr;
 use std::ffi::OsString;

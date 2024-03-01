@@ -7,6 +7,8 @@
  * of this source tree.
  */
 
+#![forbid(unsafe_code)]
+
 use td_util::cli::parse_args;
 
 #[fbinit::main]

@@ -9,7 +9,9 @@
 
 // We use a separate lib since doctests in a binary are ignored,
 // and we'd like to use doctests.
+
 #![feature(exit_status_error)]
+#![forbid(unsafe_code)]
 // Things we disagree with
 #![allow(clippy::len_without_is_empty)]
 

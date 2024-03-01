@@ -7,6 +7,8 @@
  * of this source tree.
  */
 
+#![forbid(unsafe_code)]
+
 pub mod cli;
 pub mod json;
 pub mod no_hash;
