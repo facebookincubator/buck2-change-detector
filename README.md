@@ -4,6 +4,28 @@ For a [Buck2 project](https://buck2.build), given which files have changed,
 figure out which targets have changed. This process is also known as _target
 determination_. The primary use case is for building a CI system.
 
+## Why is this useful?
+
+Buck2 is an incremental build system which only rebuilds things which have
+changed. If you build everything (`buck2 build ...`) on one machine, then change
+nothing and rebuild, it won't do anything. If you are using a remote cache and
+move to another machine, it won't run any actions that were cached. But, for
+_really large_ projects:
+
+- Doing `buck2 build ...` might take an unreasonable amount of time or memory
+  even if it has no actions to run, as it constructs a graph of every action in
+  memory.
+- If people rarely do `...` then it won't be cached and might have lots of
+  actions to run.
+- If portions of the project don't compile (as is inevitable for sufficiently
+  large projects) then you might fail for reasons that are not your fault.
+
+Buck2 Change Detector solves these problems for CI. Given a set of changed files
+(e.g. a pull request) it computes which targets might possibly be impacted
+(those that transitively depend on the relevant changes). If your CI only
+builds/tests those targets then it will be faster, use less memory, yet still
+guarantee to detect all problems introduced by those changes.
+
 ## Project structure
 
 The project is structured as three binaries:
