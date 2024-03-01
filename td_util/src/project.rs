@@ -19,6 +19,7 @@ use clap::ValueEnum;
 use parse_display::Display;
 
 #[derive(ValueEnum, Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize)]
 #[display(style = "lowercase")]
 pub enum TdProject {
     Fbcode,

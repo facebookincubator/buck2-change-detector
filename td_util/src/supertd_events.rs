@@ -26,6 +26,7 @@ static BUILDER: OnceLock<ScubaSampleBuilder> = OnceLock::new();
 #[allow(non_camel_case_types)]
 pub enum Event {
     BTD_SUCCESS,
+    CITRACE_ARGS_PARSED,
     INVALID_TRIGGER,
     RANKER_SUCCESS,
     SCHEDULER_SUCCESS,
