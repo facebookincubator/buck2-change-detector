@@ -18,3 +18,13 @@ pub fn cell_build_file(cell: &str) -> &'static str {
         "BUCK"
     }
 }
+
+/// Certain bzl files should be excluded from transitive impact tracing.
+/// This list should *only* be extended if we are certain that changes to the file
+/// will have its impact traced through other means, e.g., attribute changes.
+pub fn should_exclude_bzl_file_from_transitive_impact_tracing(path: &str) -> bool {
+    path.ends_with(".bzl")
+        && ["fbcode//target_determinator/macros"]
+            .iter()
+            .any(|prefix| path.starts_with(*prefix))
+}

@@ -14,6 +14,7 @@ use std::mem;
 
 use tracing::warn;
 
+use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
 use crate::buck::target_map::TargetMap;
 use crate::buck::targets::BuckTarget;
@@ -41,6 +42,15 @@ fn changed_bzl_files<'a>(
         if !track_prelude_changes && x.file.is_prelude_bzl_file() {
             continue;
         }
+
+        // There are certain macros whose impact we can track more accurately
+        // without tracing transitively impacted bzl files e.g. via their changes
+        // to package values, target attributes etc. This escape hatch
+        // helps keep the blast radius of such included bzl files more reasonable.
+        if should_exclude_bzl_file_from_transitive_impact_tracing(x.file.as_str()) {
+            continue;
+        }
+
         if changes.contains_cell_path(&x.file) {
             todo.push(&x.file);
         }
