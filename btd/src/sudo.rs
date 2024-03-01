@@ -25,7 +25,7 @@ pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKey> {
 
     for target in targets.targets() {
         for d in target.deps.iter() {
-            rdeps.entry(d).or_insert(Vec::new()).push(target);
+            rdeps.entry(d).or_default().push(target);
         }
         if target.labels.contains("uses_sudo") {
             todo.push(target);
