@@ -120,7 +120,7 @@ pub fn run(
     if status.success() {
         td_util::scuba!(
             event: TARGETS_SUCCESS,
-            duration_ms: t.elapsed().as_millis() as u64,
+            duration_ms: t.elapsed().as_millis(),
         );
         Ok(())
     } else {
