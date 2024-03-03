@@ -96,9 +96,10 @@ mod tests {
             target("6a", &["6"], true),
             target("6b", &["6a"], false),
         ]);
+        let targets_by_key = targets.targets_by_label_key();
         let mut res = requires_sudo_recursively(&targets)
             .iter()
-            .map(|x| x.1.as_str().to_owned())
+            .map(|x| targets_by_key.get(x).unwrap().name.as_str())
             .collect::<Vec<_>>();
         res.sort();
 
