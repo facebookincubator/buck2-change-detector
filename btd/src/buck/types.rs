@@ -39,6 +39,10 @@ impl TargetLabel {
         Self(InternString::new(target))
     }
 
+    fn split(&self) -> (&str, &str) {
+        self.0.as_str().rsplit_once(':').unwrap()
+    }
+
     /// ```
     /// use btd::buck::types::Package;
     /// use btd::buck::types::TargetLabel;
@@ -48,11 +52,23 @@ impl TargetLabel {
     /// );
     /// ```
     pub fn package(&self) -> Package {
-        Package::new(self.0.as_str().rsplit_once(':').unwrap().0)
+        Package::new(self.split().0)
+    }
+
+    /// ```
+    /// use btd::buck::types::TargetLabel;
+    /// use btd::buck::types::TargetName;
+    /// assert_eq!(
+    ///     TargetLabel::new("foo//bar/baz:qux").target_name(),
+    ///     TargetName::new("qux")
+    /// );
+    /// ```
+    pub fn target_name(&self) -> TargetName {
+        TargetName::new(self.split().1)
     }
 
     pub fn key(&self) -> TargetLabelKey {
-        let (pkg, name) = self.0.as_str().rsplit_once(':').unwrap();
+        let (pkg, name) = self.split();
         TargetLabelKey(Package::new(pkg), TargetName::new(name))
     }
 
