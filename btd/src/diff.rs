@@ -18,13 +18,13 @@ use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
 use crate::buck::target_map::TargetMap;
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::CellPath;
 use crate::buck::types::Glob;
 use crate::buck::types::Package;
 use crate::buck::types::RuleType;
 use crate::buck::types::TargetLabel;
+use crate::buck::types::TargetLabelKeyRef;
 use crate::buck::types::TargetName;
 use crate::changes::Changes;
 

@@ -61,6 +61,10 @@ impl TargetLabel {
     }
 }
 
+/// Equivalent to a `TargetLabel`,
+/// produced by `label_key`.
+pub type TargetLabelKeyRef<'a> = (&'a Package, &'a TargetName);
+
 /// Example: `fbcode//buck2:` or `fbcode//buck2/...`
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Display, Deserialize, Serialize)]
 pub struct TargetPattern(String);

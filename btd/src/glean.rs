@@ -12,9 +12,9 @@ use std::collections::HashSet;
 use itertools::Itertools;
 
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::RuleType;
+use crate::buck::types::TargetLabelKeyRef;
 use crate::changes::Changes;
 use crate::diff::immediate_target_changes;
 use crate::diff::recursive_target_changes;

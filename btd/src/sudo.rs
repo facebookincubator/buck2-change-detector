@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetLabel;
+use crate::buck::types::TargetLabelKeyRef;
 
 // Currently, this function doesn't support progagating 'uses_sudo' label for target patterns.
 // We can possibly live with this version until a use case found.

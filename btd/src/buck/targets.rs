@@ -24,6 +24,7 @@ use crate::buck::types::PackageValues;
 use crate::buck::types::RuleType;
 use crate::buck::types::TargetHash;
 use crate::buck::types::TargetLabel;
+use crate::buck::types::TargetLabelKeyRef;
 use crate::buck::types::TargetName;
 use crate::buck::types::TargetPattern;
 
@@ -176,10 +177,6 @@ pub struct BuckTarget {
 fn is_empty_slice<T>(x: &[T]) -> bool {
     x.is_empty()
 }
-
-/// Equivalent to a `TargetLabel`,
-/// produced by `label_key`.
-pub type TargetLabelKeyRef<'a> = (&'a Package, &'a TargetName);
 
 impl BuckTarget {
     pub fn label(&self) -> TargetLabel {

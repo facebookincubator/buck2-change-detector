@@ -17,9 +17,9 @@ use td_util::json;
 use td_util::no_hash::BuildNoHash;
 
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetLabel;
+use crate::buck::types::TargetLabelKeyRef;
 use crate::output::Output;
 use crate::output::OutputFormat;
 
