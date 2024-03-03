@@ -49,7 +49,7 @@ use tracing::info;
 use crate::buck::cells::CellResolver;
 use crate::buck::run::Buck2;
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKey;
+use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
@@ -383,7 +383,7 @@ impl OutputFormat {
 
 fn print_recursive_changes<'a, T: Serialize + 'a>(
     changes: &[Vec<&'a BuckTarget>],
-    sudos: &HashSet<TargetLabelKey>,
+    sudos: &HashSet<TargetLabelKeyRef>,
     output: OutputFormat,
     mut augment: impl FnMut(&'a BuckTarget, Output<'a>) -> T,
 ) {

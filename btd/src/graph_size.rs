@@ -17,7 +17,7 @@ use td_util::json;
 use td_util::no_hash::BuildNoHash;
 
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKey;
+use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetLabel;
 use crate::output::Output;
@@ -80,7 +80,7 @@ impl GraphSize {
     pub fn print_recursive_changes(
         &mut self,
         changes: &[Vec<&BuckTarget>],
-        sudos: &HashSet<TargetLabelKey>,
+        sudos: &HashSet<TargetLabelKeyRef>,
         output: OutputFormat,
     ) {
         let items = changes

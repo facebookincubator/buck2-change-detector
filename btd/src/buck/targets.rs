@@ -47,7 +47,7 @@ impl Targets {
     }
 
     /// Create a map from target key to target
-    pub fn targets_by_label_key(&self) -> HashMap<TargetLabelKey, &BuckTarget> {
+    pub fn targets_by_label_key(&self) -> HashMap<TargetLabelKeyRef, &BuckTarget> {
         let mut res = HashMap::with_capacity(self.len_targets_upperbound());
         for x in self.targets() {
             res.insert(x.label_key(), x);
@@ -179,14 +179,14 @@ fn is_empty_slice<T>(x: &[T]) -> bool {
 
 /// Equivalent to a `TargetLabel`,
 /// produced by `label_key`.
-pub type TargetLabelKey<'a> = (&'a Package, &'a TargetName);
+pub type TargetLabelKeyRef<'a> = (&'a Package, &'a TargetName);
 
 impl BuckTarget {
     pub fn label(&self) -> TargetLabel {
         self.package.join(&self.name)
     }
 
-    pub fn label_key(&self) -> TargetLabelKey {
+    pub fn label_key(&self) -> TargetLabelKeyRef {
         (&self.package, &self.name)
     }
 

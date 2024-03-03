@@ -18,7 +18,7 @@ use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
 use crate::buck::target_map::TargetMap;
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKey;
+use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::CellPath;
 use crate::buck::types::Glob;
@@ -227,7 +227,7 @@ pub fn recursive_target_changes<'a>(
     let mut todo = changes.recursive.clone();
     let mut non_recursive_changes = changes.non_recursive.clone();
 
-    let mut done: HashMap<TargetLabelKey, bool> = changes
+    let mut done: HashMap<TargetLabelKeyRef, bool> = changes
         .recursive
         .iter()
         .map(|x| (x.label_key(), true))

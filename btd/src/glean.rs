@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use itertools::Itertools;
 
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKey;
+use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::RuleType;
 use crate::changes::Changes;
@@ -48,7 +48,7 @@ pub fn glean_changes<'a>(
 }
 
 fn merge<'a>(a: Vec<Vec<&'a BuckTarget>>, b: Vec<Vec<&'a BuckTarget>>) -> Vec<Vec<&'a BuckTarget>> {
-    let mut seen: HashSet<TargetLabelKey> = HashSet::new();
+    let mut seen: HashSet<TargetLabelKeyRef> = HashSet::new();
     let mut res = Vec::new();
     for layer in a.into_iter().zip_longest(b) {
         let mut res1 = Vec::new();

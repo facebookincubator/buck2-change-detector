@@ -11,17 +11,17 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::buck::targets::BuckTarget;
-use crate::buck::targets::TargetLabelKey;
+use crate::buck::targets::TargetLabelKeyRef;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetLabel;
 
 // Currently, this function doesn't support progagating 'uses_sudo' label for target patterns.
 // We can possibly live with this version until a use case found.
-pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKey> {
+pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKeyRef> {
     let mut rdeps: HashMap<&TargetLabel, Vec<&BuckTarget>> =
         HashMap::with_capacity(targets.len_targets_upperbound());
     let mut todo: Vec<&BuckTarget> = Vec::new();
-    let mut sudos: HashSet<TargetLabelKey> = HashSet::new();
+    let mut sudos: HashSet<TargetLabelKeyRef> = HashSet::new();
 
     for target in targets.targets() {
         for d in target.deps.iter() {
