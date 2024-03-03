@@ -57,12 +57,6 @@ impl TargetLabel {
     }
 
     pub fn as_str(&self) -> &str {
-        self.as_ref()
-    }
-}
-
-impl AsRef<str> for TargetLabel {
-    fn as_ref(&self) -> &str {
         self.0.as_str()
     }
 }
