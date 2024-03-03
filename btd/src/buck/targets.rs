@@ -184,7 +184,7 @@ impl BuckTarget {
     }
 
     pub fn label_key(&self) -> TargetLabelKeyRef {
-        (&self.package, &self.name)
+        TargetLabelKeyRef::new(&self.package, &self.name)
     }
 
     #[cfg(test)]

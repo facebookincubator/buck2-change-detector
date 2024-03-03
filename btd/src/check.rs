@@ -151,10 +151,10 @@ pub fn check_dangling(
     // Lets check if dangling edges were introduced.
     for target in immediate_changes.iter() {
         for dep in target.deps.iter() {
-            let (pkg, name) = dep.key();
+            let key = dep.key();
             // Only check newly introduced dangling dependencies that are
             // within our universe.
-            if !exists_after.contains_key(&(&pkg, &name))
+            if !exists_after.contains_key(&key.to_ref())
                 && base_targets_map
                     .get(&target.label_key())
                     .map_or(true, |t| !t.deps.iter().any(|d| d == dep))
