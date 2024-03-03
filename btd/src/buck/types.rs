@@ -51,7 +51,7 @@ impl TargetLabel {
         Package::new(self.0.as_str().rsplit_once(':').unwrap().0)
     }
 
-    pub fn key(&self) -> (Package, TargetName) {
+    pub fn key(&self) -> TargetLabelKey {
         let (pkg, name) = self.0.as_str().rsplit_once(':').unwrap();
         (Package::new(pkg), TargetName::new(name))
     }
@@ -61,8 +61,11 @@ impl TargetLabel {
     }
 }
 
-/// Equivalent to a `TargetLabel`,
-/// produced by `label_key`.
+/// Equivalent to a `TargetLabel`, used to identify a label efficiently,
+/// including when produced by the `buck2 targets` JSON output.
+pub type TargetLabelKey = (Package, TargetName);
+
+/// A reference to the parts of a `TargetLabelKey`.
 pub type TargetLabelKeyRef<'a> = (&'a Package, &'a TargetName);
 
 /// Example: `fbcode//buck2:` or `fbcode//buck2/...`
