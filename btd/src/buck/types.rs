@@ -185,11 +185,13 @@ impl TargetPattern {
     ///     !TargetPattern::new("foo//bar/a:literal").matches(&TargetLabel::new("foo//bar/a:nother")),
     /// );
     /// ```
-    pub fn matches<T>(&self, target: T) -> bool
-    where
-        T: AsRef<str>,
-    {
-        let target: &str = target.as_ref();
+    pub fn matches(&self, target: &TargetLabel) -> bool {
+        self.matches_str(target.as_str())
+    }
+
+    /// Like `matches` but takes a string instead of a `TargetLabel`.
+    /// The string is required to be a valid target label.
+    pub fn matches_str(&self, target: &str) -> bool {
         if self.0.ends_with(':') {
             // You can only have a name after a :, so if you match to the colon, you must be good
             target.starts_with(self.0.as_str())
