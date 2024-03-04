@@ -20,6 +20,7 @@ use parse_display::Display;
 
 #[derive(ValueEnum, Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 #[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 #[display(style = "lowercase")]
 pub enum TdProject {
     Fbcode,
