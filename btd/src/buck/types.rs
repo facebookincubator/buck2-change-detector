@@ -72,6 +72,15 @@ impl TargetLabel {
         TargetLabelKey(Package::new(pkg), TargetName::new(name))
     }
 
+    /// ```
+    /// use btd::buck::types::TargetLabel;
+    /// assert!(!TargetLabel::new("foo//bar/baz:qux").is_package_relative());
+    /// assert!(TargetLabel::new(":qux").is_package_relative());
+    /// ```
+    pub fn is_package_relative(&self) -> bool {
+        self.0.as_str().starts_with(':')
+    }
+
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }

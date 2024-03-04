@@ -190,7 +190,15 @@ pub fn recursive_target_changes<'a>(
             rdeps.insert(d, target)
         }
         for d in target.ci_deps.iter() {
-            rdeps.insert_pattern(d, target);
+            if let Some(label) = d.as_target_label() {
+                if label.is_package_relative() {
+                    rdeps.insert(&target.package.join(&label.target_name()), target);
+                } else {
+                    rdeps.insert(&label, target);
+                }
+            } else {
+                rdeps.insert_pattern(d, target);
+            }
         }
         if target.rule_type.short() == "ci_hint" {
             match hint_applies_to(target) {
@@ -306,6 +314,7 @@ mod tests {
     use crate::buck::types::TargetHash;
     use crate::buck::types::TargetLabel;
     use crate::buck::types::TargetName;
+    use crate::buck::types::TargetPattern;
     use crate::sapling::status::Status;
 
     #[test]
@@ -541,6 +550,40 @@ mod tests {
             res,
             vec![vec!["a"], vec!["b", "c"], vec!["d", "e"], vec!["f"],]
         );
+    }
+
+    #[test]
+    fn test_recursive_relative_ci_deps() {
+        let diff = Targets::new(vec![
+            TargetsEntry::Target(BuckTarget {
+                ci_deps: Box::new([TargetPattern::new(":dep")]),
+                ..BuckTarget::testing("bar", "code//foo", "prelude//rules.bzl:cxx_library")
+            }),
+            TargetsEntry::Target(BuckTarget::testing(
+                "dep",
+                "code//foo",
+                "prelude//rules.bzl:cxx_library",
+            )),
+            TargetsEntry::Target(BuckTarget::testing(
+                "foo",
+                "code//foo",
+                "prelude//rules.bzl:cxx_library",
+            )),
+        ]);
+
+        let change_target =
+            BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
+        let changes = GraphImpact {
+            recursive: vec![&change_target],
+            non_recursive: Vec::new(),
+        };
+        let res = recursive_target_changes(&diff, &changes, Some(1), |_| true);
+        let res = res.map(|xs| {
+            let mut xs = xs.map(|x| x.name.as_str());
+            xs.sort();
+            xs
+        });
+        assert_eq!(res, vec![vec!["dep"], vec!["bar"]]);
     }
 
     #[test]
