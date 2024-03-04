@@ -285,7 +285,7 @@ mod tests {
             }),
             TargetsEntry::Error(BuckError {
                 package: Package::new("fbcode//broken"),
-                error: String::from("broken"),
+                error: "broken".to_owned(),
             }),
         ];
         let base = Targets::new(target_entries);
@@ -331,7 +331,7 @@ mod tests {
             }),
             TargetsEntry::Error(BuckError {
                 package: Package::new("fbcode//broken"),
-                error: String::from("broken"),
+                error: "broken".to_owned(),
             }),
         ];
         let base = Targets::new(target_entries);
