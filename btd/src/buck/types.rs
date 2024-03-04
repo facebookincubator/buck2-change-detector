@@ -408,7 +408,6 @@ impl CellPath {
     /// assert_eq!(CellPath::new("foo//bar/NOT_BUCK").is_target_file(), false);
     /// assert_eq!(CellPath::new("foo//bar/TARGETS").is_target_file(), false);
     /// assert_eq!(CellPath::new("foo//BUCK").is_target_file(), true);
-    /// assert_eq!(CellPath::new("fbcode//BUCK").is_target_file(), false);
     /// assert_eq!(CellPath::new("fbcode//TARGETS").is_target_file(), true);
     /// assert_eq!(
     ///     CellPath::new("prelude//apple/TARGETS.v2").is_target_file(),

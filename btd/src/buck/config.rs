@@ -13,7 +13,7 @@
 /// Use `&str` rather than `CellName` since it is cheaper to construct from an existing string.
 pub fn cell_build_files(cell: &str) -> &'static [&'static str] {
     if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
-        &["TARGETS.v2", "TARGETS"]
+        &["TARGETS.v2", "TARGETS", "BUCK.v2", "BUCK"]
     } else {
         &["BUCK.v2", "BUCK"]
     }
