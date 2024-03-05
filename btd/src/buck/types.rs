@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::string::InternString;
 
-use crate::buck::config::cell_build_files;
+use crate::buck::cells::CellInfo;
 use crate::buck::labels::Labels;
 
 /// Example: `fbcode//buck2:buck2`
@@ -401,25 +401,42 @@ impl CellPath {
     }
 
     /// ```
+    /// use btd::buck::cells::CellInfo;
     /// use btd::buck::types::CellPath;
-    /// assert_eq!(CellPath::new("foo//bar/source.txt").is_target_file(), false);
-    /// assert_eq!(CellPath::new("foo//bar/BUCK").is_target_file(), true);
-    /// assert_eq!(CellPath::new("foo//bar/BUCK.v2").is_target_file(), true);
-    /// assert_eq!(CellPath::new("foo//bar/NOT_BUCK").is_target_file(), false);
-    /// assert_eq!(CellPath::new("foo//bar/TARGETS").is_target_file(), false);
-    /// assert_eq!(CellPath::new("foo//BUCK").is_target_file(), true);
-    /// assert_eq!(CellPath::new("fbcode//TARGETS").is_target_file(), true);
+    /// let cells = CellInfo::empty();
     /// assert_eq!(
-    ///     CellPath::new("prelude//apple/TARGETS.v2").is_target_file(),
+    ///     CellPath::new("foo//bar/source.txt").is_target_file(&cells),
+    ///     false
+    /// );
+    /// assert_eq!(CellPath::new("foo//bar/BUCK").is_target_file(&cells), true);
+    /// assert_eq!(
+    ///     CellPath::new("foo//bar/BUCK.v2").is_target_file(&cells),
+    ///     true
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("foo//bar/NOT_BUCK").is_target_file(&cells),
+    ///     false
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("foo//bar/TARGETS").is_target_file(&cells),
+    ///     false
+    /// );
+    /// assert_eq!(CellPath::new("foo//BUCK").is_target_file(&cells), true);
+    /// assert_eq!(
+    ///     CellPath::new("fbcode//TARGETS").is_target_file(&cells),
+    ///     true
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("prelude//apple/TARGETS.v2").is_target_file(&cells),
     ///     true
     /// );
     /// ```
-    pub fn is_target_file(&self) -> bool {
+    pub fn is_target_file(&self, cells: &CellInfo) -> bool {
         // Currently the target-file-ness is per cell.
         // That's a pain and we are working to use `BUCK` everywhere.
         // Until then look at the cell first.
         let contents = self.0.as_str();
-        for build_file in cell_build_files(&self.cell()) {
+        for build_file in cells.build_files(&self.cell()) {
             if let Some(suffix) = contents.strip_suffix(build_file) {
                 if suffix.ends_with('/') {
                     return true;

@@ -25,6 +25,14 @@ pub struct CellInfo {
 }
 
 impl CellInfo {
+    /// An empty cell info - not that useful other than testing.
+    pub fn empty() -> Self {
+        Self {
+            cells: Default::default(),
+            paths: Default::default(),
+        }
+    }
+
     pub fn new(file: &Path) -> anyhow::Result<Self> {
         let data = fs::read_to_string(file)
             .with_context(|| format!("When reading `{}`", file.display()))?;
@@ -84,6 +92,15 @@ impl CellInfo {
             "Path has no cell which is a prefix `{:?}`",
             path
         ))
+    }
+
+    pub fn build_files(&self, cell: &CellName) -> &[&str] {
+        let cell = cell.as_str();
+        if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
+            &["TARGETS.v2", "TARGETS", "BUCK.v2", "BUCK"]
+        } else {
+            &["BUCK.v2", "BUCK"]
+        }
     }
 }
 

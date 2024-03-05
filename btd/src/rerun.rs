@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::buck::cells::CellInfo;
 use crate::buck::package_resolver::PackageResolver;
 use crate::buck::targets::Targets;
 use crate::buck::types::CellName;
@@ -43,7 +44,11 @@ fn is_buckconfig(path: &CellPath) -> bool {
 }
 
 /// Compute the targets we should rerun, or None if we should do everything.
-pub fn rerun(base: &Targets, changes: &Changes) -> Option<HashMap<Package, PackageStatus>> {
+pub fn rerun(
+    cells: &CellInfo,
+    base: &Targets,
+    changes: &Changes,
+) -> Option<HashMap<Package, PackageStatus>> {
     // if there are any .buckconfig changes, we should give up
     if changes.cell_paths().any(is_buckconfig) {
         return None;
@@ -54,7 +59,7 @@ pub fn rerun(base: &Targets, changes: &Changes) -> Option<HashMap<Package, Packa
     let add_present = |x: HashSet<_>| x.into_iter().map(|x| (x, PackageStatus::Present));
 
     // targets that are affected due to bzl/build file changes
-    let (changed, starlark_changes) = rerun_starlark(base, changes);
+    let (changed, starlark_changes) = rerun_starlark(cells, base, changes);
     res.extend(add_present(changed));
     // targets that are affected due to PACKAGE file changes
     res.extend(add_present(rerun_package_file(
@@ -68,7 +73,7 @@ pub fn rerun(base: &Targets, changes: &Changes) -> Option<HashMap<Package, Packa
     // We extend with this set last, since it may insert PackageStatus::Unknown
     // which need to take precedence over the above.
     // if build file itself appears or disappears
-    res.extend(rerun_build_file_existence(changes));
+    res.extend(rerun_build_file_existence(cells, changes));
     Some(res)
 }
 
@@ -80,6 +85,7 @@ fn package_set(base: &Targets) -> HashSet<&Package> {
 /// Figure out which targets should rerun because their import dependencies (or they themselves) changed.
 /// Also returns all files which might changed due to Starlark changes.
 fn rerun_starlark<'a>(
+    cells: &CellInfo,
     base: &'a Targets,
     changes: &'a Changes,
 ) -> (HashSet<Package>, HashSet<&'a CellPath>) {
@@ -123,7 +129,7 @@ fn rerun_starlark<'a>(
     // Also add modified BUCK/TARGETS files
     for change in changes.status_cell_paths() {
         match change {
-            Status::Modified(x) if x.is_target_file() => {
+            Status::Modified(x) if x.is_target_file(cells) => {
                 res.insert(Package::new(x.parent().as_str()));
             }
             _ => {}
@@ -164,7 +170,10 @@ fn rerun_package_file(
 }
 
 // Figure out what packages are affected if a change includes deletion or addition to build files
-fn rerun_build_file_existence(changes: &Changes) -> HashMap<Package, PackageStatus> {
+fn rerun_build_file_existence(
+    cells: &CellInfo,
+    changes: &Changes,
+) -> HashMap<Package, PackageStatus> {
     let mut result = HashMap::new();
     for file in changes.status_cell_paths() {
         // if a build file is changed, put the pattern into query, since buck2 targets only accept either a target or a directory
@@ -174,7 +183,7 @@ fn rerun_build_file_existence(changes: &Changes) -> HashMap<Package, PackageStat
             Status::Modified(_) => continue,
         };
 
-        if path.is_target_file() {
+        if path.is_target_file(cells) {
             let package = Package::new(path.parent().as_str());
             // If we have both Unknown and Present (e.g. BUCK deleted and BUCK.v2 created)
             // we should prefer Present.
@@ -335,9 +344,10 @@ mod tests {
             }),
         ];
         let base = Targets::new(target_entries);
+        let cells = CellInfo::empty();
         let changes =
             Changes::testing(&[Status::Modified(CellPath::new("fbcode//broken/TARGETS"))]);
-        let (changed, _) = rerun_starlark(&base, &changes);
+        let (changed, _) = rerun_starlark(&cells, &base, &changes);
         assert_eq!(changed.len(), 1);
         assert!(changed.contains(&Package::new("fbcode//broken")));
     }
@@ -349,7 +359,8 @@ mod tests {
             Status::Removed(CellPath::new("foo//a/b/BUCK.v2")),
             Status::Added(CellPath::new("fbcode//pkg/hello/TARGETS")),
         ]);
-        let changed_package = rerun_build_file_existence(&changes);
+        let cells = CellInfo::empty();
+        let changed_package = rerun_build_file_existence(&cells, &changes);
         assert_eq!(changed_package.len(), 3);
         assert_eq!(
             changed_package.get(&Package::new("foo//b/c/d")).unwrap(),
@@ -366,7 +377,8 @@ mod tests {
         // if a package has more than one build file and only one of them is removed
         // the state of this package is modified
         let changes = Changes::testing(&[Status::Removed(CellPath::new("foo//a/b/c/BUCK.v2"))]);
-        let changed_package = rerun_build_file_existence(&changes);
+        let cells = CellInfo::empty();
+        let changed_package = rerun_build_file_existence(&cells, &changes);
         assert_eq!(changed_package.len(), 1);
         assert_eq!(
             changed_package.get(&Package::new("foo//a/b/c")).unwrap(),
@@ -382,7 +394,8 @@ mod tests {
             Status::Removed(CellPath::new("foo//a/b/c/BUCK.v2")),
             Status::Removed(CellPath::new("foo//a/b/c/BUCK")),
         ]);
-        let changed_package = rerun_build_file_existence(&changes);
+        let cells = CellInfo::empty();
+        let changed_package = rerun_build_file_existence(&cells, &changes);
         assert_eq!(changed_package.len(), 1);
         assert_eq!(
             changed_package.get(&Package::new("foo//a/b/c")).unwrap(),
@@ -462,12 +475,13 @@ mod tests {
                 package: None,
             }),
         ]);
+        let cells = CellInfo::empty();
         let changes = Changes::testing(&[Status::Modified(CellPath::new("foo//utils.bzl"))]);
 
         assert_eq!(
             rerun_package_file(
                 &changes,
-                &rerun_starlark(&targets, &changes).1,
+                &rerun_starlark(&cells, &targets, &changes).1,
                 &package_set(&targets)
             )
             .len(),
@@ -495,6 +509,7 @@ mod tests {
             }),
         ];
         let base = Targets::new(target_entries);
+        let cells = CellInfo::empty();
         let changes = Changes::testing(&[
             Status::Removed(CellPath::new("foo//a/b/c/BUCK.v2")),
             Status::Removed(CellPath::new("foo//a/b/c/BUCK")),
@@ -502,7 +517,7 @@ mod tests {
             Status::Added(CellPath::new("bar//b/c/d.cpp")),
             Status::Added(CellPath::new("bar//a/BUCK")),
         ]);
-        let rerun_result = rerun(&base, &changes).unwrap();
+        let rerun_result = rerun(&cells, &base, &changes).unwrap();
         assert_eq!(rerun_result.len(), 3);
         assert_eq!(
             rerun_result.get(&Package::new("foo//a/b/c")).unwrap(),

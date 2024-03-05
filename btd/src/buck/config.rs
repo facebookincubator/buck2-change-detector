@@ -9,19 +9,6 @@
 
 //! Configuration that we hardcode, because parsing it is too expensive.
 
-use crate::buck::types::CellName;
-
-/// What is the build file for a given cell.
-/// Use `&str` rather than `CellName` since it is cheaper to construct from an existing string.
-pub fn cell_build_files(cell: &CellName) -> &'static [&'static str] {
-    let cell = cell.as_str();
-    if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
-        &["TARGETS.v2", "TARGETS", "BUCK.v2", "BUCK"]
-    } else {
-        &["BUCK.v2", "BUCK"]
-    }
-}
-
 /// Certain bzl files should be excluded from transitive impact tracing.
 /// This list should *only* be extended if we are certain that changes to the file
 /// will have its impact traced through other means, e.g., attribute changes.

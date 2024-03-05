@@ -297,7 +297,7 @@ fn compute_rerun(
     if universe.is_empty() {
         return Err(UniverseError::NoUniverseOrDiff.into());
     }
-    let rerun = rerun::rerun(base, changes);
+    let rerun = rerun::rerun(cells, base, changes);
     let mut deleted_packages: HashSet<Package> = HashSet::new();
     let modified_patterns = match &rerun {
         None => universe.to_vec(),
