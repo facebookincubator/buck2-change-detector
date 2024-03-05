@@ -302,7 +302,6 @@ pub fn recursive_target_changes<'a>(
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
     use td_util::prelude::*;
 
     use super::*;
@@ -604,7 +603,7 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: diff.targets().take(2).collect_vec(),
+            recursive: diff.targets().take(2).collect(),
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, None, |_| true);
