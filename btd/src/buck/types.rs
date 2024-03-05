@@ -419,8 +419,7 @@ impl CellPath {
         // That's a pain and we are working to use `BUCK` everywhere.
         // Until then look at the cell first.
         let contents = self.0.as_str();
-        let cell = contents.split_once("//").unwrap().0;
-        for build_file in cell_build_files(cell) {
+        for build_file in cell_build_files(&self.cell()) {
             if let Some(suffix) = contents.strip_suffix(build_file) {
                 if suffix.ends_with('/') {
                     return true;
