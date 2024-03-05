@@ -47,7 +47,7 @@ use thiserror::Error;
 use tracing::error;
 use tracing::info;
 
-use crate::buck::cells::CellResolver;
+use crate::buck::cells::CellInfo;
 use crate::buck::run::Buck2;
 use crate::buck::targets::BuckTarget;
 use crate::buck::targets::Targets;
@@ -168,8 +168,8 @@ pub fn main(args: Args) -> anyhow::Result<()> {
 
     step("reading cells");
     let cells = match &args.cells {
-        Some(file) => CellResolver::new(file)?,
-        None => CellResolver::parse(&buck2.cells()?)?,
+        Some(file) => CellInfo::new(file)?,
+        None => CellInfo::parse(&buck2.cells()?)?,
     };
     step("reading changes");
     let changes = Changes::new(&cells, read_status(&args.changes)?)?;
@@ -291,7 +291,7 @@ fn compute_rerun(
     base: &Targets,
     changes: &Changes,
     buck2: &mut Buck2,
-    cells: &CellResolver,
+    cells: &CellInfo,
     universe: &[TargetPattern],
 ) -> anyhow::Result<(Vec<TargetPattern>, HashSet<Package>, bool)> {
     if universe.is_empty() {

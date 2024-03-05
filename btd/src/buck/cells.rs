@@ -18,13 +18,13 @@ use crate::buck::types::CellPath;
 use crate::buck::types::CellRelativePath;
 use crate::buck::types::ProjectRelativePath;
 
-pub struct CellResolver {
+pub struct CellInfo {
     cells: HashMap<CellName, ProjectRelativePath>,
     /// Sorted by path length, so the longest is first
     paths: Vec<(CellName, ProjectRelativePath)>,
 }
 
-impl CellResolver {
+impl CellInfo {
     pub fn new(file: &Path) -> anyhow::Result<Self> {
         let data = fs::read_to_string(file)
             .with_context(|| format!("When reading `{}`", file.display()))?;
@@ -101,9 +101,9 @@ mod tests {
                 "prelude": "/Users/ndmitchell/repo/prelude"
               }
         );
-        let cells = CellResolver::parse(&serde_json::to_string(&value).unwrap()).unwrap();
+        let cells = CellInfo::parse(&serde_json::to_string(&value).unwrap()).unwrap();
 
-        fn testcase(cells: &CellResolver, cell_path: &str, project_relative_path: &str) {
+        fn testcase(cells: &CellInfo, cell_path: &str, project_relative_path: &str) {
             let cell_path = CellPath::new(cell_path);
             let project_relative_path = ProjectRelativePath::new(project_relative_path);
             assert_eq!(cells.resolve(&cell_path).unwrap(), project_relative_path);

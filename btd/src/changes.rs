@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use td_util::prelude::*;
 
-use crate::buck::cells::CellResolver;
+use crate::buck::cells::CellInfo;
 use crate::buck::types::CellPath;
 use crate::buck::types::Package;
 use crate::buck::types::ProjectRelativePath;
@@ -26,7 +26,7 @@ pub struct Changes {
 
 impl Changes {
     pub fn new(
-        cells: &CellResolver,
+        cells: &CellInfo,
         changes: Vec<Status<ProjectRelativePath>>,
     ) -> anyhow::Result<Self> {
         let cell_paths = changes.try_map(|x| x.try_map(|x| cells.unresolve(x)))?;
