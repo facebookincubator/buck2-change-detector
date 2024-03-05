@@ -86,10 +86,10 @@ fn is_changed_ci_srcs(file_deps: &[Glob], changes: &Changes) -> bool {
 pub struct GraphImpact<'a> {
     /// Targets which changed, and whose change is expected to impact
     /// things that depend on them (they changed recursively).
-    recursive: Vec<&'a BuckTarget>,
+    recursive: Vec<(&'a BuckTarget, ImpactReason)>,
     /// Targets which changed in a way that won't impact things recursively.
     /// Currently only package value changes.
-    non_recursive: Vec<&'a BuckTarget>,
+    non_recursive: Vec<(&'a BuckTarget, ImpactReason)>,
 }
 
 impl<'a> GraphImpact<'a> {
@@ -97,12 +97,35 @@ impl<'a> GraphImpact<'a> {
         self.recursive.len() + self.non_recursive.len()
     }
 
-    pub fn iter(&'a self) -> impl Iterator<Item = &'a BuckTarget> {
+    pub fn iter(&'a self) -> impl Iterator<Item = (&'a BuckTarget, ImpactReason)> {
         self.recursive
             .iter()
             .chain(self.non_recursive.iter())
             .copied()
     }
+}
+
+/// Categorization of the kind of immediate target change which caused BTD to
+/// report a target as impacted. These reasons are propagated down through
+/// rdeps, so they indicate that a target *or one of its dependencies* changed
+/// in the indicated way.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(serde::Serialize, serde::Deserialize, parse_display::Display)]
+#[serde(rename_all = "snake_case")]
+#[display(style = "snake_case")]
+pub enum ImpactReason {
+    /// This target was impacted because a target's package changed.
+    Package,
+    /// The hash of a target changed.
+    Hash,
+    /// The sources a target points at changed.
+    Inputs,
+    /// The `ci_srcs` of a target (used as additional triggers) changed.
+    CiSrcs,
+    /// The Buck rule used to define a target changed.
+    Rule,
+    /// The `buck.package_values` of a target changed.
+    PackageValues,
 }
 
 pub fn immediate_target_changes<'a>(
@@ -117,40 +140,75 @@ pub fn immediate_target_changes<'a>(
     // Find those .bzl files that have changed, including transitive changes
     let bzl_change = changed_bzl_files(diff, changes, track_prelude_changes);
 
+    // Track the reason we determined a target to have changed
+    let some_if = |reason, changed| if changed { Some(reason) } else { None };
+
     let mut res = GraphImpact::default();
     for target in diff.targets() {
         // "hidden feature" that allows using btd to find rdeps of a "package" (directory)
         // by including directory paths in the changes input
-        let change_package: bool = changes.contains_package(&target.package);
+        let change_package = some_if(
+            ImpactReason::Package,
+            changes.contains_package(&target.package),
+        );
         let old_target = old.get(&target.label_key());
 
         // Did the hash of the target change
-        let change_hash = || match old_target {
-            None => true,
-            Some(x) => x.hash != target.hash,
+        let change_hash = || {
+            some_if(
+                ImpactReason::Hash,
+                match old_target {
+                    None => true,
+                    Some(x) => x.hash != target.hash,
+                },
+            )
         };
         // Did the package values change
-        let change_package_values = || match old_target {
-            None => true,
-            Some(x) => x.package_values != target.package_values,
+        let change_package_values = || {
+            some_if(
+                ImpactReason::PackageValues,
+                match old_target {
+                    None => true,
+                    Some(x) => x.package_values != target.package_values,
+                },
+            )
         };
         // Did any of the sources we point at change
-        let change_inputs = || target.inputs.iter().any(|x| changes.contains_cell_path(x));
-        let change_ci_srcs = || is_changed_ci_srcs(&target.ci_srcs, changes);
+        let change_inputs = || {
+            some_if(
+                ImpactReason::Inputs,
+                target.inputs.iter().any(|x| changes.contains_cell_path(x)),
+            )
+        };
+        let change_ci_srcs = || {
+            some_if(
+                ImpactReason::CiSrcs,
+                is_changed_ci_srcs(&target.ci_srcs, changes),
+            )
+        };
         // Did the rule we point at change
-        let change_rule =
-            || !bzl_change.is_empty() && bzl_change.contains(&target.rule_type.file());
+        let change_rule = || {
+            some_if(
+                ImpactReason::Rule,
+                !bzl_change.is_empty() && bzl_change.contains(&target.rule_type.file()),
+            )
+        };
 
-        if change_package || change_hash() || change_inputs() || change_ci_srcs() || change_rule() {
-            res.recursive.push(target)
-        } else if change_package_values() {
-            res.non_recursive.push(target);
+        if let Some(reason) = change_package
+            .or_else(change_hash)
+            .or_else(change_inputs)
+            .or_else(change_ci_srcs)
+            .or_else(change_rule)
+        {
+            res.recursive.push((target, reason));
+        } else if let Some(reason) = change_package_values() {
+            res.non_recursive.push((target, reason));
         }
     }
 
     // Sort to ensure deterministic output
-    res.recursive.sort_by_key(|t| t.label_key());
-    res.non_recursive.sort_by_key(|t| t.label_key());
+    res.recursive.sort_by_key(|(t, _)| t.label_key());
+    res.non_recursive.sort_by_key(|(t, _)| t.label_key());
     res
 }
 
@@ -168,7 +226,7 @@ pub fn recursive_target_changes<'a>(
     changes: &GraphImpact<'a>,
     depth: Option<usize>,
     follow_rule_type: impl Fn(&RuleType) -> bool,
-) -> Vec<Vec<&'a BuckTarget>> {
+) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
     // Just an optimisation, but saves building the reverse mapping
     if changes.recursive.is_empty() {
         let mut res = if changes.non_recursive.is_empty() {
@@ -238,8 +296,13 @@ pub fn recursive_target_changes<'a>(
     let mut done: HashMap<TargetLabelKeyRef, bool> = changes
         .recursive
         .iter()
-        .map(|x| (x.label_key(), true))
-        .chain(changes.non_recursive.iter().map(|x| (x.label_key(), false)))
+        .map(|(x, _)| (x.label_key(), true))
+        .chain(
+            changes
+                .non_recursive
+                .iter()
+                .map(|(x, _)| (x.label_key(), false)),
+        )
         .collect();
 
     let mut result = Vec::new();
@@ -247,9 +310,12 @@ pub fn recursive_target_changes<'a>(
     let mut todo_silent = Vec::new();
     let mut next_silent = Vec::new();
 
-    fn add_result<'a>(results: &mut Vec<Vec<&'a BuckTarget>>, mut items: Vec<&'a BuckTarget>) {
+    fn add_result<'a>(
+        results: &mut Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
+        mut items: Vec<(&'a BuckTarget, ImpactReason)>,
+    ) {
         // Sort to ensure deterministic output
-        items.sort_by_key(|x| x.label_key());
+        items.sort_by_key(|(x, _)| x.label_key());
         results.push(items);
     }
 
@@ -263,17 +329,17 @@ pub fn recursive_target_changes<'a>(
 
         let mut next = Vec::new();
 
-        for lbl in todo.iter().chain(todo_silent.iter()) {
+        for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if follow_rule_type(&lbl.rule_type) {
                 for rdep in rdeps.get(&lbl.label()) {
                     match done.entry(rdep.label_key()) {
                         Entry::Vacant(e) => {
-                            next.push(*rdep);
+                            next.push((*rdep, *reason));
                             e.insert(true);
                         }
                         Entry::Occupied(mut e) => {
                             if !e.get() {
-                                next_silent.push(*rdep);
+                                next_silent.push((*rdep, *reason));
                                 e.insert(true);
                             }
                         }
@@ -395,8 +461,8 @@ mod tests {
             ]),
             false,
         );
-        let recursive = res.recursive.map(|x| x.label().to_string());
-        let non_recursive = res.non_recursive.map(|x| x.label().to_string());
+        let recursive = res.recursive.map(|(x, _)| x.label().to_string());
+        let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
         assert_eq!(
             recursive.map(|x| x.as_str()),
             &[
@@ -435,7 +501,7 @@ mod tests {
             &Changes::testing(&[Status::Modified(package)]),
             false,
         );
-        let mut res = res.recursive.map(|x| x.label().to_string());
+        let mut res = res.recursive.map(|(x, _)| x.label().to_string());
         res.sort();
         let res = res.map(|x| x.as_str());
         assert_eq!(&res, &["foo//bar:aaa", "foo//bar:bbb",]);
@@ -459,11 +525,11 @@ mod tests {
 
         let changes = GraphImpact {
             recursive: Vec::new(),
-            non_recursive: vec![diff.targets().next().unwrap()],
+            non_recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
         let res = res.map(|xs| {
-            let mut xs = xs.map(|x| x.name.as_str());
+            let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
             xs
         });
@@ -500,12 +566,12 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![diff.targets().next().unwrap()],
-            non_recursive: vec![diff.targets().nth(1).unwrap()],
+            recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
+            non_recursive: vec![(diff.targets().nth(1).unwrap(), ImpactReason::Inputs)],
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
         let res = res.map(|xs| {
-            let mut xs = xs.map(|x| x.name.as_str());
+            let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
             xs
         });
@@ -536,12 +602,12 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![diff.targets().next().unwrap()],
+            recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
         let res = res.map(|xs| {
-            let mut xs = xs.map(|x| x.name.as_str());
+            let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
             xs
         });
@@ -573,12 +639,12 @@ mod tests {
         let change_target =
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
         let changes = GraphImpact {
-            recursive: vec![&change_target],
+            recursive: vec![(&change_target, ImpactReason::Inputs)],
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, Some(1), |_| true);
         let res = res.map(|xs| {
-            let mut xs = xs.map(|x| x.name.as_str());
+            let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
             xs
         });
@@ -603,11 +669,15 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: diff.targets().take(2).collect(),
+            recursive: diff
+                .targets()
+                .take(2)
+                .map(|x| (x, ImpactReason::Inputs))
+                .collect(),
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, None, |_| true);
-        let res = res.map(|xs| xs.map(|x| x.name.as_str()));
+        let res = res.map(|xs| xs.map(|(x, _)| x.name.as_str()));
         assert_eq!(res, vec![vec!["a", "b"], vec!["c", "d"], vec![]]);
     }
 
@@ -785,7 +855,9 @@ mod tests {
                 .count(),
             2
         );
-        impact.recursive.push(targets.targets().nth(1).unwrap());
+        impact
+            .recursive
+            .push((targets.targets().nth(1).unwrap(), ImpactReason::Inputs));
         assert_eq!(
             recursive_target_changes(&targets, &impact, None, |_| true)
                 .iter()
@@ -812,13 +884,13 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![diff.targets().next().unwrap()],
+            recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
         assert_eq!(res[0].len(), 1);
         assert_eq!(res[1].len(), 1);
-        assert_eq!(res[1][0].name, TargetName::new("baz"));
+        assert_eq!(res[1][0].0.name, TargetName::new("baz"));
         assert_eq!(res.iter().flatten().count(), 2);
     }
 }

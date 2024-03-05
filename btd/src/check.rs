@@ -23,6 +23,7 @@ use crate::buck::types::Package;
 use crate::buck::types::TargetLabel;
 use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
+use crate::diff::ImpactReason;
 
 #[derive(Debug, Error, Serialize)]
 pub enum ValidationError {
@@ -141,7 +142,7 @@ pub fn check_errors(base: &Targets, diff: &Targets, changes: &Changes) -> Vec<Va
 pub fn check_dangling(
     base: &Targets,
     diff: &Targets,
-    immediate_changes: &[&BuckTarget],
+    immediate_changes: &[(&BuckTarget, ImpactReason)],
     universe: &[TargetPattern],
 ) -> Vec<ValidationError> {
     let exists_after = diff.targets_by_label_key();
@@ -149,7 +150,7 @@ pub fn check_dangling(
 
     let mut errors = Vec::new();
     // Lets check if dangling edges were introduced.
-    for target in immediate_changes.iter() {
+    for (target, _) in immediate_changes.iter() {
         for dep in target.deps.iter() {
             let key = dep.key();
             // Only check newly introduced dangling dependencies that are
@@ -357,7 +358,7 @@ mod tests {
                     target_entry("aaa", &[]),
                     target_entry("bbb", &["aaa", "ccc"])
                 ]),
-                &[&modified_target],
+                &[(&modified_target, ImpactReason::Inputs)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -376,7 +377,7 @@ mod tests {
                     target_entry("bbb", &["aaa"]),
                     target_entry("ccc", &["ddd"])
                 ]),
-                &[&modified_target],
+                &[(&modified_target, ImpactReason::Inputs)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -395,7 +396,7 @@ mod tests {
                     target_entry("aaa", &["ccc"]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[&modified_target],
+                &[(&modified_target, ImpactReason::Inputs)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -413,7 +414,7 @@ mod tests {
                     target_entry("aaa", &["ccc"]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[&modified_target],
+                &[(&modified_target, ImpactReason::Inputs)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -431,7 +432,7 @@ mod tests {
                     target_entry("aaa", &[]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[&modified_target],
+                &[(&modified_target, ImpactReason::Inputs)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),

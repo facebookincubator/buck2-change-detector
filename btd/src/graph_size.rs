@@ -20,6 +20,7 @@ use crate::buck::targets::BuckTarget;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetLabel;
 use crate::buck::types::TargetLabelKeyRef;
+use crate::diff::ImpactReason;
 use crate::output::Output;
 use crate::output::OutputFormat;
 
@@ -79,7 +80,7 @@ impl GraphSize {
 
     pub fn print_recursive_changes(
         &mut self,
-        changes: &[Vec<&BuckTarget>],
+        changes: &[Vec<(&BuckTarget, ImpactReason)>],
         sudos: &HashSet<TargetLabelKeyRef>,
         output: OutputFormat,
     ) {
@@ -88,12 +89,12 @@ impl GraphSize {
             .enumerate()
             .flat_map(|(depth, xs)| {
                 xs.iter()
-                    .map(move |x| (depth, *x, sudos.contains(&x.label_key())))
+                    .map(move |&(x, r)| (depth, x, sudos.contains(&x.label_key()), r))
             })
             .collect::<Vec<_>>()
-            .par_iter()
-            .map(|(depth, x, uses_sudo)| OutputWithSize {
-                output: Output::from_target(x, *depth as u64, *uses_sudo),
+            .into_par_iter()
+            .map(|(depth, x, uses_sudo, reason)| OutputWithSize {
+                output: Output::from_target(x, depth as u64, uses_sudo, reason),
                 before_size: self.base.get(&x.label()),
                 after_size: self.diff.get(&x.label()),
             })

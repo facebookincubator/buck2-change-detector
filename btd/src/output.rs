@@ -16,6 +16,7 @@ use crate::buck::labels::Labels;
 use crate::buck::targets::BuckTarget;
 use crate::buck::types::Oncall;
 use crate::buck::types::TargetLabel;
+use crate::diff::ImpactReason;
 
 #[derive(Debug, Serialize)]
 pub struct Output<'a> {
@@ -25,10 +26,16 @@ pub struct Output<'a> {
     oncall: &'a Option<Oncall>,
     depth: u64,
     labels: Labels,
+    reason: ImpactReason,
 }
 
 impl<'a> Output<'a> {
-    pub fn from_target(x: &'a BuckTarget, depth: u64, uses_sudo: bool) -> Self {
+    pub fn from_target(
+        x: &'a BuckTarget,
+        depth: u64,
+        uses_sudo: bool,
+        reason: ImpactReason,
+    ) -> Self {
         let additional_labels = if uses_sudo && !x.labels.contains("uses_sudo") {
             Labels::new(&["uses_sudo"])
         } else {
@@ -44,6 +51,7 @@ impl<'a> Output<'a> {
                 .package_values
                 .labels
                 .merge3(&x.labels, &additional_labels),
+            reason,
         }
     }
 }
@@ -80,6 +88,7 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": "my_team",
+                "reason": "inputs",
             }
         );
 
@@ -94,7 +103,7 @@ mod tests {
             oncall: Some(Oncall::new("my_team")),
             ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
         };
-        let output = Output::from_target(&target, 3, false);
+        let output = Output::from_target(&target, 3, false, ImpactReason::Inputs);
         assert_eq!(serde_json::to_value(&output).unwrap(), json);
         assert_eq!(
             serde_json::from_str::<Value>(&output.to_string()).unwrap(),
@@ -113,10 +122,17 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": Value::Null,
+                "reason": ImpactReason::Inputs,
             }
         );
         assert_eq!(
-            serde_json::to_value(Output::from_target(&target_no_oncall, 3, false)).unwrap(),
+            serde_json::to_value(Output::from_target(
+                &target_no_oncall,
+                3,
+                false,
+                ImpactReason::Inputs
+            ))
+            .unwrap(),
             json_no_oncall
         );
     }
@@ -128,7 +144,7 @@ mod tests {
             package_values: PackageValues::new(&["must-come-first"], serde_json::Value::Null),
             ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
         };
-        let output = Output::from_target(&target, 3, false);
+        let output = Output::from_target(&target, 3, false, ImpactReason::Inputs);
         assert_eq!(
             output.labels,
             Labels::new(&["must-come-first", "target_label"])

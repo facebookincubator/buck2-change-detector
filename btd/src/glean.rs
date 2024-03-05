@@ -18,6 +18,7 @@ use crate::buck::types::TargetLabelKeyRef;
 use crate::changes::Changes;
 use crate::diff::immediate_target_changes;
 use crate::diff::recursive_target_changes;
+use crate::diff::ImpactReason;
 
 fn cxx_rule_type(typ: &RuleType) -> bool {
     let short = typ.short();
@@ -34,7 +35,7 @@ pub fn glean_changes<'a>(
     diff: &'a Targets,
     changes: &Changes,
     depth: Option<usize>,
-) -> Vec<Vec<&'a BuckTarget>> {
+) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
     let header = immediate_target_changes(
         base,
         diff,
@@ -47,20 +48,23 @@ pub fn glean_changes<'a>(
     merge(header_rec, other_rec)
 }
 
-fn merge<'a>(a: Vec<Vec<&'a BuckTarget>>, b: Vec<Vec<&'a BuckTarget>>) -> Vec<Vec<&'a BuckTarget>> {
+fn merge<'a>(
+    a: Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
+    b: Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
+) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
     let mut seen: HashSet<TargetLabelKeyRef> = HashSet::new();
     let mut res = Vec::new();
     for layer in a.into_iter().zip_longest(b) {
         let mut res1 = Vec::new();
         let (left, right) = layer.or_default();
 
-        for item in left.into_iter().chain(right) {
+        for (item, reason) in left.into_iter().chain(right) {
             if seen.insert(item.label_key()) && cxx_rule_type(&item.rule_type) {
-                res1.push(item)
+                res1.push((item, reason))
             }
         }
         if !res1.is_empty() {
-            res1.sort_by_key(|x| x.label_key());
+            res1.sort_by_key(|(x, _)| x.label_key());
             res.push(res1)
         }
     }
@@ -122,7 +126,7 @@ mod tests {
             ]),
             None,
         );
-        let mut res = res.concat().map(|x| x.label());
+        let mut res = res.concat().map(|(x, _)| x.label());
         res.sort();
         let want = vec![
             TargetLabel::new("root//:bin1"),

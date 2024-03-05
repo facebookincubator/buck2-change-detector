@@ -26,6 +26,7 @@ pub mod rerun;
 pub mod sapling;
 pub mod sudo;
 
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::stdout;
@@ -54,6 +55,7 @@ use crate::buck::types::TargetLabelKeyRef;
 use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
 use crate::check::ValidationError;
+use crate::diff::ImpactReason;
 use crate::graph_size::GraphSize;
 use crate::output::Output;
 use crate::output::OutputFormat;
@@ -265,12 +267,18 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     step(&format!(
         "finish with {immediate_changes} immediate changes, {total_changes} total changes"
     ));
+    // BTreeMap so that reasons are consistently ordered in logs
+    let mut reason_counts: BTreeMap<ImpactReason, u64> = BTreeMap::new();
+    for &(_, reason) in recursive.iter().flatten() {
+        *reason_counts.entry(reason).or_default() += 1;
+    }
     td_util::scuba!(
         event: BTD_SUCCESS,
         duration_ms: t.elapsed().as_millis(),
         data: json!({
             "immediate_changes": immediate_changes,
             "total_changes": total_changes,
+            "reason_counts": reason_counts,
         })
     );
     Ok(())
@@ -382,7 +390,7 @@ impl OutputFormat {
 }
 
 fn print_recursive_changes<'a, T: Serialize + 'a>(
-    changes: &[Vec<&'a BuckTarget>],
+    changes: &[Vec<(&'a BuckTarget, ImpactReason)>],
     sudos: &HashSet<TargetLabelKeyRef>,
     output: OutputFormat,
     mut augment: impl FnMut(&'a BuckTarget, Output<'a>) -> T,
@@ -390,7 +398,7 @@ fn print_recursive_changes<'a, T: Serialize + 'a>(
     if output == OutputFormat::Text {
         for (depth, xs) in changes.iter().enumerate() {
             println!("Level {}", depth);
-            for x in xs {
+            for (x, _) in xs {
                 println!("  {}", x.label());
             }
         }
@@ -400,10 +408,10 @@ fn print_recursive_changes<'a, T: Serialize + 'a>(
             .enumerate()
             .flat_map(|(depth, xs)| {
                 xs.iter()
-                    .map(move |x| (depth, *x, sudos.contains(&x.label_key())))
+                    .map(move |&(x, r)| (depth, x, sudos.contains(&x.label_key()), r))
             })
-            .map(|(depth, x, uses_sudo)| {
-                augment(x, Output::from_target(x, depth as u64, uses_sudo))
+            .map(|(depth, x, uses_sudo, reason)| {
+                augment(x, Output::from_target(x, depth as u64, uses_sudo, reason))
             });
 
         let out = stdout().lock();
