@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::Context as _;
 
@@ -18,8 +19,13 @@ use crate::buck::types::CellPath;
 use crate::buck::types::CellRelativePath;
 use crate::buck::types::ProjectRelativePath;
 
+struct CellData {
+    path: ProjectRelativePath,
+    build_files: Vec<String>,
+}
+
 pub struct CellInfo {
-    cells: HashMap<CellName, ProjectRelativePath>,
+    cells: HashMap<CellName, CellData>,
     /// Sorted by path length, so the longest is first
     paths: Vec<(CellName, ProjectRelativePath)>,
 }
@@ -59,14 +65,20 @@ impl CellInfo {
                 Some(rest) => {
                     cells.insert(
                         CellName::new(&k),
-                        ProjectRelativePath::new(rest.trim_start_matches('/')),
+                        CellData {
+                            path: ProjectRelativePath::new(rest.trim_start_matches('/')),
+                            build_files: Self::default_build_files(&k)
+                                .iter()
+                                .map(|x| (*x).to_owned())
+                                .collect(),
+                        },
                     );
                 }
             }
         }
         let mut paths = cells
             .iter()
-            .map(|(k, v)| ((*k).clone(), (*v).clone()))
+            .map(|(k, v)| ((*k).clone(), v.path.clone()))
             .collect::<Vec<_>>();
         paths.sort_by_key(|x| -(x.1.as_str().len() as isize));
 
@@ -75,7 +87,7 @@ impl CellInfo {
 
     pub fn resolve(&self, path: &CellPath) -> anyhow::Result<ProjectRelativePath> {
         match self.cells.get(&path.cell()) {
-            Some(prefix) => Ok(prefix.join(path.path().as_str())),
+            Some(data) => Ok(data.path.join(path.path().as_str())),
             None => Err(anyhow::anyhow!("Unknown cell, {:?}", path)),
         }
     }
@@ -94,12 +106,30 @@ impl CellInfo {
         ))
     }
 
-    pub fn build_files(&self, cell: &CellName) -> &[&str] {
-        let cell = cell.as_str();
+    /// The default build files that we hardcode for now.
+    fn default_build_files(cell: &str) -> &'static [String] {
+        // TODO: We eventually want to remove the hardcoding
         if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
-            &["TARGETS.v2", "TARGETS", "BUCK.v2", "BUCK"]
+            static RESULT: LazyLock<Vec<String>> = LazyLock::new(|| {
+                vec![
+                    "TARGETS.v2".to_owned(),
+                    "TARGETS".to_owned(),
+                    "BUCK.v2".to_owned(),
+                    "BUCK".to_owned(),
+                ]
+            });
+            &RESULT
         } else {
-            &["BUCK.v2", "BUCK"]
+            static RESULT: LazyLock<Vec<String>> =
+                LazyLock::new(|| vec!["BUCK.v2".to_owned(), "BUCK".to_owned()]);
+            &RESULT
+        }
+    }
+
+    pub fn build_files(&self, cell: &CellName) -> &[String] {
+        match self.cells.get(cell) {
+            Some(data) => &data.build_files,
+            None => Self::default_build_files(cell.as_str()),
         }
     }
 }

@@ -11,6 +11,7 @@
 // and we'd like to use doctests.
 
 #![feature(exit_status_error)]
+#![feature(lazy_cell)]
 #![forbid(unsafe_code)]
 // Things we disagree with
 #![allow(clippy::len_without_is_empty)]
