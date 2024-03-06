@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use crate::project::TdProject;
 
-const FBANDROID_TEST_SELECTION_CONFIG_JOB_METADATA_KEY: &str = "fbandroid.test_selection_config'";
-const FBOBJC_TEST_SELECTION_CONFIG_JOB_METADATA_KEY: &str = "fbobjc.test_selection_config'";
+const FBANDROID_TEST_SELECTION_CONFIG_JOB_METADATA_KEY: &str = "fbandroid.test_selection_config";
+const FBOBJC_TEST_SELECTION_CONFIG_JOB_METADATA_KEY: &str = "fbobjc.test_selection_config";
 
 pub fn unpack_project_metadata(
     project: TdProject,
@@ -43,5 +43,41 @@ pub fn unpack_project_metadata(
             ret
         }
         _ => job_metadata.to_vec(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unpack_project_metadata() {
+        let job_metadata: Vec<(String, String)> = vec![
+            (
+                "fbandroid.test_selection_config".into(),
+                r#"{"test.abc": "1", "test.def": "2"}"#.into(),
+            ),
+            ("foo".into(), "bar".into()),
+            (
+                "fbobjc.test_selection_config".into(),
+                r#"{"test.xyz": "1"}"#.into(),
+            ),
+        ];
+
+        assert_eq!(
+            unpack_project_metadata(TdProject::Fbandroid, &job_metadata),
+            [
+                vec![
+                    ("test.abc".into(), "1".into()),
+                    ("test.def".into(), "2".into())
+                ],
+                job_metadata.clone(),
+            ]
+            .concat()
+        );
+        assert_eq!(
+            unpack_project_metadata(TdProject::Fbobjc, &job_metadata),
+            [vec![("test.xyz".into(), "1".into()),], job_metadata.clone(),].concat()
+        );
     }
 }
