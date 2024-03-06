@@ -45,7 +45,7 @@ impl CellInfo {
         Self::parse(&data)
     }
 
-    pub fn parse(data: &str) -> anyhow::Result<Self> {
+    fn parse_cells_data(data: &str) -> anyhow::Result<HashMap<CellName, CellData>> {
         let json: HashMap<String, String> = serde_json::from_str(data)?;
 
         // We need to find the shortest path, as that will be the prefix and we want project relative paths
@@ -76,12 +76,21 @@ impl CellInfo {
                 }
             }
         }
+        Ok(cells)
+    }
+
+    fn create_paths(cells: &HashMap<CellName, CellData>) -> Vec<(CellName, ProjectRelativePath)> {
         let mut paths = cells
             .iter()
             .map(|(k, v)| ((*k).clone(), v.path.clone()))
             .collect::<Vec<_>>();
         paths.sort_by_key(|x| -(x.1.as_str().len() as isize));
+        paths
+    }
 
+    pub fn parse(data: &str) -> anyhow::Result<Self> {
+        let cells = Self::parse_cells_data(data)?;
+        let paths = Self::create_paths(&cells);
         Ok(Self { cells, paths })
     }
 
