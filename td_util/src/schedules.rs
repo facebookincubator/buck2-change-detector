@@ -50,6 +50,8 @@ pub enum ScheduleType {
     ContinuousStable,
     #[serde(rename = "landcastle")]
     Landcastle, // Should this be just "land"?
+    #[serde(rename = "postcommit")]
+    Postcommit,
 }
 
 impl ScheduleType {
