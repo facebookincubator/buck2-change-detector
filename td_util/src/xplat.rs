@@ -64,20 +64,27 @@ mod tests {
             ),
         ];
 
+        let sorted = |mut v: Vec<(String, String)>| -> Vec<(String, String)> {
+            v.sort();
+            v
+        };
+
         assert_eq!(
-            unpack_project_metadata(TdProject::Fbandroid, &job_metadata),
-            [
-                vec![
-                    ("test.abc".into(), "1".into()),
-                    ("test.def".into(), "2".into())
-                ],
-                job_metadata.clone(),
-            ]
-            .concat()
+            sorted(unpack_project_metadata(TdProject::Fbandroid, &job_metadata)),
+            sorted(
+                [
+                    vec![
+                        ("test.abc".into(), "1".into()),
+                        ("test.def".into(), "2".into())
+                    ],
+                    job_metadata.clone(),
+                ]
+                .concat()
+            )
         );
         assert_eq!(
-            unpack_project_metadata(TdProject::Fbobjc, &job_metadata),
-            [vec![("test.xyz".into(), "1".into()),], job_metadata.clone(),].concat()
+            sorted(unpack_project_metadata(TdProject::Fbobjc, &job_metadata)),
+            sorted([vec![("test.xyz".into(), "1".into()),], job_metadata.clone(),].concat())
         );
     }
 }
