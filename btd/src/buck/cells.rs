@@ -119,14 +119,8 @@ impl CellInfo {
     fn default_build_files(cell: &str) -> &'static [String] {
         // TODO: We eventually want to remove the hardcoding
         if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
-            static RESULT: LazyLock<Vec<String>> = LazyLock::new(|| {
-                vec![
-                    "TARGETS.v2".to_owned(),
-                    "TARGETS".to_owned(),
-                    "BUCK.v2".to_owned(),
-                    "BUCK".to_owned(),
-                ]
-            });
+            static RESULT: LazyLock<Vec<String>> =
+                LazyLock::new(|| vec!["TARGETS.v2".to_owned(), "TARGETS".to_owned()]);
             &RESULT
         } else {
             static RESULT: LazyLock<Vec<String>> =
