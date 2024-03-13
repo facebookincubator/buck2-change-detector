@@ -454,9 +454,11 @@ impl CellPath {
     /// assert!(!CellPath::new("foo//bar/NOT_PACKAGE").is_package_file());
     /// assert!(!CellPath::new("foo//bar/TARGETS").is_package_file());
     /// assert!(CellPath::new("foo//PACKAGE").is_package_file());
+    /// assert!(CellPath::new("foo//bar/BUCK_TREE").is_package_file());
     /// ```
     pub fn is_package_file(&self) -> bool {
-        self.0.as_str().ends_with("/PACKAGE")
+        let s = self.0.as_str();
+        s.ends_with("/PACKAGE") || s.ends_with("/BUCK_TREE")
     }
 
     /// ```
