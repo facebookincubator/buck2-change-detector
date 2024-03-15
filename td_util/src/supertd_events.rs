@@ -123,6 +123,14 @@ macro_rules! scuba {
     ( @SET_FIELD ( $builder:ident, duration, $value:expr ) ) => {
         $builder.add("duration_ms", ::std::time::Duration::as_millis(&$value));
     };
+    ( @SET_FIELD ( $builder:ident, sample_rate, $value:expr ) ) => {
+        if let Some(sample_rate) = ::std::num::NonZeroU64::new($value) {
+            $builder.sampled(sample_rate);
+        } else {
+            $crate::supertd_events::tracing::error!(
+                "`sample_rate` must be nonzero in `scuba!` macro. This sample will always be logged.");
+        }
+    };
     ( @SET_FIELD ( $builder:ident, duration_ms, $value:expr ) ) => {
         compile_error!("unrecognized column name in `scuba!` macro: duration_ms (use `duration` instead)");
     };
@@ -133,9 +141,10 @@ macro_rules! scuba {
 
 /// Get the sample builder for the `supertd_events` dataset.
 ///
-/// Most use cases should use the [`scuba!`] macro instead of this function, but
-/// this function can be used to access the underlying [`ScubaSampleBuilder`]
-/// (in order to do things like set the sampling rate).
+/// Please use the [`scuba!`] macro instead of this function, since it provides
+/// additional type safety (e.g., prevents typos in column names). This function
+/// is exposed only for internal use by the macro.
+#[doc(hidden)]
 pub fn sample_builder() -> ScubaSampleBuilder {
     BUILDER
         .get()
