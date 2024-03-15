@@ -78,11 +78,12 @@ pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
 /// # Examples
 ///
 /// ```
-/// # let foos_run = 10;
-/// # let bars_launched = 2;
+/// # let f = || (10, 2);
+/// let t = std::time::Instant::now();
+/// let (foos_run, bars_launched) = f();
 /// td_util::scuba!(
 ///     event: BTD_SUCCESS,
-///     count: foos_run + bars_launched,
+///     duration: t.elapsed(),
 ///     data: json!({
 ///         "arbitrary": ["JSON", "object"],
 ///         "foos_run": foos_run,
@@ -92,7 +93,7 @@ pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
 /// ```
 #[macro_export]
 macro_rules! scuba {
-    ( event: $event:ident, $($key:ident : $value:expr),* $(,)? ) => {
+    ( event: $event:ident $(, $key:ident : $value:expr)* $(,)? ) => {
         let mut builder = $crate::supertd_events::sample_builder();
         builder.add("event", format!("{:?}", &$crate::supertd_events::Event::$event));
         $($crate::scuba! { @SET_FIELD(builder, $key, $value) })*
@@ -101,11 +102,11 @@ macro_rules! scuba {
                 "Failed to log to supertd_events Scuba: {:?}", e);
         }
     };
-    ( event: $event:ident ) => {
-        $crate::scuba! { event: $event, }
-    };
     ( $($key:ident : $value:expr),* $(,)? ) => {
         compile_error!("`event` must be the first field in the `scuba!` macro");
+    };
+    ( @SET_FIELD ( $builder:ident, event, $value:expr ) ) => {
+        compile_error!("duplicate `event` field in `scuba!` macro");
     };
     ( @SET_FIELD ( $builder:ident, data, $value:expr ) ) => {{
         use $crate::supertd_events::serde_json::json;
@@ -119,8 +120,14 @@ macro_rules! scuba {
             }
         }
     }};
+    ( @SET_FIELD ( $builder:ident, duration, $value:expr ) ) => {
+        $builder.add("duration_ms", ::std::time::Duration::as_millis(&$value));
+    };
+    ( @SET_FIELD ( $builder:ident, duration_ms, $value:expr ) ) => {
+        compile_error!("unrecognized column name in `scuba!` macro: duration_ms (use `duration` instead)");
+    };
     ( @SET_FIELD ( $builder:ident, $key:ident, $value:expr ) ) => {
-        $builder.add(stringify!($key), $value);
+        compile_error!(concat!("unrecognized column name in `scuba!` macro: ", stringify!($key)));
     };
 }
 

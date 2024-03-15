@@ -275,7 +275,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     }
     td_util::scuba!(
         event: BTD_SUCCESS,
-        duration_ms: t.elapsed().as_millis(),
+        duration: t.elapsed(),
         data: json!({
             "immediate_changes": immediate_changes,
             "total_changes": total_changes,
