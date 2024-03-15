@@ -90,7 +90,9 @@ impl Buck2 {
 
     pub fn cells(&mut self) -> anyhow::Result<String> {
         let mut command = self.command();
-        command.args(["audit", "cell", "--json"]);
+        // It doesn't matter which config we run cells in, they should all be the same,
+        // so avoid invaliding the daemon.
+        command.args(["audit", "cell", "--json", "--reuse-current-config"]);
         command.current_dir(self.root()?);
         let res = with_command(command, |mut command| {
             let res = command.output()?;
