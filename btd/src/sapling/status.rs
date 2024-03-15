@@ -98,4 +98,11 @@ R quux.js
             ]
         );
     }
+
+    #[test]
+    fn test_status_error() {
+        assert!(parse_status("X quux.js").is_err());
+        assert!(parse_status("notaline").is_err());
+        assert!(parse_status("not a line").is_err());
+    }
 }
