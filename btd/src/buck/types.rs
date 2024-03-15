@@ -244,7 +244,7 @@ impl TargetPattern {
         }
     }
 
-    ///```
+    /// ```
     /// use btd::buck::types::Package;
     /// use btd::buck::types::TargetPattern;
     /// assert!(TargetPattern::new("foo//bar:").matches_package(&Package::new("foo//bar")));
