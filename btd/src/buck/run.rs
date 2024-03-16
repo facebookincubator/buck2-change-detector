@@ -104,6 +104,28 @@ impl Buck2 {
         Ok(String::from_utf8(res.stdout)?)
     }
 
+    pub fn audit_config(&mut self) -> anyhow::Result<String> {
+        let mut command = self.command();
+        command.args([
+            "audit",
+            "config",
+            "--json",
+            "--all-cells",
+            "buildfile.name",
+            "buildfile.name_v2",
+            "--reuse-current-config",
+        ]);
+        command.current_dir(self.root()?);
+        let res = with_command(command, |mut command| {
+            let res = command.output()?;
+            res.status.exit_ok().with_context(|| {
+                format!("Buck2 stderr: {}", String::from_utf8_lossy(&res.stderr))
+            })?;
+            Ok(res)
+        })?;
+        Ok(String::from_utf8(res.stdout)?)
+    }
+
     /// Does a package exist. Doesn't actually invoke Buck2, but does look at the file system.
     pub fn does_package_exist(&mut self, cells: &CellInfo, x: &Package) -> anyhow::Result<bool> {
         let root = self.root()?;

@@ -94,6 +94,46 @@ impl CellInfo {
         Ok(Self { cells, paths })
     }
 
+    pub fn load_config_data(&mut self, file: &Path) -> anyhow::Result<()> {
+        let data = fs::read_to_string(file)
+            .with_context(|| format!("When reading `{}`", file.display()))?;
+        self.parse_config_data(&data)
+    }
+
+    pub fn parse_config_data(&mut self, data: &str) -> anyhow::Result<()> {
+        let json: HashMap<String, String> = serde_json::from_str(data)?;
+        // name_v2 needs to take precedence, so evaluate it second
+        for v2 in [false, true] {
+            let want_key = if v2 {
+                "buildfile.name_v2"
+            } else {
+                "buildfile.name"
+            };
+            for (k, v) in json.iter() {
+                // Expecting `cell//buildfile.name` = `BUCK,TARGETS`
+                if let Some((cell, key)) = k.split_once("//") {
+                    if key == want_key {
+                        let mut names = v
+                            .split(',')
+                            .map(|x| x.trim().to_owned())
+                            .collect::<Vec<_>>();
+                        if !v2 {
+                            // For name, we infer the .v2 suffix automatically
+                            names = names
+                                .into_iter()
+                                .flat_map(|x| [format!("{x}.v2"), x])
+                                .collect();
+                        }
+                        if let Some(data) = self.cells.get_mut(&CellName::new(cell)) {
+                            data.build_files = names;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn resolve(&self, path: &CellPath) -> anyhow::Result<ProjectRelativePath> {
         match self.cells.get(&path.cell()) {
             Some(data) => Ok(data.path.join(path.path().as_str())),
@@ -169,5 +209,36 @@ mod tests {
         testcase(&cells, "root//file.txt", "file.txt");
 
         assert!(cells.resolve(&CellPath::new("missing//foo.txt")).is_err());
+    }
+
+    #[test]
+    fn test_cell_config() {
+        let value = serde_json::json!(
+            {
+                "root": "/Users/ndmitchell/repo",
+                "cell1": "/Users/ndmitchell/repo/cell1",
+                "cell2": "/Users/ndmitchell/repo/cell2",
+              }
+        );
+        let mut cells = CellInfo::parse(&serde_json::to_string(&value).unwrap()).unwrap();
+        let value = serde_json::json!(
+            {
+                "cell1//buildfile.name":"BUCK",
+                "cell1//buildfile.name_v2":"TARGETS",
+                "cell2//buildfile.name":"A1,A2",
+            }
+        );
+        cells
+            .parse_config_data(&serde_json::to_string(&value).unwrap())
+            .unwrap();
+        assert_eq!(cells.build_files(&CellName::new("cell1")), &["TARGETS"]);
+        assert_eq!(
+            cells.build_files(&CellName::new("cell2")),
+            &["A1.v2", "A1", "A2.v2", "A2"]
+        );
+        assert_eq!(
+            cells.build_files(&CellName::new("cell3")),
+            &["BUCK.v2", "BUCK"]
+        );
     }
 }

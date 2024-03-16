@@ -63,6 +63,9 @@ use crate::output::OutputFormat;
 use crate::rerun::PackageStatus;
 use crate::sapling::status::read_status;
 
+/// Set to `true` once we have `buck2 audit config --all-cells` deployed.
+const BUCK2_ALL_CELLS_DEPLOYED: bool = false;
+
 /// Buck-based target determinator.
 #[derive(Parser)]
 pub struct Args {
@@ -70,6 +73,11 @@ pub struct Args {
     /// Otherwise will run the Buck command to figure it out.
     #[arg(long, value_name = "FILE")]
     cells: Option<PathBuf>,
+
+    /// File containing the output of `buck2 audit config --cells --json` in the root of the repo.
+    /// If the `cells` are empty this will run the Buck command to figure it out.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
 
     /// File containing the output of `hg status` for the relevant diff.
     #[arg(long, value_name = "FILE")]
@@ -168,10 +176,19 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     let step = |name| info!("Starting {} at {:.3}s", name, t.elapsed().as_secs_f64());
 
     step("reading cells");
-    let cells = match &args.cells {
+    let mut cells = match &args.cells {
         Some(file) => CellInfo::new(file)?,
         None => CellInfo::parse(&buck2.cells()?)?,
     };
+    step("reading config");
+    match &args.config {
+        Some(file) => cells.load_config_data(file)?,
+        None if args.cells.is_none() && BUCK2_ALL_CELLS_DEPLOYED => {
+            cells.parse_config_data(&buck2.audit_config()?)?
+        }
+        _ => (), // We don't auto fill in config data if the user has explicit cells
+    }
+
     step("reading changes");
     let changes = Changes::new(&cells, read_status(&args.changes)?)?;
     step("reading base");
