@@ -8,6 +8,7 @@
  */
 
 //! Parsing directives from skycastle
+
 pub fn get_app_specific_build_directives(directives: &Option<Vec<String>>) -> Option<Vec<String>> {
     directives.as_ref().map(|directives| {
         directives
