@@ -9,13 +9,13 @@ about the targets before/after.
 As an example:
 
 ```shell
-btd --cells ~/data/cells.json --changes ~/data/changes.txt --base ~/data/base.jsonl --diff ~/data/diff.jsonl
+btd --changes ~/data/changes.txt --base ~/data/base.jsonl --diff ~/data/diff.jsonl
 ```
 
 Or to have BTD run Buck2 itself:
 
 ```shell
-btd --cells ~/data/cells.json --changes ~/data/changes.txt --base ~/data/base.jsonl --universe cell//...
+btd --changes ~/data/changes.txt --base ~/data/base.jsonl --universe cell//...
 ```
 
 Where:
@@ -34,6 +34,19 @@ Where:
 
 BTD reports the list of changed targets at level 0 (immediate impact), and
 increasing levels (dependencies of something in a lower level).
+
+By default `btd` will run `buck2` itself to figure out cell-level configuration
+information. It will do so using either `buck2` on the `$PATH` or, if specified,
+the binary passed with `--buck2`. Alternatively, you can provide the cell-level
+configuration with the flags:
+
+- `--cells ~/data/cells.json` is the output of `buck2 audit cell --json` in the
+  root of the repo.
+- `--config ~/data/config.json` is the output of
+  `buck2 audit config --json --all-cells buildfile.name buildfile.name_v2` in
+  the root of the repo. If `--cells` is present but `--config` is absent then
+  BTD will use the Buck2 default values for these fields, namely `BUCK.v2` and
+  `BUCK` as the buildfile name.
 
 ## When to use BTD
 
