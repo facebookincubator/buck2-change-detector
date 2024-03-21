@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cli;
+pub mod command;
 pub mod directives;
 pub mod json;
 pub mod no_hash;

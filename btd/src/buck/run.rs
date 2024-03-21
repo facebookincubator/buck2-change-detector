@@ -12,13 +12,12 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Instant;
 
 use anyhow::Context as _;
 use itertools::Itertools;
 use targets::targets_arguments;
+use td_util::command::with_command;
 use tempfile::NamedTempFile;
-use tracing::debug;
 
 use crate::buck::cells::CellInfo;
 use crate::buck::types::Package;
@@ -166,27 +165,4 @@ impl Buck2 {
 
         with_command(command, |mut command| Ok(command.status()?.exit_ok()?))
     }
-}
-
-/// Run a command printing out debugging information
-fn with_command<T>(
-    command: Command,
-    run: impl Fn(Command) -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    debug!("Running: {}", display_command(&command));
-    let start = Instant::now();
-    let res = run(command)?;
-    debug!("Command succeeded in {:.2}s", start.elapsed().as_secs_f64());
-    Ok(res)
-}
-
-/// Works only for command lines we produce, without environment variables
-/// or any argument escaping
-fn display_command(command: &Command) -> String {
-    let mut res = command.get_program().to_owned();
-    for x in command.get_args() {
-        res.push(" ");
-        res.push(x);
-    }
-    res.to_string_lossy().into_owned()
 }
