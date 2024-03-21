@@ -63,9 +63,6 @@ use crate::output::OutputFormat;
 use crate::rerun::PackageStatus;
 use crate::sapling::status::read_status;
 
-/// Set to `true` once we have `buck2 audit config --all-cells` deployed.
-const BUCK2_ALL_CELLS_DEPLOYED: bool = true;
-
 /// Buck-based target determinator.
 #[derive(Parser)]
 pub struct Args {
@@ -183,9 +180,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     step("reading config");
     match &args.config {
         Some(file) => cells.load_config_data(file)?,
-        None if args.cells.is_none() && BUCK2_ALL_CELLS_DEPLOYED => {
-            cells.parse_config_data(&buck2.audit_config()?)?
-        }
+        None if args.cells.is_none() => cells.parse_config_data(&buck2.audit_config()?)?,
         _ => (), // We don't auto fill in config data if the user has explicit cells
     }
 
