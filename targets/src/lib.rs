@@ -10,16 +10,14 @@
 // We use a separate lib since doctests in a binary are ignored,
 // and we'd like to use doctests.
 
-#![feature(iter_intersperse)]
 #![forbid(unsafe_code)]
 
-use std::ffi::OsStr;
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 
 use clap::Parser;
+use td_util::command::display_command;
 
 /// Run `buck2 targets` with all the arguments required for BTD/Citadel.
 #[derive(Parser)]
@@ -106,15 +104,7 @@ pub fn run(
     command.args(arguments);
 
     if dry_run {
-        println!(
-            "{} {}",
-            buck,
-            command
-                .get_args()
-                .intersperse(OsStr::new(" "))
-                .collect::<OsString>()
-                .to_string_lossy()
-        );
+        println!("{}", display_command(&command));
         return Ok(());
     }
 
