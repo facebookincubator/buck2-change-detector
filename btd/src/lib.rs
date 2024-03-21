@@ -64,7 +64,7 @@ use crate::rerun::PackageStatus;
 use crate::sapling::status::read_status;
 
 /// Set to `true` once we have `buck2 audit config --all-cells` deployed.
-const BUCK2_ALL_CELLS_DEPLOYED: bool = false;
+const BUCK2_ALL_CELLS_DEPLOYED: bool = true;
 
 /// Buck-based target determinator.
 #[derive(Parser)]
