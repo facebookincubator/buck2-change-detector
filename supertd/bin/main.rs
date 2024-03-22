@@ -20,6 +20,7 @@ use td_util::cli::get_args;
 #[derive(Parser)]
 #[command(name = "supertd", version = get_version())]
 enum Args {
+    Audit(audit::Args),
     Btd(btd::Args),
     #[cfg(fbcode_build)]
     Citadel(verifiable_matcher::Args),
@@ -50,6 +51,7 @@ pub fn main(fb: FacebookInit) -> anyhow::Result<()> {
     match Args::from_arg_matches(&matches) {
         Err(err) => err.format(&mut Args::command()).exit(),
         Ok(args) => match args {
+            Args::Audit(args) => audit::main(args),
             Args::Btd(args) => btd::main(args),
             #[cfg(fbcode_build)]
             Args::Citadel(args) => verifiable_matcher::main(args),

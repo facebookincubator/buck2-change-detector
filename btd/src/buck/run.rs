@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::Context as _;
+use audit::audit_cell_arguments;
+use audit::audit_config_arguments;
 use itertools::Itertools;
 use targets::targets_arguments;
 use td_util::command::with_command;
@@ -89,9 +91,7 @@ impl Buck2 {
 
     pub fn cells(&mut self) -> anyhow::Result<String> {
         let mut command = self.command();
-        // It doesn't matter which config we run cells in, they should all be the same,
-        // so avoid invaliding the daemon.
-        command.args(["audit", "cell", "--json", "--reuse-current-config"]);
+        command.args(audit_cell_arguments());
         command.current_dir(self.root()?);
         let res = with_command(command, |mut command| {
             let res = command.output()?;
@@ -105,15 +105,7 @@ impl Buck2 {
 
     pub fn audit_config(&mut self) -> anyhow::Result<String> {
         let mut command = self.command();
-        command.args([
-            "audit",
-            "config",
-            "--json",
-            "--all-cells",
-            "buildfile.name",
-            "buildfile.name_v2",
-            "--reuse-current-config",
-        ]);
+        command.args(audit_config_arguments());
         command.current_dir(self.root()?);
         let res = with_command(command, |mut command| {
             let res = command.output()?;

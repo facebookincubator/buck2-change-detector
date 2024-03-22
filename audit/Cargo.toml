@@ -1,10 +1,10 @@
 [package]
-name = "supertd"
+name = "audit"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "supertd"
+name = "audit"
 path = "bin/main.rs"
 
 [dependencies]
@@ -13,6 +13,3 @@ clap = {version = "4.1.4", features = ["derive"]}
 fbinit = { workspace = true }
 
 td_util = {path = "../td_util"}
-audit = {path = "../audit"}
-btd = {path = "../btd"}
-targets = {path = "../targets"}
