@@ -40,13 +40,11 @@ information. It will do so using either `buck2` on the `$PATH` or, if specified,
 the binary passed with `--buck2`. Alternatively, you can provide the cell-level
 configuration with the flags:
 
-- `--cells ~/data/cells.json` is the output of `buck2 audit cell --json` in the
-  root of the repo.
-- `--config ~/data/config.json` is the output of
-  `buck2 audit config --json --all-cells buildfile.name buildfile.name_v2` in
-  the root of the repo. If `--cells` is present but `--config` is absent then
-  BTD will use the Buck2 default values for these fields, namely `BUCK.v2` and
-  `BUCK` as the buildfile name.
+- `--cells ~/data/cells.json` is the output of `supertd audit cell` in the root
+  of the repo.
+- `--config ~/data/config.json` is the output of `supertd audit config` in the
+  root of the repo. If `--cells` is present but `--config` is absent then BTD
+  will use the Buck2 default values for all `.buckconfig` settings.
 
 ## When to use BTD
 
