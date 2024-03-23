@@ -22,8 +22,6 @@ Where:
 
 - `btd` is the binary. Within Meta a precompiled version of `btd` is available
   at `~/fbsource/tools/utd/btd/btd`.
-- `cells.json` is the output of `buck2 audit cell --json` in the root of the
-  repo.
 - `changes.txt` is the output of
   `hg status --rev hash_before::hash_after -amr --root-relative`.
 - `base.jsonl` is the output of `supertd targets cell//... --output base.jsonl`
