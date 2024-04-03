@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::buck::cells::CellInfo;
+use crate::buck::config::is_buck_deployment;
 use crate::buck::package_resolver::PackageResolver;
 use crate::buck::targets::Targets;
 use crate::buck::types::CellName;
@@ -43,6 +44,10 @@ fn is_buckconfig(path: &CellPath) -> bool {
         || str.contains("/buckconfigs/")
 }
 
+fn invalidates_graph(path: &CellPath) -> bool {
+    is_buckconfig(path) || is_buck_deployment(path)
+}
+
 /// Compute the targets we should rerun, or None if we should do everything.
 pub fn rerun(
     cells: &CellInfo,
@@ -50,7 +55,7 @@ pub fn rerun(
     changes: &Changes,
 ) -> Option<HashMap<Package, PackageStatus>> {
     // if there are any .buckconfig changes, we should give up
-    if changes.cell_paths().any(is_buckconfig) {
+    if changes.cell_paths().any(invalidates_graph) {
         return None;
     }
 
