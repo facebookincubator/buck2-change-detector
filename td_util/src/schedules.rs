@@ -52,6 +52,12 @@ pub enum ScheduleType {
     Landcastle, // Should this be just "land"?
     #[serde(rename = "postcommit")]
     Postcommit,
+    #[serde(rename = "testwarden")]
+    Testwarden,
+    #[serde(rename = "greenwarden")]
+    Greenwarden,
+    #[serde(rename = "disabled")]
+    Disabled,
 }
 
 impl ScheduleType {
