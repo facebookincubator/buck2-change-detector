@@ -30,14 +30,16 @@ pub fn get_app_specific_build_directives(directives: &Option<Vec<String>>) -> Op
     })
 }
 
-pub fn app_specific_build_directives_contains_name(
+pub fn app_specific_build_directives_matches_name(
     app_specific_build_directives: &Option<Vec<String>>,
     name: &String,
 ) -> bool {
     app_specific_build_directives
         .as_ref()
         .map_or(false, |app_specific_build_directives| {
-            app_specific_build_directives.contains(name)
+            app_specific_build_directives
+                .iter()
+                .any(|directive| name.starts_with(directive))
         })
 }
 
@@ -74,11 +76,11 @@ mod tests {
             "directive2".to_string(),
             "directive3".to_string(),
         ]);
-        assert!(app_specific_build_directives_contains_name(
+        assert!(app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive1".to_string()
         ));
-        assert!(!app_specific_build_directives_contains_name(
+        assert!(!app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive4".to_string()
         ));
@@ -86,9 +88,22 @@ mod tests {
     #[test]
     fn test_app_specific_build_directives_contains_name_none() {
         let app_specific_build_directives = None;
-        assert!(!app_specific_build_directives_contains_name(
+        assert!(!app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive1".to_string()
+        ));
+    }
+
+    #[test]
+    fn test_app_specific_build_directives_matches_partially() {
+        let app_specific_build_directives = Some(vec![
+            "directive1".to_string(),
+            "directive2".to_string(),
+            "directive3".to_string(),
+        ]);
+        assert!(app_specific_build_directives_matches_name(
+            &app_specific_build_directives,
+            &"directive1234".to_string()
         ));
     }
 }
