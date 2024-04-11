@@ -33,13 +33,18 @@ pub fn get_app_specific_build_directives(directives: &Option<Vec<String>>) -> Op
 pub fn app_specific_build_directives_matches_name(
     app_specific_build_directives: &Option<Vec<String>>,
     name: &String,
+    exactly: bool,
 ) -> bool {
     app_specific_build_directives
         .as_ref()
         .map_or(false, |app_specific_build_directives| {
-            app_specific_build_directives
-                .iter()
-                .any(|directive| name.starts_with(directive))
+            app_specific_build_directives.iter().any(|directive| {
+                if exactly {
+                    name == directive
+                } else {
+                    name.starts_with(directive)
+                }
+            })
         })
 }
 
@@ -78,11 +83,13 @@ mod tests {
         ]);
         assert!(app_specific_build_directives_matches_name(
             &app_specific_build_directives,
-            &"directive1".to_string()
+            &"directive1".to_string(),
+            true
         ));
         assert!(!app_specific_build_directives_matches_name(
             &app_specific_build_directives,
-            &"directive4".to_string()
+            &"directive4".to_string(),
+            true
         ));
     }
     #[test]
@@ -90,7 +97,8 @@ mod tests {
         let app_specific_build_directives = None;
         assert!(!app_specific_build_directives_matches_name(
             &app_specific_build_directives,
-            &"directive1".to_string()
+            &"directive1".to_string(),
+            true
         ));
     }
 
@@ -103,7 +111,8 @@ mod tests {
         ]);
         assert!(app_specific_build_directives_matches_name(
             &app_specific_build_directives,
-            &"directive1234".to_string()
+            &"directive1234".to_string(),
+            false
         ));
     }
 }
