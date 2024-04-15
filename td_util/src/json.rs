@@ -92,8 +92,7 @@ pub fn write_json_lines<W: Write, T: Serialize>(
     xs: impl IntoIterator<Item = T>,
 ) -> anyhow::Result<()> {
     for x in xs.into_iter() {
-        let mut s = serde_json::Serializer::new(&mut out);
-        x.serialize(&mut s)?;
+        serde_json::to_writer(&mut out, &x)?;
         out.write_all(b"\n")?;
     }
     out.flush()?;
