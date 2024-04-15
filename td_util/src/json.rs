@@ -109,10 +109,10 @@ pub fn write_json_per_line<W: Write, T: Serialize>(
     out.write_all(b"[")?;
     if let Some(first) = it.next() {
         out.write_all(b"\n  ")?;
-        first.serialize(&mut serde_json::Serializer::new(&mut out))?;
+        serde_json::to_writer(&mut out, &first)?;
         for x in it {
             out.write_all(b",\n  ")?;
-            x.serialize(&mut serde_json::Serializer::new(&mut out))?;
+            serde_json::to_writer(&mut out, &x)?;
         }
         out.write_all(b"\n")?;
     }
