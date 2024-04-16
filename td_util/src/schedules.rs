@@ -93,4 +93,5 @@ pub enum ContinuousRunMode {
     Opt,
     OptHourly,
     OptEarlyAdoptor,
+    OptAdhoc,
 }
