@@ -89,7 +89,6 @@ pub enum ContinuousRunMode {
     Aarch64,
     #[default]
     Dev,
-    DevEarlyAdoptor,
     Opt,
     OptHourly,
     OptEarlyAdoptor,
