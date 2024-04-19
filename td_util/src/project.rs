@@ -26,6 +26,7 @@ pub enum TdProject {
     Fbcode,
     Fbandroid,
     Fbobjc,
+    Mobile,
     RL,
     Www,
     Xplat,
