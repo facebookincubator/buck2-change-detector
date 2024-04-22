@@ -195,26 +195,25 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     let diff = leak_targets(match &args.diff {
         None => {
             step("computing rerun");
-            let (modified_patterns, deleted_packages, merge) =
-                compute_rerun(&base, &changes, &mut buck2, &cells, &universe)?;
-            if modified_patterns.is_empty() && deleted_packages.is_empty() {
+            let rerun = compute_rerun(&base, &changes, &mut buck2, &cells, &universe)?;
+            if rerun.modified.is_empty() && rerun.deleted.is_empty() {
                 // No need to ask Buck if we detected nothing changed
                 (*base).clone()
             } else {
-                let new = if modified_patterns.is_empty() {
+                let new = if rerun.modified.is_empty() {
                     Targets::new(Vec::new())
                 } else {
                     step("running targets");
                     let file = NamedTempFile::new()?;
                     buck2
-                        .targets(&buck_args, &modified_patterns, file.path())
+                        .targets(&buck_args, &rerun.modified, file.path())
                         .with_context(|| format!("When running `{}`", args.buck))?;
                     step("reading diff");
                     Targets::from_file(file.path())?
                 };
-                if merge {
+                if rerun.merge {
                     step("merging diff");
-                    base.update(new, &deleted_packages)
+                    base.update(new, &rerun.deleted)
                 } else {
                     new
                 }
@@ -297,6 +296,12 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+struct Rerun {
+    modified: Vec<TargetPattern>,
+    deleted: HashSet<Package>,
+    merge: bool,
+}
+
 /// Tells us which things might have changed, and therefore what
 /// we should run buck2 targets on at the diff revision to
 /// properly check if it really did change.
@@ -306,13 +311,13 @@ fn compute_rerun(
     buck2: &mut Buck2,
     cells: &CellInfo,
     universe: &[TargetPattern],
-) -> anyhow::Result<(Vec<TargetPattern>, HashSet<Package>, bool)> {
+) -> anyhow::Result<Rerun> {
     if universe.is_empty() {
         return Err(UniverseError::NoUniverseOrDiff.into());
     }
     let rerun = rerun::rerun(cells, base, changes);
-    let mut deleted_packages: HashSet<Package> = HashSet::new();
-    let modified_patterns = match &rerun {
+    let mut deleted: HashSet<Package> = HashSet::new();
+    let modified = match &rerun {
         None => universe.to_vec(),
         Some(xs) => {
             // rerun can return packages outside the universe
@@ -329,13 +334,17 @@ fn compute_rerun(
                 if buck2.does_package_exist(cells, &x)? {
                     present.push(x.as_pattern());
                 } else {
-                    deleted_packages.insert(x);
+                    deleted.insert(x);
                 }
             }
             present
         }
     };
-    Ok((modified_patterns, deleted_packages, rerun.is_some()))
+    Ok(Rerun {
+        modified,
+        deleted,
+        merge: rerun.is_some(),
+    })
 }
 
 fn validate_universe(
