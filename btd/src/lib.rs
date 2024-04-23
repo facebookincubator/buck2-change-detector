@@ -196,22 +196,27 @@ pub fn main(args: Args) -> anyhow::Result<()> {
         None => {
             step("computing rerun");
             let rerun = compute_rerun(&base, &changes, &mut buck2, &cells, &universe)?;
-            let new = if rerun.modified.is_empty() {
+            let ask_buck = match &rerun {
+                None => &universe,
+                Some(x) => &x.modified,
+            };
+            let new = if ask_buck.is_empty() {
                 Targets::new(Vec::new())
             } else {
                 step("running targets");
                 let file = NamedTempFile::new()?;
                 buck2
-                    .targets(&buck_args, &rerun.modified, file.path())
+                    .targets(&buck_args, ask_buck, file.path())
                     .with_context(|| format!("When running `{}`", args.buck))?;
                 step("reading diff");
                 Targets::from_file(file.path())?
             };
-            if rerun.merge {
-                step("merging diff");
-                base.update(new, &rerun.deleted)
-            } else {
-                new
+            match &rerun {
+                None => new,
+                Some(rerun) => {
+                    step("merging diff");
+                    base.update(new, &rerun.deleted)
+                }
             }
         }
         Some(diff) => {
@@ -294,31 +299,33 @@ pub fn main(args: Args) -> anyhow::Result<()> {
 struct Rerun {
     modified: Vec<TargetPattern>,
     deleted: HashSet<Package>,
-    merge: bool,
 }
 
 /// Tells us which things might have changed, and therefore what
 /// we should run buck2 targets on at the diff revision to
 /// properly check if it really did change.
+///
+/// Returns `None` if everything has changed, or `Some` if only a subset has changed.
 fn compute_rerun(
     base: &Targets,
     changes: &Changes,
     buck2: &mut Buck2,
     cells: &CellInfo,
     universe: &[TargetPattern],
-) -> anyhow::Result<Rerun> {
+) -> anyhow::Result<Option<Rerun>> {
     if universe.is_empty() {
         return Err(UniverseError::NoUniverseOrDiff.into());
     }
     let rerun = rerun::rerun(cells, base, changes);
-    let mut deleted: HashSet<Package> = HashSet::new();
-    let modified = match &rerun {
-        None => universe.to_vec(),
+    match &rerun {
+        None => Ok(None),
         Some(xs) => {
+            let mut deleted: HashSet<Package> = HashSet::new();
+
             // rerun can return packages outside the universe
             // based on what BUCK files are modified. e.g. changes to
             // outside/package/BUCK will rerun foo//outside/package
-            let (mut present, unknown): (Vec<_>, Vec<_>) = xs
+            let (mut modified, unknown): (Vec<_>, Vec<_>) = xs
                 .iter()
                 .filter(|(x, _)| universe.iter().any(|p| p.matches_package(x)))
                 .partition_map(|(x, y)| match y {
@@ -327,19 +334,14 @@ fn compute_rerun(
                 });
             for x in unknown {
                 if buck2.does_package_exist(cells, &x)? {
-                    present.push(x.as_pattern());
+                    modified.push(x.as_pattern());
                 } else {
                     deleted.insert(x);
                 }
             }
-            present
+            Ok(Some(Rerun { modified, deleted }))
         }
-    };
-    Ok(Rerun {
-        modified,
-        deleted,
-        merge: rerun.is_some(),
-    })
+    }
 }
 
 fn validate_universe(
