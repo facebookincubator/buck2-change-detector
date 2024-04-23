@@ -141,6 +141,10 @@ pub struct Args {
     #[arg(long)]
     graph_size: bool,
 
+    /// Print out the patterns to rerun. Patterns will be prefixed with either `+` (added) or `-` (removed).
+    #[arg(long)]
+    print_rerun: bool,
+
     /// Reports all graph errors on the diff revision.
     #[arg(long)]
     write_errors_to_file: Option<PathBuf>,
@@ -199,6 +203,10 @@ pub fn main(args: Args) -> anyhow::Result<()> {
                 None => universe.to_vec(),
                 Some(x) => x.modified.map(|x| x.as_pattern()),
             };
+            if args.print_rerun {
+                print_rerun(&rerun);
+                return Ok(());
+            }
             let new = if ask_buck.is_empty() {
                 Targets::new(Vec::new())
             } else {
@@ -299,6 +307,21 @@ pub fn main(args: Args) -> anyhow::Result<()> {
 struct Rerun {
     modified: Vec<Package>,
     deleted: HashSet<Package>,
+}
+
+/// Print out the patterns to rerun, in diff style.
+fn print_rerun(rerun: &Option<Rerun>) {
+    match rerun {
+        None => println!("* everything"),
+        Some(rerun) => {
+            for x in &rerun.deleted {
+                println!("- {}", x);
+            }
+            for x in &rerun.modified {
+                println!("+ {}", x);
+            }
+        }
+    }
 }
 
 /// Tells us which things might have changed, and therefore what

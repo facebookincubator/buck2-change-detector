@@ -110,6 +110,7 @@ def test_run(patch_name):
         out_btd1 = Path(output_dir).joinpath("btd1.json")
         out_btd2 = Path(output_dir).joinpath("btd2.json")
         out_targets = Path(output_dir).joinpath("targets.txt")
+        out_rerun = Path(output_dir).joinpath("rerun.txt")
         btd_args = [
             "--check-dangling",
             "--cells",
@@ -165,6 +166,16 @@ def test_run(patch_name):
             output=out_btd2,
             expect_fail=btd_fail,
         )
+        run(
+            btd,
+            *btd_args,
+            "--universe",
+            "root//...",
+            "--buck",
+            buck,
+            "--print-rerun",
+            output=out_rerun,
+        )
         if not btd_fail:
             # We want to make sure our rerun logic was correct
             assert read_file(out_btd1) == read_file(out_btd2)
@@ -177,6 +188,8 @@ def test_run(patch_name):
             run(buck, "build", "@" + str(out_targets))
             # Check custom properties
             check_properties(patch_name, output)
+        rerun = read_file(out_rerun)
+        check_properties_rerun(patch_name, rerun)
 
 
 def check_properties(patch, rdeps):
@@ -215,6 +228,23 @@ def check_properties(patch, rdeps):
                 "reason": "package_values",
             }
         ]
+    else:
+        raise AssertionError("No properties known for: " + patch)
+
+
+def check_properties_rerun(patch, rerun):
+    if patch == "nothing":
+        assert rerun == ""
+    elif patch == "file":
+        assert rerun == ""
+    elif patch == "rename_inner":
+        assert rerun == "+ root//inner\n"
+    elif patch == "buckconfig":
+        assert rerun == "* everything\n"
+    elif patch == "cfg_modifiers":
+        assert rerun == "+ root//inner\n"
+    elif patch == "delete_inner":
+        assert rerun == "- root//inner\n"
     else:
         raise AssertionError("No properties known for: " + patch)
 
