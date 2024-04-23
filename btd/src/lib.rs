@@ -196,27 +196,22 @@ pub fn main(args: Args) -> anyhow::Result<()> {
         None => {
             step("computing rerun");
             let rerun = compute_rerun(&base, &changes, &mut buck2, &cells, &universe)?;
-            if rerun.modified.is_empty() && rerun.deleted.is_empty() {
-                // No need to ask Buck if we detected nothing changed
-                (*base).clone()
+            let new = if rerun.modified.is_empty() {
+                Targets::new(Vec::new())
             } else {
-                let new = if rerun.modified.is_empty() {
-                    Targets::new(Vec::new())
-                } else {
-                    step("running targets");
-                    let file = NamedTempFile::new()?;
-                    buck2
-                        .targets(&buck_args, &rerun.modified, file.path())
-                        .with_context(|| format!("When running `{}`", args.buck))?;
-                    step("reading diff");
-                    Targets::from_file(file.path())?
-                };
-                if rerun.merge {
-                    step("merging diff");
-                    base.update(new, &rerun.deleted)
-                } else {
-                    new
-                }
+                step("running targets");
+                let file = NamedTempFile::new()?;
+                buck2
+                    .targets(&buck_args, &rerun.modified, file.path())
+                    .with_context(|| format!("When running `{}`", args.buck))?;
+                step("reading diff");
+                Targets::from_file(file.path())?
+            };
+            if rerun.merge {
+                step("merging diff");
+                base.update(new, &rerun.deleted)
+            } else {
+                new
             }
         }
         Some(diff) => {

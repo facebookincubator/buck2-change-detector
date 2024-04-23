@@ -67,6 +67,11 @@ impl Targets {
 
     /// Replace the packages with those from `new`
     pub fn update(&self, mut new: Targets, removed: &HashSet<Package>) -> Self {
+        if new.0.is_empty() && removed.is_empty() {
+            // Fast path - nothing has changed
+            return self.clone();
+        }
+
         // Figure out what `new` replaces
         let mut replaced_package = HashSet::new();
         let mut replaced_import = HashSet::new();
