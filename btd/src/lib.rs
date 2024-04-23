@@ -316,8 +316,7 @@ fn compute_rerun(
     if universe.is_empty() {
         return Err(UniverseError::NoUniverseOrDiff.into());
     }
-    let rerun = rerun::rerun(cells, base, changes);
-    match &rerun {
+    match rerun::rerun(cells, base, changes) {
         None => Ok(None),
         Some(xs) => {
             let mut deleted: HashSet<Package> = HashSet::new();
@@ -326,11 +325,11 @@ fn compute_rerun(
             // based on what BUCK files are modified. e.g. changes to
             // outside/package/BUCK will rerun foo//outside/package
             let (mut modified, unknown): (Vec<_>, Vec<_>) = xs
-                .iter()
+                .into_iter()
                 .filter(|(x, _)| universe.iter().any(|p| p.matches_package(x)))
                 .partition_map(|(x, y)| match y {
                     PackageStatus::Present => Either::Left(x.as_pattern()),
-                    PackageStatus::Unknown => Either::Right(x.clone()),
+                    PackageStatus::Unknown => Either::Right(x),
                 });
             for x in unknown {
                 if buck2.does_package_exist(cells, &x)? {
