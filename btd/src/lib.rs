@@ -43,6 +43,7 @@ use itertools::Either;
 use itertools::Itertools;
 use serde::Serialize;
 use td_util::json;
+use td_util::prelude::*;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tracing::error;
@@ -197,8 +198,8 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             step("computing rerun");
             let rerun = compute_rerun(&base, &changes, &mut buck2, &cells, &universe)?;
             let ask_buck = match &rerun {
-                None => &universe,
-                Some(x) => &x.modified,
+                None => universe.to_vec(),
+                Some(x) => x.modified.map(|x| x.as_pattern()),
             };
             let new = if ask_buck.is_empty() {
                 Targets::new(Vec::new())
@@ -206,7 +207,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
                 step("running targets");
                 let file = NamedTempFile::new()?;
                 buck2
-                    .targets(&buck_args, ask_buck, file.path())
+                    .targets(&buck_args, &ask_buck, file.path())
                     .with_context(|| format!("When running `{}`", args.buck))?;
                 step("reading diff");
                 Targets::from_file(file.path())?
@@ -297,7 +298,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
 }
 
 struct Rerun {
-    modified: Vec<TargetPattern>,
+    modified: Vec<Package>,
     deleted: HashSet<Package>,
 }
 
@@ -328,12 +329,12 @@ fn compute_rerun(
                 .into_iter()
                 .filter(|(x, _)| universe.iter().any(|p| p.matches_package(x)))
                 .partition_map(|(x, y)| match y {
-                    PackageStatus::Present => Either::Left(x.as_pattern()),
+                    PackageStatus::Present => Either::Left(x),
                     PackageStatus::Unknown => Either::Right(x),
                 });
             for x in unknown {
                 if buck2.does_package_exist(cells, &x)? {
-                    modified.push(x.as_pattern());
+                    modified.push(x);
                 } else {
                     deleted.insert(x);
                 }
