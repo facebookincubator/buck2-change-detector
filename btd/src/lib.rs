@@ -39,8 +39,6 @@ use std::time::Instant;
 use anyhow::Context as _;
 use buck::types::Package;
 use clap::Parser;
-use itertools::Either;
-use itertools::Itertools;
 use serde::Serialize;
 use td_util::json;
 use td_util::prelude::*;
@@ -297,6 +295,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Default)]
 struct Rerun {
     modified: Vec<Package>,
     deleted: HashSet<Package>,
@@ -320,26 +319,25 @@ fn compute_rerun(
     match rerun::rerun(cells, base, changes) {
         None => Ok(None),
         Some(xs) => {
-            let mut deleted: HashSet<Package> = HashSet::new();
+            let mut rerun = Rerun::default();
 
             // rerun can return packages outside the universe
             // based on what BUCK files are modified. e.g. changes to
             // outside/package/BUCK will rerun foo//outside/package
-            let (mut modified, unknown): (Vec<_>, Vec<_>) = xs
-                .into_iter()
-                .filter(|(x, _)| universe.iter().any(|p| p.matches_package(x)))
-                .partition_map(|(x, y)| match y {
-                    PackageStatus::Present => Either::Left(x),
-                    PackageStatus::Unknown => Either::Right(x),
-                });
-            for x in unknown {
-                if buck2.does_package_exist(cells, &x)? {
-                    modified.push(x);
-                } else {
-                    deleted.insert(x);
+            for (pkg, status) in xs {
+                match status {
+                    PackageStatus::Present => rerun.modified.push(pkg),
+                    PackageStatus::Unknown => {
+                        if buck2.does_package_exist(cells, &pkg)? {
+                            rerun.modified.push(pkg);
+                        } else {
+                            rerun.deleted.insert(pkg);
+                        }
+                    }
                 }
             }
-            Ok(Some(Rerun { modified, deleted }))
+
+            Ok(Some(rerun))
         }
     }
 }
