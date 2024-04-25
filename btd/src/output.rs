@@ -78,6 +78,7 @@ mod tests {
     use crate::buck::types::Oncall;
     use crate::buck::types::PackageValues;
     use crate::buck::types::TargetHash;
+    use crate::diff::RootImpactKind;
 
     #[test]
     fn test_read_targets() {
@@ -88,8 +89,7 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": "my_team",
-                "reason": "inputs",
-            }
+                "reason": {"affected_dep": "", "root_cause": ["fbcode//me:test", "inputs"]},            }
         );
 
         let target = BuckTarget {
@@ -103,7 +103,15 @@ mod tests {
             oncall: Some(Oncall::new("my_team")),
             ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
         };
-        let output = Output::from_target(&target, 3, false, ImpactReason::Inputs);
+        let output = Output::from_target(
+            &target,
+            3,
+            false,
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
+            },
+        );
         assert_eq!(serde_json::to_value(&output).unwrap(), json);
         assert_eq!(
             serde_json::from_str::<Value>(&output.to_string()).unwrap(),
@@ -122,7 +130,10 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": Value::Null,
-                "reason": ImpactReason::Inputs,
+                "reason":     ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
+                },
             }
         );
         assert_eq!(
@@ -130,7 +141,10 @@ mod tests {
                 &target_no_oncall,
                 3,
                 false,
-                ImpactReason::Inputs
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
+                },
             ))
             .unwrap(),
             json_no_oncall
@@ -144,7 +158,15 @@ mod tests {
             package_values: PackageValues::new(&["must-come-first"], serde_json::Value::Null),
             ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
         };
-        let output = Output::from_target(&target, 3, false, ImpactReason::Inputs);
+        let output = Output::from_target(
+            &target,
+            3,
+            false,
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: ("".to_owned(), RootImpactKind::Inputs),
+            },
+        );
         assert_eq!(
             output.labels,
             Labels::new(&["must-come-first", "target_label"])

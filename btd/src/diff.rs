@@ -101,10 +101,20 @@ impl<'a> GraphImpact<'a> {
         self.recursive
             .iter()
             .chain(self.non_recursive.iter())
-            .copied()
+            .cloned()
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ImpactReason {
+    /// The target name of the direct dependency which
+    /// caused this target to be impacted.
+    pub affected_dep: String, // parent_target_name
+    /// The target name of the dependency which actually changed,
+    /// and the type of change that we detected in it.
+    pub root_cause: (String, RootImpactKind), // root_target_name, reason
+}
 /// Categorization of the kind of immediate target change which caused BTD to
 /// report a target as impacted. These reasons are propagated down through
 /// rdeps, so they indicate that a target *or one of its dependencies* changed
@@ -113,7 +123,7 @@ impl<'a> GraphImpact<'a> {
 #[derive(serde::Serialize, serde::Deserialize, parse_display::Display)]
 #[serde(rename_all = "snake_case")]
 #[display(style = "snake_case")]
-pub enum ImpactReason {
+pub enum RootImpactKind {
     /// This target was impacted because a target's package changed.
     Package,
     /// The hash of a target changed.
@@ -148,7 +158,13 @@ pub fn immediate_target_changes<'a>(
         // "hidden feature" that allows using btd to find rdeps of a "package" (directory)
         // by including directory paths in the changes input
         let change_package = some_if(
-            ImpactReason::Package,
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: (
+                    format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                    RootImpactKind::Package,
+                ),
+            },
             changes.contains_package(&target.package),
         );
         let old_target = old.get(&target.label_key());
@@ -156,7 +172,13 @@ pub fn immediate_target_changes<'a>(
         // Did the hash of the target change
         let change_hash = || {
             some_if(
-                ImpactReason::Hash,
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: (
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        RootImpactKind::Hash,
+                    ),
+                },
                 match old_target {
                     None => true,
                     Some(x) => x.hash != target.hash,
@@ -166,7 +188,13 @@ pub fn immediate_target_changes<'a>(
         // Did the package values change
         let change_package_values = || {
             some_if(
-                ImpactReason::PackageValues,
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: (
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        RootImpactKind::PackageValues,
+                    ),
+                },
                 match old_target {
                     None => true,
                     Some(x) => x.package_values != target.package_values,
@@ -176,20 +204,38 @@ pub fn immediate_target_changes<'a>(
         // Did any of the sources we point at change
         let change_inputs = || {
             some_if(
-                ImpactReason::Inputs,
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: (
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        RootImpactKind::Inputs,
+                    ),
+                },
                 target.inputs.iter().any(|x| changes.contains_cell_path(x)),
             )
         };
         let change_ci_srcs = || {
             some_if(
-                ImpactReason::CiSrcs,
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: (
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        RootImpactKind::CiSrcs,
+                    ),
+                },
                 is_changed_ci_srcs(&target.ci_srcs, changes),
             )
         };
         // Did the rule we point at change
         let change_rule = || {
             some_if(
-                ImpactReason::Rule,
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: (
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        RootImpactKind::Rule,
+                    ),
+                },
                 !bzl_change.is_empty() && bzl_change.contains(&target.rule_type.file()),
             )
         };
@@ -307,8 +353,8 @@ pub fn recursive_target_changes<'a>(
 
     let mut result = Vec::new();
 
-    let mut todo_silent = Vec::new();
-    let mut next_silent = Vec::new();
+    let mut todo_silent: Vec<(&BuckTarget, ImpactReason)> = Vec::new();
+    let mut next_silent: Vec<(&BuckTarget, ImpactReason)> = Vec::new();
 
     fn add_result<'a>(
         results: &mut Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
@@ -332,14 +378,18 @@ pub fn recursive_target_changes<'a>(
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if follow_rule_type(&lbl.rule_type) {
                 for rdep in rdeps.get(&lbl.label()) {
+                    let updated_reason = ImpactReason {
+                        affected_dep: format!("{}:{}", rdep.package.as_str(), rdep.name.as_str()),
+                        root_cause: (reason.root_cause.0.clone(), reason.root_cause.1),
+                    };
                     match done.entry(rdep.label_key()) {
                         Entry::Vacant(e) => {
-                            next.push((*rdep, *reason));
+                            next.push((*rdep, updated_reason));
                             e.insert(true);
                         }
                         Entry::Occupied(mut e) => {
                             if !e.get() {
-                                next_silent.push((*rdep, *reason));
+                                next_silent.push((*rdep, updated_reason));
                                 e.insert(true);
                             }
                         }
@@ -348,7 +398,7 @@ pub fn recursive_target_changes<'a>(
             }
         }
         if !non_recursive_changes.is_empty() {
-            non_recursive_changes.extend(todo.iter());
+            non_recursive_changes.extend(todo.iter().cloned());
             add_result(&mut result, mem::take(&mut non_recursive_changes));
         } else if !todo.is_empty() {
             add_result(&mut result, mem::take(&mut todo));
@@ -525,7 +575,13 @@ mod tests {
 
         let changes = GraphImpact {
             recursive: Vec::new(),
-            non_recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
+            non_recursive: vec![(
+                diff.targets().next().unwrap(),
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                },
+            )],
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
         let res = res.map(|xs| {
@@ -566,8 +622,20 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
-            non_recursive: vec![(diff.targets().nth(1).unwrap(), ImpactReason::Inputs)],
+            recursive: vec![(
+                diff.targets().next().unwrap(),
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                },
+            )],
+            non_recursive: vec![(
+                diff.targets().nth(1).unwrap(),
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                },
+            )],
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
         let res = res.map(|xs| {
@@ -602,7 +670,13 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
+            recursive: vec![(
+                diff.targets().next().unwrap(),
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                },
+            )],
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
@@ -639,7 +713,13 @@ mod tests {
         let change_target =
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
         let changes = GraphImpact {
-            recursive: vec![(&change_target, ImpactReason::Inputs)],
+            recursive: vec![(
+                &change_target,
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                },
+            )],
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, Some(1), |_| true);
@@ -672,7 +752,15 @@ mod tests {
             recursive: diff
                 .targets()
                 .take(2)
-                .map(|x| (x, ImpactReason::Inputs))
+                .map(|x| {
+                    (
+                        x,
+                        ImpactReason {
+                            affected_dep: "".to_owned(),
+                            root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                        },
+                    )
+                })
                 .collect(),
             non_recursive: Vec::new(),
         };
@@ -855,9 +943,13 @@ mod tests {
                 .count(),
             2
         );
-        impact
-            .recursive
-            .push((targets.targets().nth(1).unwrap(), ImpactReason::Inputs));
+        impact.recursive.push((
+            targets.targets().nth(1).unwrap(),
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: ("".to_owned(), RootImpactKind::Inputs),
+            },
+        ));
         assert_eq!(
             recursive_target_changes(&targets, &impact, None, |_| true)
                 .iter()
@@ -884,7 +976,13 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![(diff.targets().next().unwrap(), ImpactReason::Inputs)],
+            recursive: vec![(
+                diff.targets().next().unwrap(),
+                ImpactReason {
+                    affected_dep: "".to_owned(),
+                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
+                },
+            )],
             non_recursive: Vec::new(),
         };
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);

@@ -202,7 +202,7 @@ def check_properties(patch, rdeps):
             "target": "root//inner:baz",
             "type": "my_rule",
             "oncall": None,
-            "reason": "inputs",
+            "reason": {"affected_dep": "", "root_cause": ["root//inner:baz", "inputs"]},
         } in rdeps
         assert len(rdeps) == 2
     elif patch == "rename_inner":
@@ -212,7 +212,7 @@ def check_properties(patch, rdeps):
             "target": "root//inner:baz",
             "type": "my_rule",
             "oncall": None,
-            "reason": "hash",
+            "reason": {"affected_dep": "", "root_cause": ["root//inner:baz", "hash"]},
         } in rdeps
         assert len(rdeps) == 2
     elif patch == "buckconfig":
@@ -225,7 +225,10 @@ def check_properties(patch, rdeps):
                 "target": "root//inner:baz",
                 "type": "my_rule",
                 "oncall": None,
-                "reason": "package_values",
+                "reason": {
+                    "affected_dep": "",
+                    "root_cause": ["root//inner:baz", "package_values"],
+                },
             }
         ]
     else:

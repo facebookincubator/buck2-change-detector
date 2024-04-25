@@ -89,7 +89,7 @@ impl GraphSize {
             .enumerate()
             .flat_map(|(depth, xs)| {
                 xs.iter()
-                    .map(move |&(x, r)| (depth, x, sudos.contains(&x.label_key()), r))
+                    .map(move |&(x, ref r)| (depth, x, sudos.contains(&x.label_key()), r.clone()))
             })
             .collect::<Vec<_>>()
             .into_par_iter()

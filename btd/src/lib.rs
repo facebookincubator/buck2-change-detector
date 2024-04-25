@@ -56,6 +56,7 @@ use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
 use crate::check::ValidationError;
 use crate::diff::ImpactReason;
+use crate::diff::RootImpactKind;
 use crate::graph_size::GraphSize;
 use crate::output::Output;
 use crate::output::OutputFormat;
@@ -287,9 +288,10 @@ pub fn main(args: Args) -> anyhow::Result<()> {
         "finish with {immediate_changes} immediate changes, {total_changes} total changes"
     ));
     // BTreeMap so that reasons are consistently ordered in logs
-    let mut reason_counts: BTreeMap<ImpactReason, u64> = BTreeMap::new();
-    for &(_, reason) in recursive.iter().flatten() {
-        *reason_counts.entry(reason).or_default() += 1;
+    let mut reason_counts: BTreeMap<RootImpactKind, u64> = BTreeMap::new();
+    for (_, reason) in recursive.iter().flatten() {
+        let root_impact_kind = reason.root_cause.1;
+        *reason_counts.entry(root_impact_kind).or_default() += 1;
     }
     td_util::scuba!(
         event: BTD_SUCCESS,
@@ -448,7 +450,7 @@ fn print_recursive_changes<'a, T: Serialize + 'a>(
             .enumerate()
             .flat_map(|(depth, xs)| {
                 xs.iter()
-                    .map(move |&(x, r)| (depth, x, sudos.contains(&x.label_key()), r))
+                    .map(move |&(x, ref r)| (depth, x, sudos.contains(&x.label_key()), r.clone()))
             })
             .map(|(depth, x, uses_sudo, reason)| {
                 augment(x, Output::from_target(x, depth as u64, uses_sudo, reason))
