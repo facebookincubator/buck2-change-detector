@@ -377,19 +377,19 @@ pub fn recursive_target_changes<'a>(
 
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if follow_rule_type(&lbl.rule_type) {
+                let updated_reason = ImpactReason {
+                    affected_dep: format!("{}:{}", lbl.package.as_str(), lbl.name.as_str()),
+                    root_cause: (reason.root_cause.0.clone(), reason.root_cause.1),
+                };
                 for rdep in rdeps.get(&lbl.label()) {
-                    let updated_reason = ImpactReason {
-                        affected_dep: format!("{}:{}", rdep.package.as_str(), rdep.name.as_str()),
-                        root_cause: (reason.root_cause.0.clone(), reason.root_cause.1),
-                    };
                     match done.entry(rdep.label_key()) {
                         Entry::Vacant(e) => {
-                            next.push((*rdep, updated_reason));
+                            next.push((*rdep, updated_reason.clone()));
                             e.insert(true);
                         }
                         Entry::Occupied(mut e) => {
                             if !e.get() {
-                                next_silent.push((*rdep, updated_reason));
+                                next_silent.push((*rdep, updated_reason.clone()));
                                 e.insert(true);
                             }
                         }
