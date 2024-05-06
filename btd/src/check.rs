@@ -363,7 +363,7 @@ mod tests {
                     &modified_target,
                     ImpactReason {
                         affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs,),
+                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     },
                 )],
                 &[TargetPattern::new("foo//...")],
@@ -388,7 +388,7 @@ mod tests {
                     &modified_target,
                     ImpactReason {
                         affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs,),
+                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
                 )],
                 &[TargetPattern::new("foo//...")],
@@ -413,7 +413,7 @@ mod tests {
                     &modified_target,
                     ImpactReason {
                         affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs,),
+                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
                 )],
                 &[TargetPattern::new("foo//...")],
@@ -437,7 +437,7 @@ mod tests {
                     &modified_target,
                     ImpactReason {
                         affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs,),
+                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
                 )],
                 &[TargetPattern::new("foo//...")],
@@ -461,7 +461,7 @@ mod tests {
                     &modified_target,
                     ImpactReason {
                         affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs,),
+                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
                 )],
                 &[TargetPattern::new("foo//...")],
