@@ -182,41 +182,36 @@ pub fn immediate_target_changes<'a>(
         // "hidden feature" that allows using btd to find rdeps of a "package" (directory)
         // by including directory paths in the changes input
         let change_package = some_if(
-            ImpactReason::new(target, RootImpactKind::Package),
+            RootImpactKind::Package,
             changes.contains_package(&target.package),
         );
 
         // Did the hash of the target change
-        let change_hash = || {
-            some_if(
-                ImpactReason::new(target, RootImpactKind::Hash),
-                old_target.hash != target.hash,
-            )
-        };
+        let change_hash = || some_if(RootImpactKind::Hash, old_target.hash != target.hash);
         // Did the package values change
         let change_package_values = || {
             some_if(
-                ImpactReason::new(target, RootImpactKind::PackageValues),
+                RootImpactKind::PackageValues,
                 old_target.package_values != target.package_values,
             )
         };
         // Did any of the sources we point at change
         let change_inputs = || {
             some_if(
-                ImpactReason::new(target, RootImpactKind::Inputs),
+                RootImpactKind::Inputs,
                 target.inputs.iter().any(|x| changes.contains_cell_path(x)),
             )
         };
         let change_ci_srcs = || {
             some_if(
-                ImpactReason::new(target, RootImpactKind::CiSrcs),
+                RootImpactKind::CiSrcs,
                 is_changed_ci_srcs(&target.ci_srcs, changes),
             )
         };
         // Did the rule we point at change
         let change_rule = || {
             some_if(
-                ImpactReason::new(target, RootImpactKind::Rule),
+                RootImpactKind::Rule,
                 !bzl_change.is_empty() && bzl_change.contains(&target.rule_type.file()),
             )
         };
@@ -227,9 +222,11 @@ pub fn immediate_target_changes<'a>(
             .or_else(change_ci_srcs)
             .or_else(change_rule)
         {
-            res.recursive.push((target, reason));
+            res.recursive
+                .push((target, ImpactReason::new(target, reason)));
         } else if let Some(reason) = change_package_values() {
-            res.non_recursive.push((target, reason));
+            res.non_recursive
+                .push((target, ImpactReason::new(target, reason)));
         }
     }
 
