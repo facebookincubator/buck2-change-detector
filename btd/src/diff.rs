@@ -115,6 +115,19 @@ pub struct ImpactReason {
     /// and the type of change that we detected in it.
     pub root_cause: (String, RootImpactKind), // root_target_name, reason
 }
+
+impl ImpactReason {
+    fn new(target: &BuckTarget, kind: RootImpactKind) -> Self {
+        ImpactReason {
+            affected_dep: String::new(),
+            root_cause: (
+                format!("{}:{}", target.package.as_str(), target.name.as_str()),
+                kind,
+            ),
+        }
+    }
+}
+
 /// Categorization of the kind of immediate target change which caused BTD to
 /// report a target as impacted. These reasons are propagated down through
 /// rdeps, so they indicate that a target *or one of its dependencies* changed
@@ -160,16 +173,8 @@ pub fn immediate_target_changes<'a>(
         let old_target = match old.get(&target.label_key()) {
             Some(x) => x,
             None => {
-                res.recursive.push((
-                    target,
-                    ImpactReason {
-                        affected_dep: "".to_owned(),
-                        root_cause: (
-                            format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                            RootImpactKind::New,
-                        ),
-                    },
-                ));
+                res.recursive
+                    .push((target, ImpactReason::new(target, RootImpactKind::New)));
                 continue;
             }
         };
@@ -177,77 +182,41 @@ pub fn immediate_target_changes<'a>(
         // "hidden feature" that allows using btd to find rdeps of a "package" (directory)
         // by including directory paths in the changes input
         let change_package = some_if(
-            ImpactReason {
-                affected_dep: "".to_owned(),
-                root_cause: (
-                    format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                    RootImpactKind::Package,
-                ),
-            },
+            ImpactReason::new(target, RootImpactKind::Package),
             changes.contains_package(&target.package),
         );
 
         // Did the hash of the target change
         let change_hash = || {
             some_if(
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                        RootImpactKind::Hash,
-                    ),
-                },
+                ImpactReason::new(target, RootImpactKind::Hash),
                 old_target.hash != target.hash,
             )
         };
         // Did the package values change
         let change_package_values = || {
             some_if(
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                        RootImpactKind::PackageValues,
-                    ),
-                },
+                ImpactReason::new(target, RootImpactKind::PackageValues),
                 old_target.package_values != target.package_values,
             )
         };
         // Did any of the sources we point at change
         let change_inputs = || {
             some_if(
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                        RootImpactKind::Inputs,
-                    ),
-                },
+                ImpactReason::new(target, RootImpactKind::Inputs),
                 target.inputs.iter().any(|x| changes.contains_cell_path(x)),
             )
         };
         let change_ci_srcs = || {
             some_if(
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                        RootImpactKind::CiSrcs,
-                    ),
-                },
+                ImpactReason::new(target, RootImpactKind::CiSrcs),
                 is_changed_ci_srcs(&target.ci_srcs, changes),
             )
         };
         // Did the rule we point at change
         let change_rule = || {
             some_if(
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
-                        RootImpactKind::Rule,
-                    ),
-                },
+                ImpactReason::new(target, RootImpactKind::Rule),
                 !bzl_change.is_empty() && bzl_change.contains(&target.rule_type.file()),
             )
         };
