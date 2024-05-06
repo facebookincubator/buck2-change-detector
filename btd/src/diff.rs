@@ -379,7 +379,7 @@ pub fn recursive_target_changes<'a>(
             if follow_rule_type(&lbl.rule_type) {
                 let updated_reason = ImpactReason {
                     affected_dep: format!("{}:{}", lbl.package.as_str(), lbl.name.as_str()),
-                    root_cause: (reason.root_cause.0.clone(), reason.root_cause.1),
+                    root_cause: reason.root_cause.clone(),
                 };
                 for rdep in rdeps.get(&lbl.label()) {
                     match done.entry(rdep.label_key()) {
