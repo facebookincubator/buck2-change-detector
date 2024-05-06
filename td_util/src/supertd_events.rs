@@ -37,7 +37,6 @@ pub enum Event {
     BUILD_DIRECTIVES_SPECIFIED,
     VERSE_SANDCASTLE_CRUISECONTROL,
     VERSE_MLX_CRUISEONTROL,
-    INVALID_ONCALL,
 }
 
 /// Initialize the Scuba client for the `supertd_events` dataset.
