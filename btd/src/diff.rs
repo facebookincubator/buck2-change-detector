@@ -124,6 +124,8 @@ pub struct ImpactReason {
 #[serde(rename_all = "snake_case")]
 #[display(style = "snake_case")]
 pub enum RootImpactKind {
+    /// This target is new.
+    New,
     /// This target was impacted because a target's package changed.
     Package,
     /// The hash of a target changed.
@@ -155,6 +157,23 @@ pub fn immediate_target_changes<'a>(
 
     let mut res = GraphImpact::default();
     for target in diff.targets() {
+        let old_target = match old.get(&target.label_key()) {
+            Some(x) => x,
+            None => {
+                res.recursive.push((
+                    target,
+                    ImpactReason {
+                        affected_dep: "".to_owned(),
+                        root_cause: (
+                            format!("{}:{}", target.package.as_str(), target.name.as_str()),
+                            RootImpactKind::New,
+                        ),
+                    },
+                ));
+                continue;
+            }
+        };
+
         // "hidden feature" that allows using btd to find rdeps of a "package" (directory)
         // by including directory paths in the changes input
         let change_package = some_if(
@@ -167,7 +186,6 @@ pub fn immediate_target_changes<'a>(
             },
             changes.contains_package(&target.package),
         );
-        let old_target = old.get(&target.label_key());
 
         // Did the hash of the target change
         let change_hash = || {
@@ -179,10 +197,7 @@ pub fn immediate_target_changes<'a>(
                         RootImpactKind::Hash,
                     ),
                 },
-                match old_target {
-                    None => true,
-                    Some(x) => x.hash != target.hash,
-                },
+                old_target.hash != target.hash,
             )
         };
         // Did the package values change
@@ -195,10 +210,7 @@ pub fn immediate_target_changes<'a>(
                         RootImpactKind::PackageValues,
                     ),
                 },
-                match old_target {
-                    None => true,
-                    Some(x) => x.package_values != target.package_values,
-                },
+                old_target.package_values != target.package_values,
             )
         };
         // Did any of the sources we point at change
