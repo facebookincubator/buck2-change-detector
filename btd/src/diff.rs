@@ -161,7 +161,7 @@ pub fn immediate_target_changes<'a>(
             ImpactReason {
                 affected_dep: "".to_owned(),
                 root_cause: (
-                    format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                    format!("{}:{}", target.package.as_str(), target.name.as_str()),
                     RootImpactKind::Package,
                 ),
             },
@@ -175,7 +175,7 @@ pub fn immediate_target_changes<'a>(
                 ImpactReason {
                     affected_dep: "".to_owned(),
                     root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
                         RootImpactKind::Hash,
                     ),
                 },
@@ -191,7 +191,7 @@ pub fn immediate_target_changes<'a>(
                 ImpactReason {
                     affected_dep: "".to_owned(),
                     root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
                         RootImpactKind::PackageValues,
                     ),
                 },
@@ -207,7 +207,7 @@ pub fn immediate_target_changes<'a>(
                 ImpactReason {
                     affected_dep: "".to_owned(),
                     root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
                         RootImpactKind::Inputs,
                     ),
                 },
@@ -219,7 +219,7 @@ pub fn immediate_target_changes<'a>(
                 ImpactReason {
                     affected_dep: "".to_owned(),
                     root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
                         RootImpactKind::CiSrcs,
                     ),
                 },
@@ -232,7 +232,7 @@ pub fn immediate_target_changes<'a>(
                 ImpactReason {
                     affected_dep: "".to_owned(),
                     root_cause: (
-                        format!("{}:{}", target.package.as_str(), target.name.as_str()).to_owned(),
+                        format!("{}:{}", target.package.as_str(), target.name.as_str()),
                         RootImpactKind::Rule,
                     ),
                 },
