@@ -32,6 +32,7 @@ pub fn init_tracing() {
             "btd=debug",
             "clients=debug",
             "ranker=debug",
+            "rerun=debug",
             "scheduler=debug",
             "targets=debug",
             "verifiable=debug",
