@@ -126,7 +126,7 @@ pub struct ImpactReason {
 }
 
 impl ImpactReason {
-    fn new(target: &BuckTarget, kind: RootImpactKind) -> Self {
+    pub fn new(target: &BuckTarget, kind: RootImpactKind) -> Self {
         ImpactReason {
             affected_dep: String::new(),
             root_cause: (
@@ -162,6 +162,8 @@ pub enum RootImpactKind {
     PackageValues,
     /// The target is removed
     Remove,
+    /// When we want to manually rerun the target.
+    ManualForRerun,
 }
 
 pub fn immediate_target_changes<'a>(
