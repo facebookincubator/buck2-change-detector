@@ -93,6 +93,13 @@ pub struct GraphImpact<'a> {
 }
 
 impl<'a> GraphImpact<'a> {
+    pub fn from_recursive(recursive: Vec<(&'a BuckTarget, ImpactReason)>) -> Self {
+        Self {
+            recursive,
+            ..Default::default()
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.recursive.len() + self.non_recursive.len()
     }
@@ -647,16 +654,13 @@ mod tests {
             target("package_value_only", &[]),
         ]);
 
-        let changes = GraphImpact {
-            recursive: vec![(
-                diff.targets().next().unwrap(),
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                },
-            )],
-            non_recursive: Vec::new(),
-        };
+        let changes = GraphImpact::from_recursive(vec![(
+            diff.targets().next().unwrap(),
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: ("".to_owned(), RootImpactKind::Inputs),
+            },
+        )]);
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
@@ -690,16 +694,13 @@ mod tests {
 
         let change_target =
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
-        let changes = GraphImpact {
-            recursive: vec![(
-                &change_target,
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                },
-            )],
-            non_recursive: Vec::new(),
-        };
+        let changes = GraphImpact::from_recursive(vec![(
+            &change_target,
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: ("".to_owned(), RootImpactKind::Inputs),
+            },
+        )]);
         let res = recursive_target_changes(&diff, &changes, Some(1), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
@@ -726,9 +727,8 @@ mod tests {
             target("d", &["a", "c"]),
         ]);
 
-        let changes = GraphImpact {
-            recursive: diff
-                .targets()
+        let changes = GraphImpact::from_recursive(
+            diff.targets()
                 .take(2)
                 .map(|x| {
                     (
@@ -740,8 +740,7 @@ mod tests {
                     )
                 })
                 .collect(),
-            non_recursive: Vec::new(),
-        };
+        );
         let res = recursive_target_changes(&diff, &changes, None, |_| true);
         let res = res.map(|xs| xs.map(|(x, _)| x.name.as_str()));
         assert_eq!(res, vec![vec!["a", "b"], vec!["c", "d"], vec![]]);
@@ -953,16 +952,13 @@ mod tests {
             }),
         ]);
 
-        let changes = GraphImpact {
-            recursive: vec![(
-                diff.targets().next().unwrap(),
-                ImpactReason {
-                    affected_dep: "".to_owned(),
-                    root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                },
-            )],
-            non_recursive: Vec::new(),
-        };
+        let changes = GraphImpact::from_recursive(vec![(
+            diff.targets().next().unwrap(),
+            ImpactReason {
+                affected_dep: "".to_owned(),
+                root_cause: ("".to_owned(), RootImpactKind::Inputs),
+            },
+        )]);
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
         assert_eq!(res[0].len(), 1);
         assert_eq!(res[1].len(), 1);
