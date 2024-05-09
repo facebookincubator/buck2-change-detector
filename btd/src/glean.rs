@@ -31,19 +31,21 @@ fn cxx_rule_type(typ: &RuleType) -> bool {
 /// If the .h file changes, transitively impact everything.
 /// If the other input files change, only impact directly enclosing cxx_library/cxx_executable.
 pub fn glean_changes<'a>(
-    base: &Targets,
+    base: &'a Targets,
     diff: &'a Targets,
     changes: &Changes,
     depth: Option<usize>,
+    detect_removed: bool,
 ) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
     let header = immediate_target_changes(
         base,
         diff,
         &changes.filter_by_extension(|x| x == Some("h")),
         true,
+        detect_removed,
     );
     let header_rec = recursive_target_changes(diff, &header, depth, |_| true);
-    let other = immediate_target_changes(base, diff, changes, true);
+    let other = immediate_target_changes(base, diff, changes, true, detect_removed);
     let other_rec = recursive_target_changes(diff, &other, depth, |x| !cxx_rule_type(x));
     merge(header_rec, other_rec)
 }
@@ -125,6 +127,7 @@ mod tests {
                 Status::Modified(CellPath::new("root//test.h")),
             ]),
             None,
+            false,
         );
         let mut res = res.concat().map(|(x, _)| x.label());
         res.sort();

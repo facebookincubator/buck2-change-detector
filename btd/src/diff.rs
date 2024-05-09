@@ -90,6 +90,8 @@ pub struct GraphImpact<'a> {
     /// Targets which changed in a way that won't impact things recursively.
     /// Currently only package value changes.
     non_recursive: Vec<(&'a BuckTarget, ImpactReason)>,
+    /// Targets which are removed.
+    removed: Vec<(&'a BuckTarget, ImpactReason)>,
 }
 
 impl<'a> GraphImpact<'a> {
@@ -158,16 +160,19 @@ pub enum RootImpactKind {
     Rule,
     /// The `buck.package_values` of a target changed.
     PackageValues,
+    /// The target is removed
+    Remove,
 }
 
 pub fn immediate_target_changes<'a>(
-    base: &Targets,
+    base: &'a Targets,
     diff: &'a Targets,
     changes: &Changes,
     track_prelude_changes: bool,
+    detect_removed: bool,
 ) -> GraphImpact<'a> {
     // Find those targets which are different
-    let old = base.targets_by_label_key();
+    let mut old = base.targets_by_label_key();
 
     // Find those .bzl files that have changed, including transitive changes
     let bzl_change = changed_bzl_files(diff, changes, track_prelude_changes);
@@ -177,7 +182,7 @@ pub fn immediate_target_changes<'a>(
 
     let mut res = GraphImpact::default();
     for target in diff.targets() {
-        let old_target = match old.get(&target.label_key()) {
+        let old_target = match old.remove(&target.label_key()) {
             Some(x) => x,
             None => {
                 res.recursive
@@ -237,9 +242,19 @@ pub fn immediate_target_changes<'a>(
         }
     }
 
+    if detect_removed {
+        // We remove targets from `old` when iterating `diff` above.
+        // At this point, only removed targets are left in `old`.
+        res.removed = old
+            .into_values()
+            .map(|target| (target, ImpactReason::new(target, RootImpactKind::Remove)))
+            .collect();
+    }
+
     // Sort to ensure deterministic output
     res.recursive.sort_by_key(|(t, _)| t.label_key());
     res.non_recursive.sort_by_key(|(t, _)| t.label_key());
+    res.removed.sort_by_key(|(t, _)| t.label_key());
     res
 }
 
@@ -259,7 +274,7 @@ pub fn recursive_target_changes<'a>(
     follow_rule_type: impl Fn(&RuleType) -> bool,
 ) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
     // Just an optimisation, but saves building the reverse mapping
-    if changes.recursive.is_empty() {
+    if changes.recursive.is_empty() && changes.removed.is_empty() {
         let mut res = if changes.non_recursive.is_empty() {
             Vec::new()
         } else {
@@ -338,7 +353,9 @@ pub fn recursive_target_changes<'a>(
 
     let mut result = Vec::new();
 
-    let mut todo_silent: Vec<(&BuckTarget, ImpactReason)> = Vec::new();
+    // Track targets depending on removed targets, but we don't add removed targets
+    // to results
+    let mut todo_silent: Vec<(&BuckTarget, ImpactReason)> = changes.removed.clone();
     let mut next_silent: Vec<(&BuckTarget, ImpactReason)> = Vec::new();
 
     fn add_result<'a>(
@@ -475,6 +492,7 @@ mod tests {
             target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
             target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
             target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
+            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
             target("foo//bar", "fff", &[], "123", &default_pacakge_value),
             target("foo//bar", "ggg", &[&file4], "321", &default_pacakge_value),
             // only package value changed
@@ -495,6 +513,7 @@ mod tests {
                 Status::Removed(file3),
             ]),
             false,
+            false,
         );
         let recursive = res.recursive.map(|(x, _)| x.label().to_string());
         let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
@@ -509,6 +528,104 @@ mod tests {
             ]
         );
         assert_eq!(non_recursive.map(|x| x.as_str()), &["foo//bar:zzz",]);
+    }
+
+    #[test]
+    fn test_immediate_changes_with_removed() {
+        fn target(
+            pkg: &str,
+            name: &str,
+            inputs: &[&CellPath],
+            hash: &str,
+            package_values: &PackageValues,
+        ) -> TargetsEntry {
+            TargetsEntry::Target(BuckTarget {
+                inputs: inputs.iter().map(|x| (*x).clone()).collect(),
+                hash: TargetHash::new(hash),
+                package_values: package_values.clone(),
+                ..BuckTarget::testing(name, pkg, "prelude//rules.bzl:cxx_library")
+            })
+        }
+
+        let file1 = CellPath::new("foo//bar/file1.txt");
+        let file2 = CellPath::new("foo//bar/file2.txt");
+        let file3 = CellPath::new("foo//bar/file3.txt");
+        let file4 = CellPath::new("foo//bar/file4.txt");
+
+        // We could get a change because the hash changes or the input changes, or both
+        // Or because the target is new.
+        let default_pacakge_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let base = Targets::new(vec![
+            target(
+                "foo//bar",
+                "aaa",
+                &[&file1, &file2],
+                "123",
+                &default_pacakge_value,
+            ),
+            target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
+            target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
+            target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
+            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
+            target("foo//bar", "eee", &[], "123", &default_pacakge_value),
+            target("foo//bar", "ggg", &[&file4], "123", &default_pacakge_value),
+            target(
+                "foo//bar",
+                "zzz",
+                &[&file4],
+                "123",
+                &PackageValues::new(&["val1"], serde_json::Value::Null),
+            ),
+        ]);
+        let diff = Targets::new(vec![
+            target(
+                "foo//bar",
+                "aaa",
+                &[&file1, &file4],
+                "123",
+                &default_pacakge_value,
+            ),
+            target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
+            target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
+            target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
+            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
+            target("foo//bar", "fff", &[], "123", &default_pacakge_value),
+            target("foo//bar", "ggg", &[&file4], "321", &default_pacakge_value),
+            // only package value changed
+            target(
+                "foo//bar",
+                "zzz",
+                &[&file4],
+                "123",
+                &PackageValues::new(&["val2"], serde_json::Value::Null),
+            ),
+        ]);
+        let res = immediate_target_changes(
+            &base,
+            &diff,
+            &Changes::testing(&[
+                Status::Modified(file1),
+                Status::Added(file2),
+                Status::Removed(file3),
+            ]),
+            false,
+            true,
+        );
+        let recursive = res.recursive.map(|(x, _)| x.label().to_string());
+        let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
+        let removed = res.removed.map(|(x, _)| x.label().to_string());
+        assert_eq!(
+            recursive.map(|x| x.as_str()),
+            &[
+                "foo//bar:aaa",
+                "foo//bar:bbb",
+                "foo//bar:fff",
+                "foo//bar:ggg",
+                "foo//baz:aaa",
+            ]
+        );
+        assert_eq!(non_recursive.map(|x| x.as_str()), &["foo//bar:zzz",]);
+        assert_eq!(removed.map(|x| x.as_str()), &["foo//bar:eee"]);
     }
 
     #[test]
@@ -534,6 +651,7 @@ mod tests {
             &base,
             &base,
             &Changes::testing(&[Status::Modified(package)]),
+            false,
             false,
         );
         let mut res = res.recursive.map(|(x, _)| x.label().to_string());
@@ -567,6 +685,7 @@ mod tests {
                     root_cause: ("".to_owned(), RootImpactKind::Inputs),
                 },
             )],
+            ..Default::default()
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
         let res = res.map(|xs| {
@@ -621,6 +740,7 @@ mod tests {
                     root_cause: ("".to_owned(), RootImpactKind::Inputs),
                 },
             )],
+            ..Default::default()
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
         let res = res.map(|xs| {
@@ -671,6 +791,47 @@ mod tests {
             res,
             vec![vec!["a"], vec!["b", "c"], vec!["d", "e"], vec!["f"],]
         );
+    }
+
+    #[test]
+    fn test_recursive_with_removed_targets() {
+        fn target(name: &str, deps: &[&str]) -> TargetsEntry {
+            let pkg = Package::new("foo//");
+            TargetsEntry::Target(BuckTarget {
+                deps: deps.iter().map(|x| pkg.join(&TargetName::new(x))).collect(),
+                ..BuckTarget::testing(name, pkg.as_str(), "prelude//rules.bzl:cxx_library")
+            })
+        }
+
+        let removed = BuckTarget::testing("removed", "foo//", "prelude//rules.bzl:cxx_library");
+        let diff = Targets::new(vec![
+            target("a", &[]),
+            target("b", &["a"]),
+            target("c", &["a", "d"]),
+            target("d", &["b"]),
+            target("e", &[removed.name.as_str()]),
+            target("f", &["e"]),
+        ]);
+
+        let changed_target = diff.targets().find(|t| t.name.as_str() == "a").unwrap();
+        let changes = GraphImpact {
+            recursive: vec![(
+                changed_target,
+                ImpactReason::new(changed_target, RootImpactKind::Inputs),
+            )],
+            removed: vec![(
+                &removed,
+                ImpactReason::new(&removed, RootImpactKind::Remove),
+            )],
+            ..Default::default()
+        };
+        let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
+        let res = res.map(|xs| {
+            let mut xs = xs.map(|(x, _)| x.name.as_str());
+            xs.sort();
+            xs
+        });
+        assert_eq!(res, vec![vec!["a"], vec!["b", "c", "e"], vec!["d", "f"]]);
     }
 
     #[test]
@@ -777,7 +938,8 @@ mod tests {
                     &targets,
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(file))]),
-                    check
+                    check,
+                    false,
                 )
                 .len(),
                 expect
@@ -830,7 +992,8 @@ mod tests {
                     &targets,
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(file))]),
-                    check
+                    check,
+                    false,
                 )
                 .len(),
                 expect
@@ -859,7 +1022,8 @@ mod tests {
                     &targets,
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(&format!("root//{file}")))]),
-                    false
+                    false,
+                    false,
                 )
                 .len(),
                 expect
@@ -887,7 +1051,7 @@ mod tests {
         })]);
         // The hash of the target doesn't change, but the package.value does
         assert_eq!(
-            immediate_target_changes(&before, &after, &Changes::testing(&[]), false).len(),
+            immediate_target_changes(&before, &after, &Changes::testing(&[]), false, false).len(),
             1
         );
     }
@@ -910,7 +1074,7 @@ mod tests {
             }),
         ]);
         let changes = Changes::testing(&[Status::Modified(src)]);
-        let mut impact = immediate_target_changes(&targets, &targets, &changes, false);
+        let mut impact = immediate_target_changes(&targets, &targets, &changes, false, false);
         assert_eq!(impact.recursive.len(), 1);
 
         assert_eq!(

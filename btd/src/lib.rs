@@ -41,6 +41,7 @@ use buck::types::Package;
 use clap::Parser;
 use serde::Serialize;
 use td_util::json;
+use td_util::knobs::check_boolean_knob;
 use td_util::prelude::*;
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -232,9 +233,17 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             Targets::from_file(diff)?
         }
     });
+
+    let detect_removed = check_boolean_knob("ci_efficiency/citadel:btd_detect_removed");
+
     step("immediate changes");
-    let immediate =
-        diff::immediate_target_changes(&base, &diff, &changes, args.track_prelude_rule_changes);
+    let immediate = diff::immediate_target_changes(
+        &base,
+        &diff,
+        &changes,
+        args.track_prelude_rule_changes,
+        detect_removed,
+    );
 
     // Perform inline error validation when we're not collecting errors
     // for downstream reporting.
@@ -255,7 +264,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     }
     let recursive = if args.glean {
         step("glean changes");
-        glean::glean_changes(&base, &diff, &changes, args.depth)
+        glean::glean_changes(&base, &diff, &changes, args.depth, detect_removed)
     } else {
         step("recursive changes");
         diff::recursive_target_changes(&diff, &immediate, args.depth, |_| true)
