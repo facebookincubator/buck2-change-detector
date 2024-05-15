@@ -674,7 +674,15 @@ impl CellRelativePath {
     }
 }
 
-/// Example: `fbcode/buck2/**` or `**/*.java`
+/// Is a [`Glob`] one to include or exclude.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum GlobInclusion {
+    Include,
+    Exclude,
+}
+
+/// Example: `fbcode/buck2/**` or `**/*.java`.
+/// May start with `!` to indicate negation.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Display, Deserialize, Serialize)]
 pub struct Glob(String);
 
@@ -683,7 +691,11 @@ impl Glob {
         Self(pattern.to_owned())
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub fn unpack(&self) -> (GlobInclusion, &str) {
+        let s = self.0.as_str();
+        match s.strip_prefix('!') {
+            Some(s) => (GlobInclusion::Exclude, s),
+            None => (GlobInclusion::Include, s),
+        }
     }
 }

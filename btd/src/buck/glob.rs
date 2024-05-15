@@ -11,20 +11,26 @@
 
 use glob::MatchOptions;
 use glob::Pattern;
+use itertools::Either;
+use itertools::Itertools;
 
 use crate::buck::types::Glob;
+use crate::buck::types::GlobInclusion;
 use crate::buck::types::ProjectRelativePath;
 
-pub struct GlobSpec(Vec<Pattern>);
+pub struct GlobSpec {
+    include: GlobSet,
+    exclude: GlobSet,
+}
 
-impl GlobSpec {
-    pub fn new(xs: &[Glob]) -> Self {
-        // We just throw away any inaccurate globs for now, and rely on the macro layer spotting them.
-        // We probably want a lint pass sooner or later.
-        Self(xs.iter().flat_map(|x| Pattern::new(x.as_str())).collect())
+struct GlobSet(Vec<Pattern>);
+
+impl GlobSet {
+    fn new(globs: &[&str]) -> Self {
+        Self(globs.iter().flat_map(|x| Pattern::new(x)).collect())
     }
 
-    pub fn matches(&self, path: &ProjectRelativePath) -> bool {
+    fn matches(&self, path: &ProjectRelativePath) -> bool {
         let options = MatchOptions {
             require_literal_separator: true,
             require_literal_leading_dot: true,
@@ -34,6 +40,27 @@ impl GlobSpec {
         self.0
             .iter()
             .any(|x| x.matches_with(path.as_str(), options))
+    }
+}
+
+impl GlobSpec {
+    pub fn new(globs: &[Glob]) -> Self {
+        // We just throw away any inaccurate globs for now, and rely on the macro layer spotting them.
+        // We probably want a lint pass sooner or later.
+        let (include, exclude): (Vec<_>, Vec<_>) =
+            globs.iter().partition_map(|x| match x.unpack() {
+                (GlobInclusion::Include, x) => Either::Left(x),
+                (GlobInclusion::Exclude, x) => Either::Right(x),
+            });
+
+        Self {
+            include: GlobSet::new(&include),
+            exclude: GlobSet::new(&exclude),
+        }
+    }
+
+    pub fn matches(&self, path: &ProjectRelativePath) -> bool {
+        self.include.matches(path) && !self.exclude.matches(path)
     }
 }
 
@@ -67,5 +94,24 @@ mod tests {
         one("foo/bar/**", "foo/bar/magic", true);
         one("foo/bar/**", "foo/bard", false);
         one("foo/bar/**", "elsewhere", false);
+    }
+
+    #[test]
+    fn test_glob_negation() {
+        many(
+            &["foo/bar/**", "!foo/bar/baz/**"],
+            "foo/bar/hello/file.txt",
+            true,
+        );
+        many(
+            &["foo/bar/**", "!foo/bar/baz/**"],
+            "foo/bar/baz/file.txt",
+            false,
+        );
+        many(
+            &["!foo/bar/baz/**", "foo/bar/**"],
+            "foo/bar/baz/file.txt",
+            false,
+        );
     }
 }
