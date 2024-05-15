@@ -16,3 +16,13 @@ pub fn check_boolean_knob(name: &str) -> bool {
 pub fn check_boolean_knob(name: &str) -> bool {
     justknobs::eval(name, None, None).unwrap_or(false)
 }
+
+#[cfg(any(not(fbcode_build), not(target_os = "linux")))]
+pub fn check_integer_knob(name: &str) -> i64 {
+    0
+}
+
+#[cfg(all(fbcode_build, target_os = "linux"))]
+pub fn check_integer_knob(name: &str) -> i64 {
+    justknobs::get(name, None).unwrap_or(0)
+}
