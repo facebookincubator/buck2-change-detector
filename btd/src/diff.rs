@@ -171,7 +171,6 @@ pub fn immediate_target_changes<'a>(
     diff: &'a Targets,
     changes: &Changes,
     track_prelude_changes: bool,
-    detect_removed: bool,
 ) -> GraphImpact<'a> {
     // Find those targets which are different
     let mut old = base.targets_by_label_key();
@@ -244,14 +243,12 @@ pub fn immediate_target_changes<'a>(
         }
     }
 
-    if detect_removed {
-        // We remove targets from `old` when iterating `diff` above.
-        // At this point, only removed targets are left in `old`.
-        res.removed = old
-            .into_values()
-            .map(|target| (target, ImpactReason::new(target, RootImpactKind::Remove)))
-            .collect();
-    }
+    // We remove targets from `old` when iterating `diff` above.
+    // At this point, only removed targets are left in `old`.
+    res.removed = old
+        .into_values()
+        .map(|target| (target, ImpactReason::new(target, RootImpactKind::Remove)))
+        .collect();
 
     // Sort to ensure deterministic output
     res.recursive.sort_by_key(|(t, _)| t.label_key());
@@ -515,7 +512,6 @@ mod tests {
                 Status::Removed(file3),
             ]),
             false,
-            false,
         );
         let recursive = res.recursive.map(|(x, _)| x.label().to_string());
         let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
@@ -611,7 +607,6 @@ mod tests {
                 Status::Removed(file3),
             ]),
             false,
-            true,
         );
         let recursive = res.recursive.map(|(x, _)| x.label().to_string());
         let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
@@ -653,7 +648,6 @@ mod tests {
             &base,
             &base,
             &Changes::testing(&[Status::Modified(package)]),
-            false,
             false,
         );
         let mut res = res.recursive.map(|(x, _)| x.label().to_string());
@@ -941,7 +935,6 @@ mod tests {
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(file))]),
                     check,
-                    false,
                 )
                 .len(),
                 expect
@@ -995,7 +988,6 @@ mod tests {
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(file))]),
                     check,
-                    false,
                 )
                 .len(),
                 expect
@@ -1025,7 +1017,6 @@ mod tests {
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(&format!("root//{file}")))]),
                     false,
-                    false,
                 )
                 .len(),
                 expect
@@ -1053,7 +1044,7 @@ mod tests {
         })]);
         // The hash of the target doesn't change, but the package.value does
         assert_eq!(
-            immediate_target_changes(&before, &after, &Changes::testing(&[]), false, false).len(),
+            immediate_target_changes(&before, &after, &Changes::testing(&[]), false).len(),
             1
         );
     }
@@ -1076,7 +1067,7 @@ mod tests {
             }),
         ]);
         let changes = Changes::testing(&[Status::Modified(src)]);
-        let mut impact = immediate_target_changes(&targets, &targets, &changes, false, false);
+        let mut impact = immediate_target_changes(&targets, &targets, &changes, false);
         assert_eq!(impact.recursive.len(), 1);
 
         assert_eq!(
