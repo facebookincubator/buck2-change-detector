@@ -317,7 +317,9 @@ fn print_rerun(rerun: &Option<Rerun>) {
     match rerun {
         None => println!("* everything"),
         Some(rerun) => {
-            for x in &rerun.deleted {
+            let mut deleted = rerun.deleted.iter().collect::<Vec<_>>();
+            deleted.sort();
+            for x in deleted {
                 println!("- {}", x);
             }
             for x in &rerun.modified {
@@ -362,6 +364,8 @@ fn compute_rerun(
                     }
                 }
             }
+            // Make sure the order is stable
+            rerun.modified.sort();
 
             Ok(Some(rerun))
         }
