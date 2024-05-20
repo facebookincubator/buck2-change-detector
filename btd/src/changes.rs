@@ -17,7 +17,7 @@ use crate::buck::types::Package;
 use crate::buck::types::ProjectRelativePath;
 use crate::sapling::status::Status;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Changes {
     cell_paths: Vec<Status<CellPath>>,
     cell_paths_set: HashSet<CellPath>,

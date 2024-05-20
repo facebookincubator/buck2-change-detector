@@ -19,11 +19,13 @@ use crate::buck::types::CellPath;
 use crate::buck::types::CellRelativePath;
 use crate::buck::types::ProjectRelativePath;
 
+#[derive(Debug)]
 struct CellData {
     path: ProjectRelativePath,
     build_files: Vec<String>,
 }
 
+#[derive(Debug)]
 pub struct CellInfo {
     cells: HashMap<CellName, CellData>,
     /// Sorted by path length, so the longest is first

@@ -306,7 +306,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Rerun {
     modified: Vec<Package>,
     deleted: HashSet<Package>,
