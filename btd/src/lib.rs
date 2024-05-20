@@ -201,7 +201,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             step("computing rerun");
             let rerun = compute_rerun(&base, &changes, &mut buck2, &cells, &universe)?;
             let ask_buck = match &rerun {
-                None => universe.to_vec(),
+                None => universe.clone(),
                 Some(x) => x.modified.map(|x| x.as_pattern()),
             };
             if args.print_rerun {
