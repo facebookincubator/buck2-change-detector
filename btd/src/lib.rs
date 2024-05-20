@@ -349,10 +349,14 @@ fn compute_rerun(
         Some(xs) => {
             let mut rerun = Rerun::default();
 
-            // rerun can return packages outside the universe
-            // based on what BUCK files are modified. e.g. changes to
-            // outside/package/BUCK will rerun foo//outside/package
             for (pkg, status) in xs {
+                if !universe.iter().any(|p| p.matches_package(&pkg)) {
+                    // rerun can return packages outside the universe
+                    // based on what BUCK files are modified. e.g. changes to
+                    // outside/package/BUCK will rerun foo//outside/package
+                    continue;
+                }
+
                 match status {
                     PackageStatus::Present => rerun.modified.push(pkg),
                     PackageStatus::Unknown => {

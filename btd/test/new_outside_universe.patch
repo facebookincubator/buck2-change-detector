@@ -1,0 +1,8 @@
+diff --git a/prelude/BUILD b/prelude/BUILD
+new file mode 100644
+--- /dev/null
++++ b/prelude/BUILD
+@@ -0,0 +1,3 @@
++my_rule(
++   name = "target",
++)
