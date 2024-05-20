@@ -92,6 +92,7 @@ def get_patches():
 
 @pytest.mark.parametrize("patch_name", get_patches())
 def test_run(patch_name):
+    audit = os.getenv("AUDIT")
     btd = os.getenv("BTD")
     buck = os.getenv("BUCK")
     base = os.getenv("BASE")
@@ -106,6 +107,7 @@ def test_run(patch_name):
         out_base = Path(output_dir).joinpath("base.jsonl")
         out_diff = Path(output_dir).joinpath("diff.jsonl")
         out_cells = Path(output_dir).joinpath("cells.json")
+        out_config = Path(output_dir).joinpath("config.json")
         out_changes = Path(output_dir).joinpath("changes.txt")
         out_btd1 = Path(output_dir).joinpath("btd1.json")
         out_btd2 = Path(output_dir).joinpath("btd2.json")
@@ -115,6 +117,8 @@ def test_run(patch_name):
             "--check-dangling",
             "--cells",
             out_cells,
+            "--config",
+            out_config,
             "--changes",
             out_changes,
             "--base",
@@ -135,7 +139,8 @@ def test_run(patch_name):
             log_output=out_base,
         )
         apply(base, patch)
-        run(buck, "audit", "cell", "--json", output=out_cells)
+        run(audit, "cell", "--buck", buck, output=out_cells)
+        run(audit, "config", "--buck", buck, output=out_config)
         run(
             targets,
             "--buck",
