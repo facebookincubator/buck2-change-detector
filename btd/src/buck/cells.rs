@@ -247,6 +247,7 @@ mod tests {
                 "root": "/Users/ndmitchell/repo",
                 "cell1": "/Users/ndmitchell/repo/cell1",
                 "cell2": "/Users/ndmitchell/repo/cell2",
+                "cell3": "/Users/ndmitchell/repo/cell3",
               }
         );
         let mut cells = CellInfo::parse(&serde_json::to_string(&value).unwrap()).unwrap();
