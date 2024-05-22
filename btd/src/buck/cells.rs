@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use anyhow::Context as _;
+use thiserror::Error;
 
 use crate::buck::types::CellName;
 use crate::buck::types::CellPath;
@@ -30,6 +31,22 @@ pub struct CellInfo {
     cells: HashMap<CellName, CellData>,
     /// Sorted by path length, so the longest is first
     paths: Vec<(CellName, ProjectRelativePath)>,
+}
+
+#[derive(Error, Debug)]
+enum CellError {
+    #[error("Unknown cell, `{0}`")]
+    UnknownCell(CellPath),
+    #[error("Path has no cell which is a prefix `{0}`")]
+    UnknownPath(ProjectRelativePath),
+    #[error("Empty JSON object for the cells")]
+    EmptyJson,
+    #[error("Expected key `{key}` to start with `{prefix}`, but got `{value}`")]
+    InvalidKey {
+        key: String,
+        prefix: String,
+        value: String,
+    },
 }
 
 impl CellInfo {
@@ -56,15 +73,18 @@ impl CellInfo {
         let prefix = json
             .values()
             .min_by_key(|x| x.len())
-            .ok_or_else(|| anyhow::anyhow!("Empty JSON object for the cells"))?
+            .ok_or(CellError::EmptyJson)?
             .to_owned();
         let mut cells = HashMap::with_capacity(json.len());
         for (k, v) in json.into_iter() {
             match v.strip_prefix(&prefix) {
                 None => {
-                    return Err(anyhow::anyhow!(
-                        "Expected key `{k}` to start with `{prefix}`, but got `{v}`"
-                    ));
+                    return Err(CellError::InvalidKey {
+                        key: k,
+                        prefix,
+                        value: v,
+                    }
+                    .into());
                 }
                 Some(rest) => {
                     cells.insert(
@@ -141,7 +161,7 @@ impl CellInfo {
     pub fn resolve(&self, path: &CellPath) -> anyhow::Result<ProjectRelativePath> {
         match self.cells.get(&path.cell()) {
             Some(data) => Ok(data.path.join(path.path().as_str())),
-            None => Err(anyhow::anyhow!("Unknown cell, `{path}`")),
+            None => Err(CellError::UnknownCell(path.clone()).into()),
         }
     }
 
@@ -153,9 +173,7 @@ impl CellInfo {
                 return Ok(cell.join(&CellRelativePath::new(x)));
             }
         }
-        Err(anyhow::anyhow!(
-            "Path has no cell which is a prefix `{path}`"
-        ))
+        Err(CellError::UnknownPath(path.clone()).into())
     }
 
     /// The default build files that we hardcode for now.

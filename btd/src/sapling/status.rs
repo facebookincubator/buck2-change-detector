@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context as _;
+use thiserror::Error;
 
 use crate::buck::types::ProjectRelativePath;
 
@@ -21,19 +22,27 @@ pub enum Status<Path> {
     Removed(Path),
 }
 
+#[derive(Error, Debug)]
+enum StatusParseError {
+    #[error("Unexpected line format: {0}")]
+    UnexpectedFormat(String),
+    #[error("Unknown line prefix: {0}")]
+    UnknownPrefix(String),
+}
+
 impl Status<ProjectRelativePath> {
     fn from_str(value: &str) -> anyhow::Result<Self> {
         let mut it = value.chars();
         let typ = it.next();
         if it.next() != Some(' ') {
-            return Err(anyhow::anyhow!("Unexpected line format: {value}"));
+            return Err(StatusParseError::UnexpectedFormat(value.to_owned()).into());
         }
         let path = ProjectRelativePath::new(it.as_str());
         match typ {
             Some('A') => Ok(Self::Added(path)),
             Some('M') => Ok(Self::Modified(path)),
             Some('R') => Ok(Self::Removed(path)),
-            _ => Err(anyhow::anyhow!("Unknown line prefix: {value}")),
+            _ => Err(StatusParseError::UnknownPrefix(value.to_owned()).into()),
         }
     }
 }

@@ -20,6 +20,7 @@ use itertools::Itertools;
 use targets::targets_arguments;
 use td_util::command::with_command;
 use tempfile::NamedTempFile;
+use thiserror::Error;
 
 use crate::buck::cells::CellInfo;
 use crate::buck::types::Package;
@@ -34,6 +35,12 @@ pub struct Buck2 {
     root: Option<PathBuf>,
     /// The isolation directory to always use when invoking buck
     isolation_dir: Option<String>,
+}
+
+#[derive(Error, Debug)]
+enum Buck2Error {
+    #[error("Output of `root` was `{}`, which does not exist", .0.display())]
+    RootDoesNotExist(PathBuf),
 }
 
 impl Buck2 {
@@ -80,10 +87,7 @@ impl Buck2 {
         let path = PathBuf::from(String::from_utf8(res.stdout)?.trim());
         // Sanity check the output
         if !path.exists() {
-            Err(anyhow::anyhow!(
-                "Output of `root` was `{}`, which does not exist",
-                path.display()
-            ))
+            Err(Buck2Error::RootDoesNotExist(path).into())
         } else {
             Ok(path)
         }
