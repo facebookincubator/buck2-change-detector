@@ -405,42 +405,62 @@ impl CellPath {
     /// use btd::buck::types::CellPath;
     /// let cells = CellInfo::testing();
     /// assert_eq!(
-    ///     CellPath::new("foo//bar/source.txt").is_target_file(&cells),
+    ///     CellPath::new("foo//bar/source.txt")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
     ///     false
     /// );
-    /// assert_eq!(CellPath::new("foo//bar/BUCK").is_target_file(&cells), true);
     /// assert_eq!(
-    ///     CellPath::new("foo//bar/BUCK.v2").is_target_file(&cells),
+    ///     CellPath::new("foo//bar/BUCK")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
     ///     true
     /// );
     /// assert_eq!(
-    ///     CellPath::new("foo//bar/NOT_BUCK").is_target_file(&cells),
-    ///     false
-    /// );
-    /// assert_eq!(
-    ///     CellPath::new("foo//bar/TARGETS").is_target_file(&cells),
-    ///     false
-    /// );
-    /// assert_eq!(CellPath::new("foo//BUCK").is_target_file(&cells), true);
-    /// assert_eq!(
-    ///     CellPath::new("fbcode//TARGETS").is_target_file(&cells),
+    ///     CellPath::new("foo//bar/BUCK.v2")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
     ///     true
     /// );
     /// assert_eq!(
-    ///     CellPath::new("prelude//apple/TARGETS.v2").is_target_file(&cells),
+    ///     CellPath::new("foo//bar/NOT_BUCK")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
+    ///     false
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("foo//bar/TARGETS")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
+    ///     false
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("foo//BUCK").is_target_file(&cells).unwrap(),
+    ///     true
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("fbcode//TARGETS")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
+    ///     true
+    /// );
+    /// assert_eq!(
+    ///     CellPath::new("prelude//apple/TARGETS.v2")
+    ///         .is_target_file(&cells)
+    ///         .unwrap(),
     ///     true
     /// );
     /// ```
-    pub fn is_target_file(&self, cells: &CellInfo) -> bool {
+    pub fn is_target_file(&self, cells: &CellInfo) -> anyhow::Result<bool> {
         let contents = self.0.as_str();
-        for build_file in cells.build_files(&self.cell()) {
+        for build_file in cells.build_files(&self.cell())? {
             if let Some(suffix) = contents.strip_suffix(build_file) {
                 if suffix.ends_with('/') {
-                    return true;
+                    return Ok(true);
                 }
             }
         }
-        false
+        Ok(false)
     }
 
     /// ```

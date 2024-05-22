@@ -124,7 +124,7 @@ impl Buck2 {
     /// Does a package exist. Doesn't actually invoke Buck2, but does look at the file system.
     pub fn does_package_exist(&mut self, cells: &CellInfo, x: &Package) -> anyhow::Result<bool> {
         let root = self.root()?;
-        for build_file in cells.build_files(&x.cell()) {
+        for build_file in cells.build_files(&x.cell())? {
             if root
                 .join(cells.resolve(&x.join_path(build_file))?.as_str())
                 .exists()

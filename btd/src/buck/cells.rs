@@ -198,10 +198,10 @@ impl CellInfo {
         }
     }
 
-    pub fn build_files(&self, cell: &CellName) -> &[String] {
+    pub fn build_files(&self, cell: &CellName) -> anyhow::Result<&[String]> {
         match self.cells.get(cell) {
-            Some(data) => &data.build_files,
-            None => Self::default_build_files(cell.as_str()),
+            Some(data) => Ok(&data.build_files),
+            None => Ok(Self::default_build_files(cell.as_str())),
         }
     }
 }
@@ -261,13 +261,16 @@ mod tests {
         cells
             .parse_config_data(&serde_json::to_string(&value).unwrap())
             .unwrap();
-        assert_eq!(cells.build_files(&CellName::new("cell1")), &["TARGETS"]);
         assert_eq!(
-            cells.build_files(&CellName::new("cell2")),
+            cells.build_files(&CellName::new("cell1")).unwrap(),
+            &["TARGETS"]
+        );
+        assert_eq!(
+            cells.build_files(&CellName::new("cell2")).unwrap(),
             &["A1.v2", "A1", "A2.v2", "A2"]
         );
         assert_eq!(
-            cells.build_files(&CellName::new("cell3")),
+            cells.build_files(&CellName::new("cell3")).unwrap(),
             &["BUCK.v2", "BUCK"]
         );
     }

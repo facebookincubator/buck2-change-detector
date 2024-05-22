@@ -344,7 +344,7 @@ fn compute_rerun(
     if universe.is_empty() {
         return Err(UniverseError::NoUniverseOrDiff.into());
     }
-    match rerun::rerun(cells, base, changes) {
+    match rerun::rerun(cells, base, changes)? {
         None => Ok(None),
         Some(xs) => {
             let mut rerun = Rerun::default();
