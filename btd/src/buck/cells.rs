@@ -54,10 +54,18 @@ impl CellInfo {
     pub fn testing() -> Self {
         // We'd really like this to be `#[cfg(any(test, doctest))]`, but that doesn't work
         // because of https://github.com/rust-lang/rust/issues/67295.
-        Self {
-            cells: Default::default(),
-            paths: Default::default(),
-        }
+
+        // Some sample values that we use in various tests, roughly modelled on internal defaults.
+        let value = serde_json::json!(
+            {
+                "root": "/Users/ndmitchell/repo",
+                "foo": "/Users/ndmitchell/repo/foo",
+                "bar": "/Users/ndmitchell/repo/bar",
+                "fbcode": "/Users/ndmitchell/repo/fbcode",
+                "prelude": "/Users/ndmitchell/repo/fbcode/prelude",
+              }
+        );
+        CellInfo::parse(&value.to_string()).unwrap()
     }
 
     pub fn new(file: &Path) -> anyhow::Result<Self> {
