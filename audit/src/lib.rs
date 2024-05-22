@@ -58,6 +58,7 @@ pub fn audit_config_arguments() -> &'static [&'static str] {
         "--all-cells",
         "buildfile.name",
         "buildfile.name_v2",
+        "project.ignore",
         REUSE_CONFIG,
     ]
 }
