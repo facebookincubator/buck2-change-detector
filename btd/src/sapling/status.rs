@@ -26,14 +26,14 @@ impl Status<ProjectRelativePath> {
         let mut it = value.chars();
         let typ = it.next();
         if it.next() != Some(' ') {
-            return Err(anyhow::anyhow!("Unexpected line format, {}", value));
+            return Err(anyhow::anyhow!("Unexpected line format: {value}"));
         }
         let path = ProjectRelativePath::new(it.as_str());
         match typ {
             Some('A') => Ok(Self::Added(path)),
             Some('M') => Ok(Self::Modified(path)),
             Some('R') => Ok(Self::Removed(path)),
-            _ => Err(anyhow::anyhow!("Unknown line prefix, {}", value)),
+            _ => Err(anyhow::anyhow!("Unknown line prefix: {value}")),
         }
     }
 }
