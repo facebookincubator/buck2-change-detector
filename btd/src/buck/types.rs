@@ -307,7 +307,7 @@ impl TargetName {
 }
 
 /// Example: `fbcode` in `fbcode//buck2:buck2`
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Display)]
 pub struct CellName(String);
 
 impl CellName {
@@ -325,7 +325,7 @@ impl CellName {
 }
 
 /// Example: `fbcode//buck2/TARGETS`
-#[derive(Debug, Hash, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Hash, PartialEq, Eq, Deserialize, Serialize, Clone, Display)]
 pub struct CellPath(InternString);
 
 impl CellPath {
@@ -603,7 +603,7 @@ impl TargetHash {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Display)]
 pub struct ProjectRelativePath(String);
 
 impl ProjectRelativePath {

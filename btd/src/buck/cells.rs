@@ -141,7 +141,7 @@ impl CellInfo {
     pub fn resolve(&self, path: &CellPath) -> anyhow::Result<ProjectRelativePath> {
         match self.cells.get(&path.cell()) {
             Some(data) => Ok(data.path.join(path.path().as_str())),
-            None => Err(anyhow::anyhow!("Unknown cell, {:?}", path)),
+            None => Err(anyhow::anyhow!("Unknown cell, `{path}`")),
         }
     }
 
@@ -154,8 +154,7 @@ impl CellInfo {
             }
         }
         Err(anyhow::anyhow!(
-            "Path has no cell which is a prefix `{:?}`",
-            path
+            "Path has no cell which is a prefix `{path}`"
         ))
     }
 
