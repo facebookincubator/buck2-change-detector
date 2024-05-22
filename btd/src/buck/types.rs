@@ -432,9 +432,6 @@ impl CellPath {
     /// );
     /// ```
     pub fn is_target_file(&self, cells: &CellInfo) -> bool {
-        // Currently the target-file-ness is per cell.
-        // That's a pain and we are working to use `BUCK` everywhere.
-        // Until then look at the cell first.
         let contents = self.0.as_str();
         for build_file in cells.build_files(&self.cell()) {
             if let Some(suffix) = contents.strip_suffix(build_file) {
