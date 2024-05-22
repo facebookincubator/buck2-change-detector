@@ -403,7 +403,7 @@ impl CellPath {
     /// ```
     /// use btd::buck::cells::CellInfo;
     /// use btd::buck::types::CellPath;
-    /// let cells = CellInfo::empty();
+    /// let cells = CellInfo::testing();
     /// assert_eq!(
     ///     CellPath::new("foo//bar/source.txt").is_target_file(&cells),
     ///     false

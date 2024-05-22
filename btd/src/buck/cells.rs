@@ -33,8 +33,10 @@ pub struct CellInfo {
 }
 
 impl CellInfo {
-    /// An empty cell info - not that useful other than testing.
-    pub fn empty() -> Self {
+    /// A default `CellInfo` for use in tests.
+    pub fn testing() -> Self {
+        // We'd really like this to be `#[cfg(any(test, doctest))]`, but that doesn't work
+        // because of https://github.com/rust-lang/rust/issues/67295.
         Self {
             cells: Default::default(),
             paths: Default::default(),

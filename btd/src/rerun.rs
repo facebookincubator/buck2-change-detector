@@ -349,7 +349,7 @@ mod tests {
             }),
         ];
         let base = Targets::new(target_entries);
-        let cells = CellInfo::empty();
+        let cells = CellInfo::testing();
         let changes =
             Changes::testing(&[Status::Modified(CellPath::new("fbcode//broken/TARGETS"))]);
         let (changed, _) = rerun_starlark(&cells, &base, &changes);
@@ -364,7 +364,7 @@ mod tests {
             Status::Removed(CellPath::new("foo//a/b/BUCK.v2")),
             Status::Added(CellPath::new("fbcode//pkg/hello/TARGETS")),
         ]);
-        let cells = CellInfo::empty();
+        let cells = CellInfo::testing();
         let changed_package = rerun_build_file_existence(&cells, &changes);
         assert_eq!(changed_package.len(), 3);
         assert_eq!(
@@ -382,7 +382,7 @@ mod tests {
         // if a package has more than one build file and only one of them is removed
         // the state of this package is modified
         let changes = Changes::testing(&[Status::Removed(CellPath::new("foo//a/b/c/BUCK.v2"))]);
-        let cells = CellInfo::empty();
+        let cells = CellInfo::testing();
         let changed_package = rerun_build_file_existence(&cells, &changes);
         assert_eq!(changed_package.len(), 1);
         assert_eq!(
@@ -399,7 +399,7 @@ mod tests {
             Status::Removed(CellPath::new("foo//a/b/c/BUCK.v2")),
             Status::Removed(CellPath::new("foo//a/b/c/BUCK")),
         ]);
-        let cells = CellInfo::empty();
+        let cells = CellInfo::testing();
         let changed_package = rerun_build_file_existence(&cells, &changes);
         assert_eq!(changed_package.len(), 1);
         assert_eq!(
@@ -480,7 +480,7 @@ mod tests {
                 package: None,
             }),
         ]);
-        let cells = CellInfo::empty();
+        let cells = CellInfo::testing();
         let changes = Changes::testing(&[Status::Modified(CellPath::new("foo//utils.bzl"))]);
 
         assert_eq!(
@@ -514,7 +514,7 @@ mod tests {
             }),
         ];
         let base = Targets::new(target_entries);
-        let cells = CellInfo::empty();
+        let cells = CellInfo::testing();
         let changes = Changes::testing(&[
             Status::Removed(CellPath::new("foo//a/b/c/BUCK.v2")),
             Status::Removed(CellPath::new("foo//a/b/c/BUCK")),
