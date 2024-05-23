@@ -49,7 +49,7 @@ pub enum ScheduleType {
     #[serde(rename = "continuous_stable")]
     ContinuousStable,
     #[serde(rename = "landcastle")]
-    Landcastle, // Should this be just "land"?
+    Landcastle,
     #[serde(rename = "postcommit")]
     Postcommit,
     #[serde(rename = "testwarden")]
