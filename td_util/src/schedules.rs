@@ -94,3 +94,27 @@ pub enum ContinuousRunMode {
     OptEarlyAdoptor,
     OptAdhoc,
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_schedule_serialization() {
+        let s = serde_json::to_string(&ScheduleType::Landcastle);
+        assert_eq!(s.unwrap().as_str(), "\"landcastle\"");
+
+        let s = serde_json::to_string(&ScheduleType::ContinuousStable);
+        assert_eq!(s.unwrap().as_str(), "\"continuous_stable\"");
+    }
+
+    #[test]
+    fn test_schedule_deserialization() {
+        let s = serde_json::from_str::<ScheduleType>("\"continuous_stable\"");
+        assert_eq!(s.unwrap(), ScheduleType::ContinuousStable);
+
+        let s = serde_json::from_str::<ScheduleType>("\"postcommit\"");
+        assert_eq!(s.unwrap(), ScheduleType::Postcommit);
+    }
+}
