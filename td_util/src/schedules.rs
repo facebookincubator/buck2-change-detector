@@ -40,23 +40,16 @@ lazy_static! {
 /// Use snake_case so we can use the continuous_stable schedule type
 #[display(style = "snake_case")]
 #[clap(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ScheduleType {
     #[default]
-    #[serde(rename = "diff")]
     Diff,
-    #[serde(rename = "continuous")]
     Continuous,
-    #[serde(rename = "continuous_stable")]
     ContinuousStable,
-    #[serde(rename = "landcastle")]
     Landcastle,
-    #[serde(rename = "postcommit")]
     Postcommit,
-    #[serde(rename = "testwarden")]
     Testwarden,
-    #[serde(rename = "greenwarden")]
     Greenwarden,
-    #[serde(rename = "disabled")]
     Disabled,
 }
 
