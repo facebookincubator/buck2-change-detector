@@ -71,6 +71,22 @@ impl<Path> Status<Path> {
             Status::Removed(x) => Status::Removed(f(x)?),
         })
     }
+
+    pub fn into_map<T>(self, f: impl FnOnce(Path) -> T) -> Status<T> {
+        match self {
+            Status::Modified(x) => Status::Modified(f(x)),
+            Status::Added(x) => Status::Added(f(x)),
+            Status::Removed(x) => Status::Removed(f(x)),
+        }
+    }
+
+    pub fn into_try_map<T, E>(self, f: impl FnOnce(Path) -> Result<T, E>) -> Result<Status<T>, E> {
+        Ok(match self {
+            Status::Modified(x) => Status::Modified(f(x)?),
+            Status::Added(x) => Status::Added(f(x)?),
+            Status::Removed(x) => Status::Removed(f(x)?),
+        })
+    }
 }
 
 pub fn read_status(path: &Path) -> anyhow::Result<Vec<Status<ProjectRelativePath>>> {
