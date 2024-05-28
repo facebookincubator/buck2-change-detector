@@ -89,3 +89,56 @@ impl<T> SliceExt for [T] {
         collect_result(self.iter().map(f))
     }
 }
+
+/// Extension traits on [`Vec`].
+pub trait VecExt {
+    type Item;
+
+    /// A shorthand for `into_iter().map(f).collect::<Vec<_>>()`. For example:
+    ///
+    /// ```
+    /// use td_util::prelude::*;
+    /// assert_eq!(vec![1, 2, 3].into_map(|x| x * x), vec![1, 4, 9]);
+    /// ```
+    fn into_map<B, F>(self, f: F) -> Vec<B>
+    where
+        F: FnMut(Self::Item) -> B;
+
+    /// A shorthand for `into_iter().map(f).collect::<Result<Vec<_>, _>>()`. For example:
+    ///
+    /// ```
+    /// use td_util::prelude::*;
+    /// assert_eq!(
+    ///     vec![1, 2, 3].into_try_map(|x| Ok(x * x)),
+    ///     Ok::<_, bool>(vec![1, 4, 9])
+    /// );
+    /// assert_eq!(
+    ///     vec![1, 2, -3].into_try_map(|x| if x > 0 { Ok(x * x) } else { Err(false) }),
+    ///     Err(false)
+    /// );
+    /// ```
+    ///
+    /// This function will be generalised to [`Try`](std::ops::Try) once it has been
+    /// standardised.
+    fn into_try_map<B, E, F>(self, f: F) -> Result<Vec<B>, E>
+    where
+        F: FnMut(Self::Item) -> Result<B, E>;
+}
+
+impl<T> VecExt for Vec<T> {
+    type Item = T;
+
+    fn into_map<B, F>(self, f: F) -> Vec<B>
+    where
+        F: FnMut(Self::Item) -> B,
+    {
+        self.into_iter().map(f).collect()
+    }
+
+    fn into_try_map<B, E, F>(self, f: F) -> Result<Vec<B>, E>
+    where
+        F: FnMut(Self::Item) -> Result<B, E>,
+    {
+        collect_result(self.into_iter().map(f))
+    }
+}
