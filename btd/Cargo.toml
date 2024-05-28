@@ -11,7 +11,6 @@ path = "bin/main.rs"
 anyhow = "1.0"
 clap = {version = "4.1.4", features = ["derive"]}
 rayon = "1.7.0"
-derive_more = "0.99.3"
 fbinit = { workspace = true }
 glob = "0.3.0"
 itertools = "0.10.5"

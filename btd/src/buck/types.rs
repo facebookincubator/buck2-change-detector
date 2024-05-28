@@ -11,7 +11,7 @@
 
 use std::str::FromStr;
 
-use derive_more::Display;
+use parse_display::Display;
 use serde::Deserialize;
 use serde::Serialize;
 use td_util::string::InternString;
@@ -714,5 +714,18 @@ impl Glob {
             Some(s) => (GlobInclusion::Exclude, s),
             None => (GlobInclusion::Include, s),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display() {
+        let s = "foo//bar:baz";
+        let t = TargetLabel::new(s);
+        assert_eq!(t.as_str(), s);
+        assert_eq!(t.to_string(), s);
     }
 }

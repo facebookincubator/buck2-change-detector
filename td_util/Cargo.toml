@@ -7,7 +7,6 @@ edition = "2021"
 anyhow = "1.0"
 argfile = "0.1.5"
 clap = {version = "4.1.4"}
-derive_more = "0.99.3"
 equivalent = "1.0.0"
 fbinit = { workspace = true }
 lazy_static = "1.4.0"

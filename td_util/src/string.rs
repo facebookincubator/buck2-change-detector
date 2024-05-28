@@ -14,8 +14,8 @@ use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use derive_more::Display;
 use equivalent::Equivalent;
+use parse_display::Display;
 use serde::de::Visitor;
 use serde::Deserialize;
 use serde::Deserializer;
