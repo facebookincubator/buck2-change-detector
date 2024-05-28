@@ -75,13 +75,17 @@ impl Changes {
         self.contains_cell_path(&package.as_cell_path())
     }
 
-    pub fn filter_by_extension(&self, f: impl Fn(Option<&str>) -> bool) -> Changes {
+    pub fn filter_by_cell_path(&self, f: impl Fn(&CellPath) -> bool) -> Changes {
         let paths = self
             .paths
             .iter()
-            .filter(|x| f(x.get().0.extension()))
+            .filter(|x| f(&x.get().0))
             .cloned()
             .collect();
         Self::from_paths(paths)
+    }
+
+    pub fn filter_by_extension(&self, f: impl Fn(Option<&str>) -> bool) -> Changes {
+        self.filter_by_cell_path(|x| f(x.extension()))
     }
 }
