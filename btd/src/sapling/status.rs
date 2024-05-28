@@ -56,7 +56,7 @@ impl<Path> Status<Path> {
         }
     }
 
-    pub fn map<T>(&self, f: impl FnOnce(&Path) -> T) -> Status<T> {
+    pub fn map<'a, T: 'a>(&'a self, f: impl FnOnce(&'a Path) -> T) -> Status<T> {
         match self {
             Status::Modified(x) => Status::Modified(f(x)),
             Status::Added(x) => Status::Added(f(x)),
