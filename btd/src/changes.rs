@@ -58,8 +58,8 @@ impl Changes {
         self.cell_paths.is_empty()
     }
 
-    pub fn status_cell_paths(&self) -> impl Iterator<Item = &Status<CellPath>> {
-        self.cell_paths.iter()
+    pub fn status_cell_paths(&self) -> impl Iterator<Item = Status<&CellPath>> {
+        self.cell_paths.iter().map(|x| x.map(|x| x))
     }
 
     pub fn cell_paths(&self) -> impl Iterator<Item = &CellPath> {
