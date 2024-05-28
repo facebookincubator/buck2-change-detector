@@ -19,9 +19,8 @@ use crate::sapling::status::Status;
 
 #[derive(Default, Debug)]
 pub struct Changes {
-    cell_paths: Vec<Status<CellPath>>,
+    paths: Vec<Status<(CellPath, ProjectRelativePath)>>,
     cell_paths_set: HashSet<CellPath>,
-    project_paths: Vec<Status<ProjectRelativePath>>,
 }
 
 impl Changes {
@@ -29,13 +28,17 @@ impl Changes {
         cells: &CellInfo,
         changes: Vec<Status<ProjectRelativePath>>,
     ) -> anyhow::Result<Self> {
-        let cell_paths = changes.try_map(|x| x.try_map(|x| cells.unresolve(x)))?;
-        let cell_paths_set = cell_paths.iter().map(|x| x.get().clone()).collect();
-        Ok(Self {
-            cell_paths,
+        let paths =
+            changes.into_try_map(|x| x.into_try_map(|x| anyhow::Ok((cells.unresolve(&x)?, x))))?;
+        Ok(Self::from_paths(paths))
+    }
+
+    fn from_paths(paths: Vec<Status<(CellPath, ProjectRelativePath)>>) -> Self {
+        let cell_paths_set = paths.iter().map(|x| x.get().0.clone()).collect();
+        Self {
+            paths,
             cell_paths_set,
-            project_paths: changes,
-        })
+        }
     }
 
     #[cfg(test)]
@@ -44,30 +47,24 @@ impl Changes {
             ProjectRelativePath::new(path.path().as_str())
         }
 
-        let cell_paths = changes.to_owned();
-        let cell_paths_set = cell_paths.iter().map(|x| x.get().clone()).collect();
-        let project_paths = changes.map(|x| x.map(mk_project_path));
-        Self {
-            cell_paths,
-            cell_paths_set,
-            project_paths,
-        }
+        let paths = changes.map(|x| x.map(|x| (x.clone(), mk_project_path(x))));
+        Self::from_paths(paths)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.cell_paths.is_empty()
+        self.paths.is_empty()
     }
 
     pub fn status_cell_paths(&self) -> impl Iterator<Item = Status<&CellPath>> {
-        self.cell_paths.iter().map(|x| x.map(|x| x))
+        self.paths.iter().map(|x| x.map(|x| &x.0))
     }
 
     pub fn cell_paths(&self) -> impl Iterator<Item = &CellPath> {
-        self.cell_paths.iter().map(|x| x.get())
+        self.paths.iter().map(|x| &x.get().0)
     }
 
     pub fn project_paths(&self) -> impl Iterator<Item = &ProjectRelativePath> {
-        self.project_paths.iter().map(|x| x.get())
+        self.paths.iter().map(|x| &x.get().1)
     }
 
     pub fn contains_cell_path(&self, path: &CellPath) -> bool {
@@ -79,23 +76,12 @@ impl Changes {
     }
 
     pub fn filter_by_extension(&self, f: impl Fn(Option<&str>) -> bool) -> Changes {
-        let cell_paths = self
-            .cell_paths
+        let paths = self
+            .paths
             .iter()
-            .filter(|x| f(x.get().extension()))
-            .cloned()
-            .collect::<Vec<_>>();
-        let cell_paths_set = cell_paths.iter().map(|x| x.get().clone()).collect();
-        let project_paths = self
-            .project_paths
-            .iter()
-            .filter(|x| f(x.get().extension()))
+            .filter(|x| f(x.get().0.extension()))
             .cloned()
             .collect();
-        Changes {
-            cell_paths,
-            cell_paths_set,
-            project_paths,
-        }
+        Self::from_paths(paths)
     }
 }
