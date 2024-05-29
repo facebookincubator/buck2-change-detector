@@ -65,7 +65,15 @@ impl CellInfo {
                 "prelude": "/Users/ndmitchell/repo/fbcode/prelude",
               }
         );
-        CellInfo::parse(&value.to_string()).unwrap()
+        let mut res = CellInfo::parse(&value.to_string()).unwrap();
+        let config = serde_json::json!(
+            {
+                "fbcode//buildfile.name":"TARGETS",
+                "prelude//buildfile.name":"TARGETS",
+            }
+        );
+        res.parse_config_data(&config.to_string()).unwrap();
+        res
     }
 
     pub fn new(file: &Path) -> anyhow::Result<Self> {
