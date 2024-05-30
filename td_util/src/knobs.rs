@@ -18,11 +18,11 @@ pub fn check_boolean_knob(name: &str) -> bool {
 }
 
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
-pub fn check_integer_knob(name: &str) -> i64 {
-    0
+pub fn check_integer_knob(name: &str, default_value: i64) -> i64 {
+    default_value
 }
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
-pub fn check_integer_knob(name: &str) -> i64 {
-    justknobs::get(name, None).unwrap_or(0)
+pub fn check_integer_knob(name: &str, default_value: i64) -> i64 {
+    justknobs::get(name, None).unwrap_or(default_value)
 }
