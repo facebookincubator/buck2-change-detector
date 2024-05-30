@@ -37,10 +37,10 @@ lazy_static! {
     Eq,
     Hash
 )]
-/// Use snake_case so we can use the continuous_stable schedule type
 #[display(style = "snake_case")]
 #[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
+/// Represents the different phases of validation where we run CI.
 pub enum ScheduleType {
     #[default]
     Diff,
@@ -77,6 +77,7 @@ impl ScheduleType {
 #[display(style = "snake_case")]
 #[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
+/// Trunk runs with a specific purpose.
 pub enum ContinuousRunMode {
     #[serde(rename = "aarch64")]
     Aarch64,
