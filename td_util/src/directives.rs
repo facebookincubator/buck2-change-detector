@@ -9,6 +9,8 @@
 
 //! Parsing directives from skycastle
 
+use crate::project::TdProject;
+
 pub fn get_app_specific_build_directives(directives: &Option<Vec<String>>) -> Option<Vec<String>> {
     directives.as_ref().map(|directives| {
         directives
@@ -46,6 +48,14 @@ pub fn app_specific_build_directives_matches_name(
                 }
             })
         })
+}
+
+pub fn should_build_all_fbobjc(directives: &Option<Vec<String>>, project: TdProject) -> bool {
+    return directives
+        .iter()
+        .flatten()
+        .any(|build_directive| build_directive == "#buildall-fbobjc")
+        && project == TdProject::Fbobjc;
 }
 
 #[cfg(test)]
