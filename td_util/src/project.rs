@@ -34,6 +34,7 @@ pub enum TdProject {
 
 impl TdProject {
     pub fn is_mobile(&self) -> bool {
+        println!("dummy line");
         matches!(self, Self::Fbandroid | Self::Fbobjc)
     }
 }
