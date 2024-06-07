@@ -44,7 +44,7 @@ pub fn app_specific_build_directives_matches_name(
                 if exactly {
                     name == directive
                 } else {
-                    name.starts_with(directive)
+                    name.starts_with(directive) || name.ends_with(directive)
                 }
             })
         })
@@ -122,6 +122,29 @@ mod tests {
         assert!(app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive1234".to_string(),
+            false
+        ));
+    }
+
+    #[test]
+    fn test_app_specific_build_directives_matches_suffix() {
+        let app_specific_build_directives = Some(vec![
+            "-iphoneos-release-buck2".to_string(),
+            "-iphoneos-production-buck2".to_string(),
+        ]);
+        assert!(app_specific_build_directives_matches_name(
+            &app_specific_build_directives,
+            &"barcelona-distribution-iphoneos-release-buck2".to_string(),
+            false
+        ));
+        assert!(app_specific_build_directives_matches_name(
+            &app_specific_build_directives,
+            &"igios-distribution-iphoneos-production-buck2".to_string(),
+            false
+        ));
+        assert!(!app_specific_build_directives_matches_name(
+            &app_specific_build_directives,
+            &"igios-iphonesimulator-local-buck2".to_string(),
             false
         ));
     }
