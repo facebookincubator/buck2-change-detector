@@ -29,6 +29,8 @@ enum Args {
     #[cfg(fbcode_build)]
     Ranker(ranker::Args),
     #[cfg(fbcode_build)]
+    Rerun(rerun::Args),
+    #[cfg(fbcode_build)]
     Scheduler(scheduler::Args),
     Targets(targets::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
@@ -59,6 +61,8 @@ pub fn main(fb: FacebookInit) -> anyhow::Result<()> {
             Args::VerifiableMatcher(args) => verifiable_matcher::main(args),
             #[cfg(fbcode_build)]
             Args::Ranker(args) => ranker::main(args),
+            #[cfg(fbcode_build)]
+            Args::Rerun(args) => rerun::main(args),
             #[cfg(fbcode_build)]
             Args::Scheduler(args) => scheduler::main(fb, args),
             Args::Targets(args) => targets::main(args),
