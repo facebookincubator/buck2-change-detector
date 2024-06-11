@@ -36,12 +36,13 @@ pub fn app_specific_build_directives_matches_name(
     app_specific_build_directives: &Option<Vec<String>>,
     name: &String,
     exactly: bool,
+    project: TdProject,
 ) -> bool {
     app_specific_build_directives
         .as_ref()
         .map_or(false, |app_specific_build_directives| {
             app_specific_build_directives.iter().any(|directive| {
-                if exactly {
+                if exactly && project != TdProject::Fbobjc {
                     name == directive
                 } else {
                     name.starts_with(directive) || name.ends_with(directive)
@@ -94,12 +95,14 @@ mod tests {
         assert!(app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive1".to_string(),
-            true
+            true,
+            TdProject::Fbandroid
         ));
         assert!(!app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive4".to_string(),
-            true
+            true,
+            TdProject::Fbandroid
         ));
     }
     #[test]
@@ -108,7 +111,8 @@ mod tests {
         assert!(!app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive1".to_string(),
-            true
+            true,
+            TdProject::Fbandroid
         ));
     }
 
@@ -122,30 +126,48 @@ mod tests {
         assert!(app_specific_build_directives_matches_name(
             &app_specific_build_directives,
             &"directive1234".to_string(),
-            false
+            false,
+            TdProject::Fbandroid
         ));
     }
 
     #[test]
     fn test_app_specific_build_directives_matches_suffix() {
-        let app_specific_build_directives = Some(vec![
+        let fbobjc_app_specific_build_directives = Some(vec![
             "-iphoneos-release-buck2".to_string(),
             "-iphoneos-production-buck2".to_string(),
         ]);
         assert!(app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
+            &fbobjc_app_specific_build_directives,
             &"barcelona-distribution-iphoneos-release-buck2".to_string(),
-            false
+            true,
+            TdProject::Fbobjc
         ));
         assert!(app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
+            &fbobjc_app_specific_build_directives,
             &"igios-distribution-iphoneos-production-buck2".to_string(),
-            false
+            true,
+            TdProject::Fbobjc
         ));
         assert!(!app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
+            &fbobjc_app_specific_build_directives,
             &"igios-iphonesimulator-local-buck2".to_string(),
-            false
+            true,
+            TdProject::Fbobjc
+        ));
+        let fbandroid_app_specific_build_directives =
+            Some(vec!["fb4a-debug".to_string(), "fb4a-release".to_string()]);
+        assert!(app_specific_build_directives_matches_name(
+            &fbandroid_app_specific_build_directives,
+            &"automation-fb4a-debug".to_string(),
+            false,
+            TdProject::Fbandroid
+        ));
+        assert!(app_specific_build_directives_matches_name(
+            &fbandroid_app_specific_build_directives,
+            &"automation-fb4a-release".to_string(),
+            false,
+            TdProject::Fbandroid
         ));
     }
 }
