@@ -112,6 +112,13 @@ impl<'a> GraphImpact<'a> {
             .chain(self.non_recursive.iter())
             .cloned()
     }
+
+    /// Sort all the fields, ensuring they are in a deterministic order.
+    pub fn sort(&mut self) {
+        self.recursive.sort_by_key(|(t, _)| t.label_key());
+        self.non_recursive.sort_by_key(|(t, _)| t.label_key());
+        self.removed.sort_by_key(|(t, _)| t.label_key());
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -251,9 +258,7 @@ pub fn immediate_target_changes<'a>(
         .collect();
 
     // Sort to ensure deterministic output
-    res.recursive.sort_by_key(|(t, _)| t.label_key());
-    res.non_recursive.sort_by_key(|(t, _)| t.label_key());
-    res.removed.sort_by_key(|(t, _)| t.label_key());
+    res.sort();
     res
 }
 
