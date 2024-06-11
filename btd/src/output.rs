@@ -75,7 +75,6 @@ mod tests {
 
     use super::*;
     use crate::buck::types::CellPath;
-    use crate::buck::types::Oncall;
     use crate::buck::types::PackageValues;
     use crate::buck::types::TargetHash;
     use crate::diff::RootImpactKind;

@@ -203,10 +203,8 @@ mod tests {
 
     use super::*;
     use crate::buck::targets::BuckError;
-    use crate::buck::targets::BuckTarget;
     use crate::buck::targets::TargetsEntry;
     use crate::buck::types::CellPath;
-    use crate::buck::types::Package;
     use crate::buck::types::TargetName;
     use crate::diff::RootImpactKind;
     use crate::sapling::status::Status;

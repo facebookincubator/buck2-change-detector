@@ -430,11 +430,8 @@ mod tests {
     use crate::buck::labels::Labels;
     use crate::buck::targets::BuckImport;
     use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::Package;
     use crate::buck::types::PackageValues;
     use crate::buck::types::TargetHash;
-    use crate::buck::types::TargetLabel;
-    use crate::buck::types::TargetName;
     use crate::buck::types::TargetPattern;
     use crate::sapling::status::Status;
 

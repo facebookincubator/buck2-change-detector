@@ -113,7 +113,6 @@ impl GraphSize {
 mod tests {
     use super::*;
     use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::TargetLabel;
 
     fn mk_label(x: &str) -> TargetLabel {
         TargetLabel::new(&format!("none//:{x}"))
