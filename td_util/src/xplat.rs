@@ -25,7 +25,7 @@ pub fn unpack_project_metadata(
             .iter()
             .find(|m| m.0 == metadata_key)
             .map_or(HashMap::new(), |m| {
-                serde_json::from_str::<HashMap<String, String>>(&m.1).unwrap_or(HashMap::new())
+                serde_json::from_str::<HashMap<String, String>>(&m.1).unwrap_or_default()
             })
             .into_iter()
             .collect()
