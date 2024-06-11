@@ -8,7 +8,7 @@
  */
 
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
-pub fn check_boolean_knob(name: &str) -> bool {
+pub fn check_boolean_knob(_name: &str) -> bool {
     false
 }
 
@@ -18,7 +18,7 @@ pub fn check_boolean_knob(name: &str) -> bool {
 }
 
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
-pub fn check_integer_knob(name: &str, default_value: i64) -> i64 {
+pub fn check_integer_knob(_name: &str, default_value: i64) -> i64 {
     default_value
 }
 
