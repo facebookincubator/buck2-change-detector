@@ -51,6 +51,7 @@ pub enum ScheduleType {
     Testwarden,
     Greenwarden,
     Disabled,
+    Master,
 }
 
 impl ScheduleType {
