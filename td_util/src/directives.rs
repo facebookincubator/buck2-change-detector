@@ -59,6 +59,14 @@ pub fn should_build_all_fbobjc(directives: &Option<Vec<String>>, project: TdProj
         && project == TdProject::Fbobjc;
 }
 
+pub fn should_build_all_fbandroid(directives: &Option<Vec<String>>, project: TdProject) -> bool {
+    return directives
+        .iter()
+        .flatten()
+        .any(|build_directive| build_directive == "#buildall-fbandroid")
+        && project == TdProject::Fbandroid;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
