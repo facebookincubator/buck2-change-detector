@@ -88,6 +88,7 @@ pub enum ContinuousRunMode {
     OptHourly,
     OptEarlyAdoptor,
     OptAdhoc,
+    RunwayWWWShadow,
 }
 
 #[cfg(test)]
