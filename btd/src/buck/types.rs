@@ -319,6 +319,10 @@ impl CellName {
         CellPath(InternString::from_string(format!("{}//{}", self.0, path.0)))
     }
 
+    pub fn as_cell_path(&self) -> CellPath {
+        self.join(&CellRelativePath::new(""))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
