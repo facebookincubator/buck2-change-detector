@@ -165,8 +165,16 @@ impl CellInfo {
                                 .flat_map(|x| [format!("{x}.v2"), x])
                                 .collect();
                         }
-                        if let Some(data) = self.cells.get_mut(&CellName::new(cell)) {
-                            data.build_files = names;
+                        let cell = CellName::new(cell);
+                        match self.cells.get_mut(&cell) {
+                            Some(data) => data.build_files = names,
+                            None => {
+                                if check_boolean_knob(
+                                    "ci_efficiency/citadel:explicit_cell_buildfile",
+                                ) {
+                                    return Err(CellError::UnknownCell(cell.as_cell_path()).into());
+                                }
+                            }
                         }
                     }
                 }
