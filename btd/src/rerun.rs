@@ -13,6 +13,7 @@ use std::path::Path;
 
 use crate::buck::cells::CellInfo;
 use crate::buck::config::is_buck_deployment;
+use crate::buck::config::is_buckconfig_change;
 use crate::buck::package_resolver::PackageResolver;
 use crate::buck::targets::Targets;
 use crate::buck::types::CellName;
@@ -28,24 +29,10 @@ pub enum PackageStatus {
     Unknown,
 }
 
-fn is_buckconfig(path: &CellPath) -> bool {
-    // Need to match .buckconfig and .bcfg suffix
-    // There are also configs from chef etc (e.g. /etc/buckconfig.d/fb_chef.ini)
-    // but they won't show up in the change list anyway since they aren't version controlled.
-    //
-    // If the user passes `@mode/dev` that will change everything.
-    // There are also files in `arvr/mode/**/*.inc` that get pulled in to config and places like
-    // `tools/buckconfigs/cxx/windows/clang.inc`.
-    let ext = path.extension();
-    let str = path.as_str();
-    ext == Some("bcfg")
-        || ext == Some("buckconfig")
-        || str.contains("/mode/")
-        || str.contains("/buckconfigs/")
-}
-
+// Whether the change invalidates the graph, and we will rerun everything
+// for a updated graph.
 fn invalidates_graph(path: &CellPath) -> bool {
-    is_buckconfig(path) || is_buck_deployment(path)
+    is_buckconfig_change(path) || is_buck_deployment(path)
 }
 
 /// Compute the targets we should rerun, or None if we should do everything.
@@ -252,22 +239,6 @@ mod tests {
     use crate::buck::targets::TargetsEntry;
     use crate::buck::types::TargetHash;
     use crate::buck::types::TargetLabel;
-
-    #[test]
-    fn test_is_buckconfig() {
-        assert!(!is_buckconfig(&CellPath::new("fbcode//buck2/TARGETS")));
-        assert!(!is_buckconfig(&CellPath::new("fbcode//buck2/src/file.rs")));
-        assert!(is_buckconfig(&CellPath::new(
-            "fbsource//tools/buckconfigs/cxx/windows/clang.inc"
-        )));
-        assert!(is_buckconfig(&CellPath::new(
-            "fbsource//arvr/mode/dv/dev.buckconfig"
-        )));
-        assert!(is_buckconfig(&CellPath::new(
-            "fbsource//tools/buckconfigs/fbsource-specific.bcfg"
-        )));
-        assert!(is_buckconfig(&CellPath::new("fbsource//.buckconfig")));
-    }
 
     #[test]
     fn test_rerun_globs() {

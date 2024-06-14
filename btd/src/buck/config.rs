@@ -25,6 +25,17 @@ pub fn is_buck_deployment(path: &CellPath) -> bool {
     path.as_str().starts_with("fbsource//tools/buck2-versions/")
 }
 
+// Touching these files will let btd treat everything as affected.
+pub fn is_buckconfig_change(path: &CellPath) -> bool {
+    let ext = path.extension();
+    let str = path.as_str();
+    ext == Some("buckconfig")
+        || str.starts_with("fbsource//tools/buckconfigs/")
+        || (ext.is_none()
+            && (str.starts_with("fbsource//arvr/mode/")
+                || str.starts_with("fbsource//fbcode/mode/")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,6 +47,40 @@ mod tests {
         )));
         assert!(is_buck_deployment(&CellPath::new(
             "fbsource//tools/buck2-versions/stable"
+        )));
+    }
+
+    #[test]
+    fn test_is_buckconfig_change() {
+        // random buckconfigs
+        assert!(!is_buckconfig_change(&CellPath::new(
+            "fbcode//some_config.bcfg"
+        )));
+        // buckconfigs
+        assert!(is_buckconfig_change(&CellPath::new(
+            "fbsource//.buckconfig"
+        )));
+        // bcfg
+        assert!(is_buckconfig_change(&CellPath::new(
+            "fbsource//tools/buckconfigs/abc/xyz.bcfg"
+        )));
+        assert!(!is_buckconfig_change(&CellPath::new(
+            "fbcode//buck2/TARGETS"
+        )));
+        assert!(!is_buckconfig_change(&CellPath::new(
+            "fbcode//buck2/src/file.rs"
+        )));
+        assert!(is_buckconfig_change(&CellPath::new(
+            "fbsource//tools/buckconfigs/cxx/windows/clang.inc"
+        )));
+        assert!(is_buckconfig_change(&CellPath::new(
+            "fbsource//arvr/mode/dv/dev.buckconfig"
+        )));
+        assert!(is_buckconfig_change(&CellPath::new(
+            "fbsource//tools/buckconfigs/fbsource-specific.bcfg"
+        )));
+        assert!(is_buckconfig_change(&CellPath::new(
+            "fbsource//.buckconfig"
         )));
     }
 }

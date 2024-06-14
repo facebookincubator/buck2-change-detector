@@ -221,7 +221,7 @@ def check_properties(patch, rdeps):
         } in rdeps
         assert len(rdeps) == 2
     elif patch == "buckconfig":
-        assert len(rdeps) == 1
+        assert len(rdeps) == 3
     elif patch == "cfg_modifiers":
         assert rdeps == [
             {

@@ -14,6 +14,7 @@ use std::mem;
 
 use tracing::warn;
 
+use crate::buck::config::is_buckconfig_change;
 use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
 use crate::buck::target_map::TargetMap;
@@ -102,6 +103,13 @@ impl<'a> GraphImpact<'a> {
         }
     }
 
+    pub fn from_non_recursive(non_recursive: Vec<(&'a BuckTarget, ImpactReason)>) -> Self {
+        Self {
+            non_recursive,
+            ..Default::default()
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.recursive.len() + self.non_recursive.len()
     }
@@ -171,6 +179,8 @@ pub enum RootImpactKind {
     Remove,
     /// When we want to manually rerun the target.
     ManualForRerun,
+    /// Universal file is touched
+    UniversalFile,
 }
 
 pub fn immediate_target_changes<'a>(
@@ -179,6 +189,16 @@ pub fn immediate_target_changes<'a>(
     changes: &Changes,
     track_prelude_changes: bool,
 ) -> GraphImpact<'a> {
+    if changes.cell_paths().any(is_buckconfig_change) {
+        let mut ret = GraphImpact::from_non_recursive(
+            diff.targets()
+                .map(|t| (t, ImpactReason::new(t, RootImpactKind::UniversalFile)))
+                .collect(),
+        );
+        ret.sort();
+        return ret;
+    }
+
     // Find those targets which are different
     let mut old = base.targets_by_label_key();
 
@@ -528,6 +548,47 @@ mod tests {
             ]
         );
         assert_eq!(non_recursive.map(|x| x.as_str()), &["foo//bar:zzz",]);
+    }
+
+    #[test]
+    fn test_everything_is_immediate_on_universal_changes() {
+        fn target(
+            pkg: &str,
+            name: &str,
+            inputs: &[&CellPath],
+            hash: &str,
+            package_values: &PackageValues,
+        ) -> TargetsEntry {
+            TargetsEntry::Target(BuckTarget {
+                inputs: inputs.iter().map(|x| (*x).clone()).collect(),
+                hash: TargetHash::new(hash),
+                package_values: package_values.clone(),
+                ..BuckTarget::testing(name, pkg, "prelude//rules.bzl:cxx_library")
+            })
+        }
+
+        let file1 = CellPath::new("fbsource//tools/buckconfigs/file1.bcfg");
+        let file2 = CellPath::new("foo//bar/file2.txt");
+        let file3 = CellPath::new("foo//bar/file3.txt");
+
+        let default_pacakge_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let base = Targets::new(vec![
+            target("foo//bar", "aaa", &[], "123", &default_pacakge_value),
+            target("foo//baz", "bbb", &[&file2], "123", &default_pacakge_value),
+            target("foo//bar", "ccc", &[&file3], "123", &default_pacakge_value),
+        ]);
+        let res = immediate_target_changes(
+            &base,
+            &base,
+            &Changes::testing(&[Status::Modified(file1), Status::Removed(file2)]),
+            false,
+        );
+        assert!(res.recursive.is_empty());
+        let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
+        assert_eq!(
+            non_recursive.map(|x| x.as_str()),
+            &["foo//bar:aaa", "foo//bar:ccc", "foo//baz:bbb"]
+        );
     }
 
     #[test]
