@@ -204,7 +204,9 @@ impl CellInfo {
     /// The default build files that we hardcode for now.
     fn default_build_files(cell: &str) -> &'static [String] {
         // TODO: We eventually want to remove the hardcoding
-        if cell == "fbcode" || cell == "prelude" || cell == "toolchains" {
+        if (cell == "fbcode" || cell == "prelude" || cell == "toolchains")
+            && !check_boolean_knob("ci_efficiency/citadel:explicit_cell_buildfile")
+        {
             static RESULT: LazyLock<Vec<String>> =
                 LazyLock::new(|| vec!["TARGETS.v2".to_owned(), "TARGETS".to_owned()]);
             &RESULT
