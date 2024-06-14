@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use anyhow::Context as _;
+use td_util::knobs::check_boolean_knob;
 use thiserror::Error;
 
 use crate::buck::types::CellName;
@@ -209,7 +210,13 @@ impl CellInfo {
     pub fn build_files(&self, cell: &CellName) -> anyhow::Result<&[String]> {
         match self.cells.get(cell) {
             Some(data) => Ok(&data.build_files),
-            None => Ok(Self::default_build_files(cell.as_str())),
+            None => {
+                if check_boolean_knob("ci_efficiency/citadel:explicit_cell_buildfile") {
+                    Err(CellError::UnknownCell(cell.as_cell_path()).into())
+                } else {
+                    Ok(Self::default_build_files(cell.as_str()))
+                }
+            }
         }
     }
 }
