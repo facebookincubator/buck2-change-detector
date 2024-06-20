@@ -20,8 +20,13 @@ use serde::Deserialize;
 use serde::Serialize;
 
 lazy_static! {
-    static ref CHANGESET_SCHEDULE_TYPES: HashSet<&'static str> =
-        HashSet::from(["diff", "landcastle", "master", "postcommit", "relbranch"]);
+    static ref CHANGESET_SCHEDULE_TYPES: HashSet<ScheduleType> = HashSet::from([
+        ScheduleType::Diff,
+        ScheduleType::Landcastle,
+        ScheduleType::Master,
+        ScheduleType::Postcommit,
+        ScheduleType::Relbranch,
+    ]);
 }
 
 #[derive(
@@ -52,13 +57,14 @@ pub enum ScheduleType {
     Greenwarden,
     Disabled,
     Master,
+    Relbranch,
 }
 
 impl ScheduleType {
     /// Mobile build TDs use schedule_type to decide whether we need to run build for changeset (e.g. diff and landcastle)
     /// See UTD implementation: <https://fburl.com/code/wfps6pag>
     pub fn is_changeset_schedule_type(&self) -> bool {
-        CHANGESET_SCHEDULE_TYPES.contains(self.to_string().as_str())
+        CHANGESET_SCHEDULE_TYPES.contains(self)
     }
 }
 
