@@ -27,6 +27,13 @@ lazy_static! {
         ScheduleType::Postcommit,
         ScheduleType::Relbranch,
     ]);
+    static ref TRUNK_SCHEDULE_TYPES: HashSet<ScheduleType> = HashSet::from([
+        ScheduleType::Continuous,
+        ScheduleType::ContinuousStable,
+        ScheduleType::Testwarden,
+        ScheduleType::Greenwarden,
+        ScheduleType::Disabled,
+    ]);
 }
 
 #[derive(
@@ -65,6 +72,10 @@ impl ScheduleType {
     /// See UTD implementation: <https://fburl.com/code/wfps6pag>
     pub fn is_changeset_schedule_type(&self) -> bool {
         CHANGESET_SCHEDULE_TYPES.contains(self)
+    }
+
+    pub fn is_trunk_schedule_type(&self) -> bool {
+        TRUNK_SCHEDULE_TYPES.contains(self)
     }
 }
 
