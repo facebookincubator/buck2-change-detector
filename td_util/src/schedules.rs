@@ -77,6 +77,15 @@ impl ScheduleType {
     pub fn is_trunk_schedule_type(&self) -> bool {
         TRUNK_SCHEDULE_TYPES.contains(self)
     }
+
+    pub fn accepts(self, other: &ScheduleType) -> bool {
+        match self {
+            ScheduleType::Continuous => {
+                matches!(other, ScheduleType::Continuous | ScheduleType::Diff)
+            }
+            _ => *other == self,
+        }
+    }
 }
 
 #[derive(
