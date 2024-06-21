@@ -29,6 +29,11 @@ pub fn is_buck_deployment(path: &CellPath) -> bool {
 pub fn is_buckconfig_change(path: &CellPath) -> bool {
     let ext = path.extension();
     let str = path.as_str();
+    // Don't treat changes to buck2 tests as buckconfig changes, otherwise we run way too much CI on
+    // these
+    if str.contains("buck2/tests") {
+        return false;
+    }
     ext == Some("buckconfig")
         || str.starts_with("fbsource//tools/buckconfigs/")
         || (ext.is_none()
@@ -81,6 +86,9 @@ mod tests {
         )));
         assert!(is_buckconfig_change(&CellPath::new(
             "fbsource//.buckconfig"
+        )));
+        assert!(!is_buckconfig_change(&CellPath::new(
+            "fbcode//buck2/tests/foo_data/.buckconfig"
         )));
     }
 }
