@@ -78,10 +78,17 @@ impl ScheduleType {
         TRUNK_SCHEDULE_TYPES.contains(self)
     }
 
+    /// For checking a ScheduleType that an orchestrator is running with against a ScheduleType target is configured with
     pub fn accepts(self, other: &ScheduleType) -> bool {
         match self {
             ScheduleType::Continuous => {
                 matches!(other, ScheduleType::Continuous | ScheduleType::Diff)
+            }
+            ScheduleType::Testwarden => {
+                matches!(
+                    other,
+                    ScheduleType::Testwarden | ScheduleType::Continuous | ScheduleType::Diff
+                )
             }
             _ => *other == self,
         }
