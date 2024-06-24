@@ -13,7 +13,6 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use anyhow::Context as _;
-use td_util::knobs::check_boolean_knob;
 use thiserror::Error;
 
 use crate::buck::types::CellName;
@@ -169,11 +168,7 @@ impl CellInfo {
                         match self.cells.get_mut(&cell) {
                             Some(data) => data.build_files = names,
                             None => {
-                                if check_boolean_knob(
-                                    "ci_efficiency/citadel:explicit_cell_buildfile",
-                                ) {
-                                    return Err(CellError::UnknownCell(cell.as_cell_path()).into());
-                                }
+                                return Err(CellError::UnknownCell(cell.as_cell_path()).into());
                             }
                         }
                     }
@@ -202,31 +197,16 @@ impl CellInfo {
     }
 
     /// The default build files that we hardcode for now.
-    fn default_build_files(cell: &str) -> &'static [String] {
-        // TODO: We eventually want to remove the hardcoding
-        if (cell == "fbcode" || cell == "prelude" || cell == "toolchains")
-            && !check_boolean_knob("ci_efficiency/citadel:explicit_cell_buildfile")
-        {
-            static RESULT: LazyLock<Vec<String>> =
-                LazyLock::new(|| vec!["TARGETS.v2".to_owned(), "TARGETS".to_owned()]);
-            &RESULT
-        } else {
-            static RESULT: LazyLock<Vec<String>> =
-                LazyLock::new(|| vec!["BUCK.v2".to_owned(), "BUCK".to_owned()]);
-            &RESULT
-        }
+    fn default_build_files(#[allow(unused_variables)] cell: &str) -> &'static [String] {
+        static RESULT: LazyLock<Vec<String>> =
+            LazyLock::new(|| vec!["BUCK.v2".to_owned(), "BUCK".to_owned()]);
+        &RESULT
     }
 
     pub fn build_files(&self, cell: &CellName) -> anyhow::Result<&[String]> {
         match self.cells.get(cell) {
             Some(data) => Ok(&data.build_files),
-            None => {
-                if check_boolean_knob("ci_efficiency/citadel:explicit_cell_buildfile") {
-                    Err(CellError::UnknownCell(cell.as_cell_path()).into())
-                } else {
-                    Ok(Self::default_build_files(cell.as_str()))
-                }
-            }
+            None => Err(CellError::UnknownCell(cell.as_cell_path()).into()),
         }
     }
 }
