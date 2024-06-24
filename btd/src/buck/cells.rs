@@ -10,15 +10,18 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
 
 use anyhow::Context as _;
+use td_util::prelude::*;
 use thiserror::Error;
 
 use crate::buck::types::CellName;
 use crate::buck::types::CellPath;
 use crate::buck::types::CellRelativePath;
 use crate::buck::types::ProjectRelativePath;
+
+/// The value of `buildfile.name` if omitted.
+const DEFAULT_BUILD_FILES: &[&str] = &["BUCK.v2", "BUCK"];
 
 #[derive(Debug)]
 struct CellData {
@@ -107,10 +110,7 @@ impl CellInfo {
                         CellName::new(&k),
                         CellData {
                             path: ProjectRelativePath::new(rest.trim_start_matches('/')),
-                            build_files: Self::default_build_files(&k)
-                                .iter()
-                                .map(|x| (*x).to_owned())
-                                .collect(),
+                            build_files: DEFAULT_BUILD_FILES.map(|x| (*x).to_owned()),
                         },
                     );
                 }
@@ -194,13 +194,6 @@ impl CellInfo {
             }
         }
         Err(CellError::UnknownPath(path.clone()).into())
-    }
-
-    /// The default build files that we hardcode for now.
-    fn default_build_files(#[allow(unused_variables)] cell: &str) -> &'static [String] {
-        static RESULT: LazyLock<Vec<String>> =
-            LazyLock::new(|| vec!["BUCK.v2".to_owned(), "BUCK".to_owned()]);
-        &RESULT
     }
 
     pub fn build_files(&self, cell: &CellName) -> anyhow::Result<&[String]> {
