@@ -12,6 +12,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context as _;
+use itertools::Itertools;
 use td_util::prelude::*;
 use thiserror::Error;
 
@@ -34,6 +35,16 @@ impl CellData {
         Self {
             path,
             build_files: DEFAULT_BUILD_FILES.map(|x| (*x).to_owned()),
+        }
+    }
+
+    fn set_build_files(&mut self, value: &str, infer_v2: bool) {
+        self.build_files.clear();
+        for x in value.split(',').map(str::trim) {
+            if infer_v2 {
+                self.build_files.push(format!("{x}.v2"));
+            }
+            self.build_files.push(x.to_owned());
         }
     }
 }
@@ -148,35 +159,31 @@ impl CellInfo {
 
     pub fn parse_config_data(&mut self, data: &str) -> anyhow::Result<()> {
         let json: HashMap<String, String> = serde_json::from_str(data)?;
-        // name_v2 needs to take precedence, so evaluate it second
-        for v2 in [false, true] {
-            let want_key = if v2 {
-                "buildfile.name_v2"
-            } else {
-                "buildfile.name"
+
+        // The keys have names like `cell//buildfile.name`.
+        // We sort and group by cell name, so we only see each cell name once,
+        // and so that `buildfile.name_v2` is _after_ `buildfile.name` as it must always take preference.
+        let mut xs = json
+            .iter()
+            .filter_map(|(k, v)| {
+                let (cell, k) = k.split_once("//")?;
+                Some((cell, (k, v)))
+            })
+            .collect::<Vec<_>>();
+        xs.sort();
+        for (cell, items) in &xs.iter().group_by(|x| x.0) {
+            let cell = CellName::new(cell);
+            let cell_data = match self.cells.get_mut(&cell) {
+                Some(data) => data,
+                None => return Err(CellError::UnknownCell(cell.as_cell_path()).into()),
             };
-            for (k, v) in json.iter() {
-                // Expecting `cell//buildfile.name` = `BUCK,TARGETS`
-                if let Some((cell, key)) = k.split_once("//") {
-                    if key == want_key {
-                        let mut names = v
-                            .split(',')
-                            .map(|x| x.trim().to_owned())
-                            .collect::<Vec<_>>();
-                        if !v2 {
-                            // For name, we infer the .v2 suffix automatically
-                            names = names
-                                .into_iter()
-                                .flat_map(|x| [format!("{x}.v2"), x])
-                                .collect();
-                        }
-                        let cell = CellName::new(cell);
-                        match self.cells.get_mut(&cell) {
-                            Some(data) => data.build_files = names,
-                            None => {
-                                return Err(CellError::UnknownCell(cell.as_cell_path()).into());
-                            }
-                        }
+
+            for (_cell, (key, value)) in items {
+                match *key {
+                    "buildfile.name" => cell_data.set_build_files(value, true),
+                    "buildfile.name_v2" => cell_data.set_build_files(value, false),
+                    _ => {
+                        // Extra config isn't a problem, just ignore it
                     }
                 }
             }
