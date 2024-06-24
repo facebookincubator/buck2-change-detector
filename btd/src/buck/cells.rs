@@ -29,6 +29,15 @@ struct CellData {
     build_files: Vec<String>,
 }
 
+impl CellData {
+    fn new(path: ProjectRelativePath) -> Self {
+        Self {
+            path,
+            build_files: DEFAULT_BUILD_FILES.map(|x| (*x).to_owned()),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CellInfo {
     cells: HashMap<CellName, CellData>,
@@ -108,10 +117,7 @@ impl CellInfo {
                 Some(rest) => {
                     cells.insert(
                         CellName::new(&k),
-                        CellData {
-                            path: ProjectRelativePath::new(rest.trim_start_matches('/')),
-                            build_files: DEFAULT_BUILD_FILES.map(|x| (*x).to_owned()),
-                        },
+                        CellData::new(ProjectRelativePath::new(rest.trim_start_matches('/'))),
                     );
                 }
             }
