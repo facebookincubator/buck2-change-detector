@@ -278,5 +278,22 @@ mod tests {
             cells.build_files(&CellName::new("cell3")).unwrap(),
             &["BUCK.v2", "BUCK"]
         );
+        assert!(cells.build_files(&CellName::new("cell4")).is_err());
+    }
+
+    #[test]
+    fn test_cell_config_incompatible() {
+        let value = serde_json::json!(
+            {
+                "root": "/Users/ndmitchell/repo",
+            }
+        );
+        let mut cells = CellInfo::parse(&value.to_string()).unwrap();
+        let config = serde_json::json!(
+            {
+                "cell1//buildfile.name":"BUILD",
+            }
+        );
+        assert!(cells.parse_config_data(&config.to_string()).is_err());
     }
 }
