@@ -13,6 +13,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use itertools::Itertools;
+use td_util::knobs::check_boolean_knob;
 use td_util::prelude::*;
 use thiserror::Error;
 
@@ -221,6 +222,19 @@ impl CellInfo {
         match self.cells.get(cell) {
             Some(data) => Ok(&data.build_files),
             None => Err(CellError::UnknownCell(cell.as_cell_path()).into()),
+        }
+    }
+
+    pub fn is_ignored(&self, path: &CellPath) -> bool {
+        match self.cells.get(&path.cell()) {
+            None => false,
+            Some(data) => {
+                if check_boolean_knob("ci_efficiency/citadel:buck2_ignore") {
+                    data.ignore.is_match(path.path().as_str())
+                } else {
+                    false
+                }
+            }
         }
     }
 }
