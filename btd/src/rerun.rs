@@ -46,26 +46,30 @@ pub fn rerun(
         return Ok(None);
     }
 
+    // Files which are ignored by Buck shouldn't be considered going forward,
+    // but are important to consider for the .buckconfig changes above
+    let changes = changes.filter_by_cell_path(|x| !cells.is_ignored(x));
+
     let mut res = HashMap::new();
     let all_packages = package_set(base);
     let add_present = |x: HashSet<_>| x.into_iter().map(|x| (x, PackageStatus::Present));
 
     // targets that are affected due to bzl/build file changes
-    let (changed, starlark_changes) = rerun_starlark(cells, base, changes)?;
+    let (changed, starlark_changes) = rerun_starlark(cells, base, &changes)?;
     res.extend(add_present(changed));
     // targets that are affected due to PACKAGE file changes
     res.extend(add_present(rerun_package_file(
-        changes,
+        &changes,
         &starlark_changes,
         &all_packages,
     )));
     // targets that are affected due to source file changes
-    res.extend(add_present(rerun_globs(changes, &all_packages)));
+    res.extend(add_present(rerun_globs(&changes, &all_packages)));
 
     // We extend with this set last, since it may insert PackageStatus::Unknown
     // which need to take precedence over the above.
     // if build file itself appears or disappears
-    res.extend(rerun_build_file_existence(cells, changes)?);
+    res.extend(rerun_build_file_existence(cells, &changes)?);
     Ok(Some(res))
 }
 

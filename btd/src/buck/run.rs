@@ -125,9 +125,9 @@ impl Buck2 {
     pub fn does_package_exist(&mut self, cells: &CellInfo, x: &Package) -> anyhow::Result<bool> {
         let root = self.root()?;
         for build_file in cells.build_files(&x.cell())? {
-            if root
-                .join(cells.resolve(&x.join_path(build_file))?.as_str())
-                .exists()
+            let cell_path = x.join_path(build_file);
+            if !cells.is_ignored(&cell_path)
+                && root.join(cells.resolve(&cell_path)?.as_str()).exists()
             {
                 return Ok(true);
             }
