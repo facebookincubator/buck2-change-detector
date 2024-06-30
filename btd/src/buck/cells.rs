@@ -16,6 +16,7 @@ use itertools::Itertools;
 use td_util::prelude::*;
 use thiserror::Error;
 
+use crate::buck::ignore_set::IgnoreSet;
 use crate::buck::types::CellName;
 use crate::buck::types::CellPath;
 use crate::buck::types::CellRelativePath;
@@ -28,6 +29,7 @@ const DEFAULT_BUILD_FILES: &[&str] = &["BUCK.v2", "BUCK"];
 struct CellData {
     path: ProjectRelativePath,
     build_files: Vec<String>,
+    ignore: IgnoreSet,
 }
 
 impl CellData {
@@ -35,6 +37,7 @@ impl CellData {
         Self {
             path,
             build_files: DEFAULT_BUILD_FILES.map(|x| (*x).to_owned()),
+            ignore: IgnoreSet::default(),
         }
     }
 
@@ -46,6 +49,10 @@ impl CellData {
             }
             self.build_files.push(x.to_owned());
         }
+    }
+
+    fn set_ignore(&mut self, value: &str) {
+        self.ignore = IgnoreSet::new(value);
     }
 }
 
@@ -182,6 +189,7 @@ impl CellInfo {
                 match *key {
                     "buildfile.name" => cell_data.set_build_files(value, true),
                     "buildfile.name_v2" => cell_data.set_build_files(value, false),
+                    "project.ignore" => cell_data.set_ignore(value),
                     _ => {
                         // Extra config isn't a problem, just ignore it
                     }

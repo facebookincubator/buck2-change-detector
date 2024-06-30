@@ -10,6 +10,7 @@
 pub mod cells;
 pub mod config;
 pub mod glob;
+pub mod ignore_set;
 pub mod labels;
 pub mod package_resolver;
 pub mod run;
