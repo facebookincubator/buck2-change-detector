@@ -7,3 +7,6 @@ file_watcher = notify
 
 [random_key]
 value=1
+
+[project]
+ignore = ignored

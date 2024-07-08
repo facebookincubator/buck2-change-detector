@@ -317,4 +317,26 @@ mod tests {
         );
         assert!(cells.parse_config_data(&config.to_string()).is_err());
     }
+
+    #[test]
+    fn test_cell_ignore() {
+        let value = serde_json::json!(
+            {
+                "root": "/Users/ndmitchell/repo",
+                "cell1": "/Users/ndmitchell/repo/cell1",
+            }
+        );
+        let mut cells = CellInfo::parse(&value.to_string()).unwrap();
+        let config = serde_json::json!(
+            {
+                "cell1//project.ignore":"bar/baz",
+            }
+        );
+        cells.parse_config_data(&config.to_string()).unwrap();
+
+        assert!(!cells.is_ignored(&CellPath::new("root//bar/baz/file.txt")));
+        assert!(cells.is_ignored(&CellPath::new("cell1//bar/baz/file.txt")));
+        assert!(!cells.is_ignored(&CellPath::new("root//cell1/bar/baz/file.txt")));
+        assert!(!cells.is_ignored(&CellPath::new("cell1//cell1/bar/baz/file.txt")));
+    }
 }

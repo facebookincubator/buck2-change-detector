@@ -239,7 +239,7 @@ def check_properties(patch, rdeps):
     elif patch == "new_buck":
         assert len(rdeps) == 1
         assert rdeps[0]["target"] == "root//new:target"
-    elif patch == "new_outside_universe":
+    elif patch == "new_outside_universe" or patch == "new_ignored":
         assert rdeps == []
     else:
         raise AssertionError("No properties known for: " + patch)
@@ -260,7 +260,7 @@ def check_properties_rerun(patch, rerun):
         assert rerun == "- root//inner\n"
     elif patch == "new_buck":
         assert rerun == "+ root//\n+ root//new\n"
-    elif patch == "new_outside_universe":
+    elif patch == "new_outside_universe" or patch == "new_ignored":
         assert rerun == ""
     else:
         raise AssertionError("No properties known for: " + patch)
