@@ -447,7 +447,6 @@ mod tests {
     use td_util::prelude::*;
 
     use super::*;
-    use crate::buck::labels::Labels;
     use crate::buck::targets::BuckImport;
     use crate::buck::targets::TargetsEntry;
     use crate::buck::types::PackageValues;
@@ -1099,10 +1098,7 @@ mod tests {
             "prelude//rules.bzl:genrule",
         ))]);
         let after = Targets::new(vec![TargetsEntry::Target(BuckTarget {
-            package_values: PackageValues {
-                labels: Labels::new(&["foo"]),
-                cfg_modifiers: serde_json::Value::Null,
-            },
+            package_values: PackageValues::new(&["foo"], serde_json::Value::Null),
             ..BuckTarget::testing("foo", "code//bar", "prelude//rules.bzl:genrule")
         })]);
         // The hash of the target doesn't change, but the package.value does
