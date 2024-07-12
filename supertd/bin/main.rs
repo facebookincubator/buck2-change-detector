@@ -62,7 +62,7 @@ pub fn main(fb: FacebookInit) -> anyhow::Result<()> {
             #[cfg(fbcode_build)]
             Args::Ranker(args) => ranker::main(args),
             #[cfg(fbcode_build)]
-            Args::Rerun(args) => rerun::main(args),
+            Args::Rerun(args) => rerun::main(fb, args),
             #[cfg(fbcode_build)]
             Args::Scheduler(args) => scheduler::main(fb, args),
             Args::Targets(args) => targets::main(args),
