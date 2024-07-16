@@ -23,6 +23,7 @@ use parse_display::Display;
 #[serde(rename_all = "lowercase")]
 #[display(style = "lowercase")]
 pub enum TdProject {
+    Configerator,
     Fbcode,
     Fbandroid,
     Fbobjc,
