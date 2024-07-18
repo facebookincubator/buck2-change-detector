@@ -85,6 +85,12 @@ impl ScheduleType {
                     ScheduleType::Testwarden | ScheduleType::Continuous | ScheduleType::Diff
                 )
             }
+            ScheduleType::ContinuousStable => {
+                matches!(
+                    other,
+                    ScheduleType::ContinuousStable | ScheduleType::Continuous | ScheduleType::Diff
+                )
+            }
             _ => *other == self,
         }
     }
