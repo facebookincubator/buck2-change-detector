@@ -10,31 +10,12 @@
 //! The schedule types available.
 
 use std::cmp::Eq;
-use std::collections::HashSet;
 use std::hash::Hash;
 
 use clap::ValueEnum;
-use lazy_static::lazy_static;
 use parse_display::Display;
 use serde::Deserialize;
 use serde::Serialize;
-
-lazy_static! {
-    static ref CHANGESET_SCHEDULE_TYPES: HashSet<ScheduleType> = HashSet::from([
-        ScheduleType::Diff,
-        ScheduleType::Landcastle,
-        ScheduleType::Master,
-        ScheduleType::Postcommit,
-        ScheduleType::Relbranch,
-    ]);
-    static ref TRUNK_SCHEDULE_TYPES: HashSet<ScheduleType> = HashSet::from([
-        ScheduleType::Continuous,
-        ScheduleType::ContinuousStable,
-        ScheduleType::Testwarden,
-        ScheduleType::Greenwarden,
-        ScheduleType::Disabled,
-    ]);
-}
 
 #[derive(
     ValueEnum,
@@ -71,11 +52,25 @@ impl ScheduleType {
     /// Mobile build TDs use schedule_type to decide whether we need to run build for changeset (e.g. diff and landcastle)
     /// See UTD implementation: <https://fburl.com/code/wfps6pag>
     pub fn is_changeset_schedule_type(&self) -> bool {
-        CHANGESET_SCHEDULE_TYPES.contains(self)
+        match self {
+            ScheduleType::Diff
+            | ScheduleType::Landcastle
+            | ScheduleType::Master
+            | ScheduleType::Postcommit
+            | ScheduleType::Relbranch => true,
+            _ => false,
+        }
     }
 
     pub fn is_trunk_schedule_type(&self) -> bool {
-        TRUNK_SCHEDULE_TYPES.contains(self)
+        match self {
+            ScheduleType::Continuous
+            | ScheduleType::ContinuousStable
+            | ScheduleType::Testwarden
+            | ScheduleType::Greenwarden
+            | ScheduleType::Disabled => true,
+            _ => false,
+        }
     }
 
     /// For checking a ScheduleType that an orchestrator is running with against a ScheduleType target is configured with
