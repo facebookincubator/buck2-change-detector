@@ -117,6 +117,7 @@ pub enum ContinuousRunMode {
     #[serde(rename = "aarch64")]
     Aarch64,
     #[default]
+    AsicHourly,
     Dev,
     Opt,
     OptHourly,
