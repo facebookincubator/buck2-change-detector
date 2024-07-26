@@ -35,6 +35,7 @@ pub enum Event {
     VERIFIABLE_MATCHER_SUCCESS,
     VERSE_SUCCESS,
     BUILD_DIRECTIVES_SPECIFIED,
+    RE_METADATA_SUCCESS,
 }
 
 /// Initialize the Scuba client for the `supertd_events` dataset.
