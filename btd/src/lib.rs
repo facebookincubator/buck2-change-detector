@@ -288,6 +288,18 @@ pub fn main(args: Args) -> anyhow::Result<()> {
     step(&format!(
         "finish with {immediate_changes} immediate changes, {total_changes} total changes"
     ));
+    // Sample 5 of the immediate changes for logging
+    let immediate_change_samples: Vec<String> = immediate
+        .iter()
+        .take(5)
+        .map(|x| x.0.label().as_str().to_owned())
+        .collect();
+    // Sample 5 of code changes for logging
+    let changeset_samples: Vec<String> = changes
+        .cell_paths()
+        .take(5)
+        .map(|x| x.as_str().to_owned())
+        .collect();
     // BTreeMap so that reasons are consistently ordered in logs
     let mut reason_counts: BTreeMap<RootImpactKind, u64> = BTreeMap::new();
     for (_, reason) in recursive.iter().flatten() {
@@ -298,7 +310,9 @@ pub fn main(args: Args) -> anyhow::Result<()> {
         event: BTD_SUCCESS,
         duration: t.elapsed(),
         data: json!({
+            "changeset_samples": changeset_samples,
             "immediate_changes": immediate_changes,
+            "immediate_change_samples": immediate_change_samples,
             "total_changes": total_changes,
             "reason_counts": reason_counts,
         })
