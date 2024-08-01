@@ -124,6 +124,7 @@ pub enum ContinuousRunMode {
     OptEarlyAdoptor,
     OptAdhoc,
     RunwayShadow,
+    RunwayCoverage,
 }
 
 #[cfg(test)]
