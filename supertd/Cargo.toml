@@ -10,6 +10,7 @@ path = "bin/main.rs"
 [dependencies]
 anyhow = "1.0"
 clap = {version = "4.1.4", features = ["derive"]}
+tokio = { version = "1.37", features = ["full"] }
 fbinit = { workspace = true }
 
 td_util = {path = "../td_util"}
