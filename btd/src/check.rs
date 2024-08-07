@@ -206,7 +206,6 @@ mod tests {
     use crate::buck::targets::TargetsEntry;
     use crate::buck::types::CellPath;
     use crate::buck::types::TargetName;
-    use crate::diff::RootImpactKind;
     use crate::sapling::status::Status;
 
     #[test]
@@ -357,13 +356,7 @@ mod tests {
                     target_entry("aaa", &[]),
                     target_entry("bbb", &["aaa", "ccc"])
                 ]),
-                &[(
-                    &modified_target,
-                    ImpactTraceData {
-                        affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                    },
-                )],
+                &[(&modified_target, ImpactTraceData::sample(),)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -382,13 +375,7 @@ mod tests {
                     target_entry("bbb", &["aaa"]),
                     target_entry("ccc", &["ddd"])
                 ]),
-                &[(
-                    &modified_target,
-                    ImpactTraceData {
-                        affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                    }
-                )],
+                &[(&modified_target, ImpactTraceData::sample(),)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -407,13 +394,7 @@ mod tests {
                     target_entry("aaa", &["ccc"]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[(
-                    &modified_target,
-                    ImpactTraceData {
-                        affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                    }
-                )],
+                &[(&modified_target, ImpactTraceData::sample(),)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -431,13 +412,7 @@ mod tests {
                     target_entry("aaa", &["ccc"]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[(
-                    &modified_target,
-                    ImpactTraceData {
-                        affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                    }
-                )],
+                &[(&modified_target, ImpactTraceData::sample(),)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -455,13 +430,7 @@ mod tests {
                     target_entry("aaa", &[]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[(
-                    &modified_target,
-                    ImpactTraceData {
-                        affected_dep: "".to_owned(),
-                        root_cause: ("".to_owned(), RootImpactKind::Inputs),
-                    }
-                )],
+                &[(&modified_target, ImpactTraceData::sample(),)],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
