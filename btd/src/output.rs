@@ -88,7 +88,11 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": "my_team",
-                "reason": {"affected_dep": "cell//foo:bar", "root_cause": ["fbcode//me:test", "inputs"]},
+                "reason": {
+                    "affected_dep": "cell//foo:bar",
+                    "is_terminal": false,
+                    "root_cause": ["fbcode//me:test", "inputs"],
+                }
             }
         );
 

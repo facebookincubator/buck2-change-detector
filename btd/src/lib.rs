@@ -319,6 +319,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             "input_parse_errors": base.errors().count(),
             "diff_targets": diff.targets().count(),
             "diff_parse_errors": diff.errors().count(),
+            "terminal_node_changes": recursive.iter().flatten().filter(|(_, r)| r.is_terminal).count(),
         })
     );
     Ok(())

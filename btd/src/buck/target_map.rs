@@ -82,6 +82,18 @@ impl<T> TargetMap<T> {
             .chain(non_recursive_patterns)
             .chain(recursive_patterns)
     }
+
+    pub fn is_terminal_node(&self, key: &TargetLabel) -> bool {
+        // If the corresponding entry for the given TargetLabel doesn't
+        // contain any values, where each value is an edge between two nodes,
+        // then we can conclude that we have a terminal node.
+        // In a normal dependency graph, this would be the leaf targets.
+        // In a reverse dependency graph, this would be the root targets.
+        match self.literal.get(key) {
+            Some(values) => values.is_empty(),
+            None => true,
+        }
+    }
 }
 
 #[cfg(test)]

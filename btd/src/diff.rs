@@ -140,6 +140,8 @@ pub struct ImpactTraceData {
     /// The target name of the dependency which actually changed,
     /// and the type of change that we detected in it.
     pub root_cause: (String, RootImpactKind), // root_target_name, reason
+    /// Whether the node is a root in the dependency graph.
+    pub is_terminal: bool,
 }
 
 impl ImpactTraceData {
@@ -150,6 +152,7 @@ impl ImpactTraceData {
                 format!("{}:{}", target.package.as_str(), target.name.as_str()),
                 kind,
             ),
+            is_terminal: false,
         }
     }
 
@@ -158,6 +161,7 @@ impl ImpactTraceData {
         ImpactTraceData {
             affected_dep: "cell//foo:bar".to_owned(),
             root_cause: ("cell//baz:qux".to_owned(), RootImpactKind::Inputs),
+            is_terminal: false,
         }
     }
 }
@@ -425,6 +429,7 @@ pub fn recursive_target_changes<'a>(
                 let updated_reason = ImpactTraceData {
                     affected_dep: lbl.label().to_string(),
                     root_cause: reason.root_cause.clone(),
+                    is_terminal: false,
                 };
                 for rdep in rdeps.get(&lbl.label()) {
                     match done.entry(rdep.label_key()) {
@@ -458,7 +463,23 @@ pub fn recursive_target_changes<'a>(
     // an empty todo list might be added to the result here, indicating to
     // the user (in Text output mode) that there are no additional levels
     add_result(&mut result, todo);
+    annotate_terminal_nodes(&mut result, &rdeps);
     result
+}
+
+/// For all nodes that are affected, mark the ones which are terminal in the
+/// target graph. We do not mark nodes cut off by depth as terminal.
+fn annotate_terminal_nodes(
+    result: &mut [Vec<(&BuckTarget, ImpactTraceData)>],
+    rdeps: &TargetMap<&BuckTarget>,
+) {
+    for level in result.iter_mut() {
+        for (target, trace) in level.iter_mut() {
+            if rdeps.is_terminal_node(&target.label()) {
+                trace.is_terminal = true;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1158,5 +1179,57 @@ mod tests {
         assert_eq!(res[1].len(), 1);
         assert_eq!(res[1][0].0.name, TargetName::new("baz"));
         assert_eq!(res.iter().flatten().count(), 2);
+    }
+
+    #[test]
+    fn test_terminal_nodes() {
+        // Create A -> B -> C -> D -> E
+        // And then assert that C and E are terminal nodes.
+        fn target(name: &str, deps: &[&str]) -> TargetsEntry {
+            let pkg = Package::new("foo//");
+            TargetsEntry::Target(BuckTarget {
+                deps: deps.iter().map(|x| pkg.join(&TargetName::new(x))).collect(),
+                ..BuckTarget::testing(name, pkg.as_str(), "prelude//rules.bzl:cxx_library")
+            })
+        }
+        let entries = vec![
+            target("a", &["b"]),
+            target("b", &["c", "d"]),
+            target("c", &["e", "f"]),
+            target("d", &["e"]),
+            target("e", &["g"]),
+            target("f", &[]),
+            target("g", &[]),
+            target("x", &["c"]),
+            target("y", &["d"]),
+            target("z", &["g"]),
+        ];
+        let diff = Targets::new(entries);
+
+        let check = |changes: &GraphImpact, depth: usize, expected: &[&str]| {
+            let res = recursive_target_changes(&diff, changes, Some(depth), |_| true);
+            let mut terminal = res
+                .iter()
+                .flatten()
+                .filter(|(_, impact)| impact.is_terminal)
+                .map(|(t, _)| t.name.as_str())
+                .collect::<Vec<_>>();
+            terminal.sort();
+            assert_eq!(&terminal, expected);
+        };
+
+        let changes = GraphImpact::from_recursive(vec![(
+            diff.targets().find(|t| t.name.as_str() == "g").unwrap(),
+            ImpactTraceData::sample(),
+        )]);
+        check(&changes, 5, &["a", "x", "y", "z"]);
+        check(&changes, 1, &["z"]);
+
+        let changes = GraphImpact::from_recursive(vec![(
+            diff.targets().find(|t| t.name.as_str() == "c").unwrap(),
+            ImpactTraceData::sample(),
+        )]);
+        check(&changes, 5, &["a", "x"]);
+        check(&changes, 1, &["x"]);
     }
 }
