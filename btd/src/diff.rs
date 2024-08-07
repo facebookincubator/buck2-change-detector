@@ -87,23 +87,23 @@ fn is_changed_ci_srcs(file_deps: &[Glob], changes: &Changes) -> bool {
 pub struct GraphImpact<'a> {
     /// Targets which changed, and whose change is expected to impact
     /// things that depend on them (they changed recursively).
-    recursive: Vec<(&'a BuckTarget, ImpactReason)>,
+    recursive: Vec<(&'a BuckTarget, ImpactTraceData)>,
     /// Targets which changed in a way that won't impact things recursively.
     /// Currently only package value changes.
-    non_recursive: Vec<(&'a BuckTarget, ImpactReason)>,
+    non_recursive: Vec<(&'a BuckTarget, ImpactTraceData)>,
     /// Targets which are removed.
-    removed: Vec<(&'a BuckTarget, ImpactReason)>,
+    removed: Vec<(&'a BuckTarget, ImpactTraceData)>,
 }
 
 impl<'a> GraphImpact<'a> {
-    pub fn from_recursive(recursive: Vec<(&'a BuckTarget, ImpactReason)>) -> Self {
+    pub fn from_recursive(recursive: Vec<(&'a BuckTarget, ImpactTraceData)>) -> Self {
         Self {
             recursive,
             ..Default::default()
         }
     }
 
-    pub fn from_non_recursive(non_recursive: Vec<(&'a BuckTarget, ImpactReason)>) -> Self {
+    pub fn from_non_recursive(non_recursive: Vec<(&'a BuckTarget, ImpactTraceData)>) -> Self {
         Self {
             non_recursive,
             ..Default::default()
@@ -114,7 +114,7 @@ impl<'a> GraphImpact<'a> {
         self.recursive.len() + self.non_recursive.len()
     }
 
-    pub fn iter(&'a self) -> impl Iterator<Item = (&'a BuckTarget, ImpactReason)> {
+    pub fn iter(&'a self) -> impl Iterator<Item = (&'a BuckTarget, ImpactTraceData)> {
         self.recursive
             .iter()
             .chain(self.non_recursive.iter())
@@ -129,9 +129,11 @@ impl<'a> GraphImpact<'a> {
     }
 }
 
+/// Contains metadata about why a target was impacted and information on the
+/// targets place in the dependency graph.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct ImpactReason {
+pub struct ImpactTraceData {
     /// The target name of the direct dependency which
     /// caused this target to be impacted.
     pub affected_dep: String, // parent_target_name
@@ -140,9 +142,9 @@ pub struct ImpactReason {
     pub root_cause: (String, RootImpactKind), // root_target_name, reason
 }
 
-impl ImpactReason {
+impl ImpactTraceData {
     pub fn new(target: &BuckTarget, kind: RootImpactKind) -> Self {
-        ImpactReason {
+        ImpactTraceData {
             affected_dep: String::new(),
             root_cause: (
                 format!("{}:{}", target.package.as_str(), target.name.as_str()),
@@ -192,7 +194,7 @@ pub fn immediate_target_changes<'a>(
     if changes.cell_paths().any(is_buckconfig_change) {
         let mut ret = GraphImpact::from_non_recursive(
             diff.targets()
-                .map(|t| (t, ImpactReason::new(t, RootImpactKind::UniversalFile)))
+                .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::UniversalFile)))
                 .collect(),
         );
         ret.sort();
@@ -214,7 +216,7 @@ pub fn immediate_target_changes<'a>(
             Some(x) => x,
             None => {
                 res.recursive
-                    .push((target, ImpactReason::new(target, RootImpactKind::New)));
+                    .push((target, ImpactTraceData::new(target, RootImpactKind::New)));
                 continue;
             }
         };
@@ -263,10 +265,10 @@ pub fn immediate_target_changes<'a>(
             .or_else(change_rule)
         {
             res.recursive
-                .push((target, ImpactReason::new(target, reason)));
+                .push((target, ImpactTraceData::new(target, reason)));
         } else if let Some(reason) = change_package_values() {
             res.non_recursive
-                .push((target, ImpactReason::new(target, reason)));
+                .push((target, ImpactTraceData::new(target, reason)));
         }
     }
 
@@ -274,7 +276,7 @@ pub fn immediate_target_changes<'a>(
     // At this point, only removed targets are left in `old`.
     res.removed = old
         .into_values()
-        .map(|target| (target, ImpactReason::new(target, RootImpactKind::Remove)))
+        .map(|target| (target, ImpactTraceData::new(target, RootImpactKind::Remove)))
         .collect();
 
     // Sort to ensure deterministic output
@@ -296,7 +298,7 @@ pub fn recursive_target_changes<'a>(
     changes: &GraphImpact<'a>,
     depth: Option<usize>,
     follow_rule_type: impl Fn(&RuleType) -> bool,
-) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
+) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     // Just an optimisation, but saves building the reverse mapping
     if changes.recursive.is_empty() && changes.removed.is_empty() {
         let mut res = if changes.non_recursive.is_empty() {
@@ -379,12 +381,12 @@ pub fn recursive_target_changes<'a>(
 
     // Track targets depending on removed targets, but we don't add removed targets
     // to results
-    let mut todo_silent: Vec<(&BuckTarget, ImpactReason)> = changes.removed.clone();
-    let mut next_silent: Vec<(&BuckTarget, ImpactReason)> = Vec::new();
+    let mut todo_silent: Vec<(&BuckTarget, ImpactTraceData)> = changes.removed.clone();
+    let mut next_silent: Vec<(&BuckTarget, ImpactTraceData)> = Vec::new();
 
     fn add_result<'a>(
-        results: &mut Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
-        mut items: Vec<(&'a BuckTarget, ImpactReason)>,
+        results: &mut Vec<Vec<(&'a BuckTarget, ImpactTraceData)>>,
+        mut items: Vec<(&'a BuckTarget, ImpactTraceData)>,
     ) {
         // Sort to ensure deterministic output
         items.sort_by_key(|(x, _)| x.label_key());
@@ -403,7 +405,7 @@ pub fn recursive_target_changes<'a>(
 
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if follow_rule_type(&lbl.rule_type) {
-                let updated_reason = ImpactReason {
+                let updated_reason = ImpactTraceData {
                     affected_dep: lbl.label().to_string(),
                     root_cause: reason.root_cause.clone(),
                 };
@@ -738,7 +740,7 @@ mod tests {
             recursive: Vec::new(),
             non_recursive: vec![(
                 diff.targets().next().unwrap(),
-                ImpactReason {
+                ImpactTraceData {
                     affected_dep: "".to_owned(),
                     root_cause: ("".to_owned(), RootImpactKind::Inputs),
                 },
@@ -786,14 +788,14 @@ mod tests {
         let changes = GraphImpact {
             recursive: vec![(
                 diff.targets().next().unwrap(),
-                ImpactReason {
+                ImpactTraceData {
                     affected_dep: "".to_owned(),
                     root_cause: ("".to_owned(), RootImpactKind::Inputs),
                 },
             )],
             non_recursive: vec![(
                 diff.targets().nth(1).unwrap(),
-                ImpactReason {
+                ImpactTraceData {
                     affected_dep: "".to_owned(),
                     root_cause: ("".to_owned(), RootImpactKind::Inputs),
                 },
@@ -834,7 +836,7 @@ mod tests {
 
         let changes = GraphImpact::from_recursive(vec![(
             diff.targets().next().unwrap(),
-            ImpactReason {
+            ImpactTraceData {
                 affected_dep: "".to_owned(),
                 root_cause: ("".to_owned(), RootImpactKind::Inputs),
             },
@@ -875,11 +877,11 @@ mod tests {
         let changes = GraphImpact {
             recursive: vec![(
                 changed_target,
-                ImpactReason::new(changed_target, RootImpactKind::Inputs),
+                ImpactTraceData::new(changed_target, RootImpactKind::Inputs),
             )],
             removed: vec![(
                 &removed,
-                ImpactReason::new(&removed, RootImpactKind::Remove),
+                ImpactTraceData::new(&removed, RootImpactKind::Remove),
             )],
             ..Default::default()
         };
@@ -915,7 +917,7 @@ mod tests {
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
         let changes = GraphImpact::from_recursive(vec![(
             &change_target,
-            ImpactReason {
+            ImpactTraceData {
                 affected_dep: "".to_owned(),
                 root_cause: ("".to_owned(), RootImpactKind::Inputs),
             },
@@ -952,7 +954,7 @@ mod tests {
                 .map(|x| {
                     (
                         x,
-                        ImpactReason {
+                        ImpactTraceData {
                             affected_dep: "".to_owned(),
                             root_cause: ("".to_owned(), RootImpactKind::Inputs),
                         },
@@ -1138,7 +1140,7 @@ mod tests {
         );
         impact.recursive.push((
             targets.targets().nth(1).unwrap(),
-            ImpactReason {
+            ImpactTraceData {
                 affected_dep: "".to_owned(),
                 root_cause: ("".to_owned(), RootImpactKind::Inputs),
             },
@@ -1170,7 +1172,7 @@ mod tests {
 
         let changes = GraphImpact::from_recursive(vec![(
             diff.targets().next().unwrap(),
-            ImpactReason {
+            ImpactTraceData {
                 affected_dep: "".to_owned(),
                 root_cause: ("".to_owned(), RootImpactKind::Inputs),
             },

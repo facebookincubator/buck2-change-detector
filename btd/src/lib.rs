@@ -55,7 +55,7 @@ use crate::buck::types::TargetLabelKeyRef;
 use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
 use crate::check::ValidationError;
-use crate::diff::ImpactReason;
+use crate::diff::ImpactTraceData;
 use crate::diff::RootImpactKind;
 use crate::graph_size::GraphSize;
 use crate::output::Output;
@@ -459,7 +459,7 @@ impl OutputFormat {
 }
 
 fn print_recursive_changes<'a, T: Serialize + 'a>(
-    changes: &[Vec<(&'a BuckTarget, ImpactReason)>],
+    changes: &[Vec<(&'a BuckTarget, ImpactTraceData)>],
     sudos: &HashSet<TargetLabelKeyRef>,
     output: OutputFormat,
     mut augment: impl FnMut(&'a BuckTarget, Output<'a>) -> T,

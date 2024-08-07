@@ -18,7 +18,7 @@ use crate::buck::types::TargetLabelKeyRef;
 use crate::changes::Changes;
 use crate::diff::immediate_target_changes;
 use crate::diff::recursive_target_changes;
-use crate::diff::ImpactReason;
+use crate::diff::ImpactTraceData;
 
 fn cxx_rule_type(typ: &RuleType) -> bool {
     let short = typ.short();
@@ -35,7 +35,7 @@ pub fn glean_changes<'a>(
     diff: &'a Targets,
     changes: &Changes,
     depth: Option<usize>,
-) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
+) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     let header = immediate_target_changes(
         base,
         diff,
@@ -49,9 +49,9 @@ pub fn glean_changes<'a>(
 }
 
 fn merge<'a>(
-    a: Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
-    b: Vec<Vec<(&'a BuckTarget, ImpactReason)>>,
-) -> Vec<Vec<(&'a BuckTarget, ImpactReason)>> {
+    a: Vec<Vec<(&'a BuckTarget, ImpactTraceData)>>,
+    b: Vec<Vec<(&'a BuckTarget, ImpactTraceData)>>,
+) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     let mut seen: HashSet<TargetLabelKeyRef> = HashSet::new();
     let mut res = Vec::new();
     for layer in a.into_iter().zip_longest(b) {

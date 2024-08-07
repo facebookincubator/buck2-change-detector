@@ -20,7 +20,7 @@ use crate::buck::targets::BuckTarget;
 use crate::buck::targets::Targets;
 use crate::buck::types::TargetLabel;
 use crate::buck::types::TargetLabelKeyRef;
-use crate::diff::ImpactReason;
+use crate::diff::ImpactTraceData;
 use crate::output::Output;
 use crate::output::OutputFormat;
 
@@ -80,7 +80,7 @@ impl GraphSize {
 
     pub fn print_recursive_changes(
         &mut self,
-        changes: &[Vec<(&BuckTarget, ImpactReason)>],
+        changes: &[Vec<(&BuckTarget, ImpactTraceData)>],
         sudos: &HashSet<TargetLabelKeyRef>,
         output: OutputFormat,
     ) {

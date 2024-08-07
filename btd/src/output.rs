@@ -16,7 +16,7 @@ use crate::buck::labels::Labels;
 use crate::buck::targets::BuckTarget;
 use crate::buck::types::Oncall;
 use crate::buck::types::TargetLabel;
-use crate::diff::ImpactReason;
+use crate::diff::ImpactTraceData;
 
 #[derive(Debug, Serialize)]
 pub struct Output<'a> {
@@ -26,7 +26,7 @@ pub struct Output<'a> {
     oncall: &'a Option<Oncall>,
     depth: u64,
     labels: Labels,
-    reason: ImpactReason,
+    reason: ImpactTraceData,
 }
 
 impl<'a> Output<'a> {
@@ -34,7 +34,7 @@ impl<'a> Output<'a> {
         x: &'a BuckTarget,
         depth: u64,
         uses_sudo: bool,
-        reason: ImpactReason,
+        reason: ImpactTraceData,
     ) -> Self {
         let additional_labels = if uses_sudo && !x.labels.contains("uses_sudo") {
             Labels::new(&["uses_sudo"])
@@ -106,7 +106,7 @@ mod tests {
             &target,
             3,
             false,
-            ImpactReason {
+            ImpactTraceData {
                 affected_dep: "".to_owned(),
                 root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
             },
@@ -129,7 +129,7 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": Value::Null,
-                "reason":     ImpactReason {
+                "reason":     ImpactTraceData {
                     affected_dep: "".to_owned(),
                     root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
                 },
@@ -140,7 +140,7 @@ mod tests {
                 &target_no_oncall,
                 3,
                 false,
-                ImpactReason {
+                ImpactTraceData {
                     affected_dep: "".to_owned(),
                     root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
                 },
@@ -161,7 +161,7 @@ mod tests {
             &target,
             3,
             false,
-            ImpactReason {
+            ImpactTraceData {
                 affected_dep: "".to_owned(),
                 root_cause: ("".to_owned(), RootImpactKind::Inputs),
             },

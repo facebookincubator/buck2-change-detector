@@ -23,7 +23,7 @@ use crate::buck::types::Package;
 use crate::buck::types::TargetLabel;
 use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
-use crate::diff::ImpactReason;
+use crate::diff::ImpactTraceData;
 
 #[derive(Debug, Error, Serialize)]
 pub enum ValidationError {
@@ -142,7 +142,7 @@ pub fn check_errors(base: &Targets, diff: &Targets, changes: &Changes) -> Vec<Va
 pub fn check_dangling(
     base: &Targets,
     diff: &Targets,
-    immediate_changes: &[(&BuckTarget, ImpactReason)],
+    immediate_changes: &[(&BuckTarget, ImpactTraceData)],
     universe: &[TargetPattern],
 ) -> Vec<ValidationError> {
     let exists_after = diff.targets_by_label_key();
@@ -359,7 +359,7 @@ mod tests {
                 ]),
                 &[(
                     &modified_target,
-                    ImpactReason {
+                    ImpactTraceData {
                         affected_dep: "".to_owned(),
                         root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     },
@@ -384,7 +384,7 @@ mod tests {
                 ]),
                 &[(
                     &modified_target,
-                    ImpactReason {
+                    ImpactTraceData {
                         affected_dep: "".to_owned(),
                         root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
@@ -409,7 +409,7 @@ mod tests {
                 ]),
                 &[(
                     &modified_target,
-                    ImpactReason {
+                    ImpactTraceData {
                         affected_dep: "".to_owned(),
                         root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
@@ -433,7 +433,7 @@ mod tests {
                 ]),
                 &[(
                     &modified_target,
-                    ImpactReason {
+                    ImpactTraceData {
                         affected_dep: "".to_owned(),
                         root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
@@ -457,7 +457,7 @@ mod tests {
                 ]),
                 &[(
                     &modified_target,
-                    ImpactReason {
+                    ImpactTraceData {
                         affected_dep: "".to_owned(),
                         root_cause: ("".to_owned(), RootImpactKind::Inputs),
                     }
