@@ -209,6 +209,15 @@ pub fn immediate_target_changes<'a>(
         return ret;
     }
 
+    // If there is no base graph, then everything is new.
+    if base.len_targets_upperbound() == 0 {
+        let recursive = diff
+            .targets()
+            .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::New)))
+            .collect();
+        return GraphImpact::from_recursive(recursive);
+    }
+
     // Find those targets which are different
     let mut old = base.targets_by_label_key();
 
