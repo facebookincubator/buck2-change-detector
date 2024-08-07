@@ -404,7 +404,7 @@ pub fn recursive_target_changes<'a>(
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if follow_rule_type(&lbl.rule_type) {
                 let updated_reason = ImpactReason {
-                    affected_dep: format!("{}:{}", lbl.package.as_str(), lbl.name.as_str()),
+                    affected_dep: lbl.label().to_string(),
                     root_cause: reason.root_cause.clone(),
                 };
                 for rdep in rdeps.get(&lbl.label()) {
