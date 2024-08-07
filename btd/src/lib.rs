@@ -315,6 +315,10 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             "immediate_change_samples": immediate_change_samples,
             "total_changes": total_changes,
             "reason_counts": reason_counts,
+            "input_targets": base.targets().count(),
+            "input_parse_errors": base.errors().count(),
+            "diff_targets": diff.targets().count(),
+            "diff_parse_errors": diff.errors().count(),
         })
     );
     Ok(())
