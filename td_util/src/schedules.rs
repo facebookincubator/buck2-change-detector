@@ -125,6 +125,9 @@ pub enum ContinuousRunMode {
     OptAdhoc,
     RunwayShadow,
     RunwayCoverage,
+    TranslatorHourly,
+    TranslatorNightly,
+    TranslatorWeekend,
 }
 
 #[cfg(test)]
