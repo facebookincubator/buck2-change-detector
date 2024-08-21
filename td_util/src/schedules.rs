@@ -11,6 +11,7 @@
 
 use std::cmp::Eq;
 use std::hash::Hash;
+use std::str::FromStr;
 
 use clap::ValueEnum;
 use parse_display::Display;
@@ -128,6 +129,30 @@ pub enum ContinuousRunMode {
     TranslatorHourly,
     TranslatorNightly,
     TranslatorWeekend,
+}
+
+impl ContinuousRunMode {
+    pub fn to_translator_run_type(&self) -> &'static str {
+        match self {
+            ContinuousRunMode::TranslatorHourly => "hourly",
+            ContinuousRunMode::TranslatorNightly => "mightly",
+            ContinuousRunMode::TranslatorWeekend => "weekend",
+            _ => "Unknown",
+        }
+    }
+}
+
+impl FromStr for ContinuousRunMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "hourly" => Ok(ContinuousRunMode::TranslatorHourly),
+            "nightly" => Ok(ContinuousRunMode::TranslatorNightly),
+            "weekend" => Ok(ContinuousRunMode::TranslatorWeekend),
+            _ => Err(()),
+        }
+    }
 }
 
 #[cfg(test)]
