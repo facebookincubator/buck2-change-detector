@@ -9,6 +9,8 @@ argfile = "0.1.5"
 clap = {version = "4.1.4"}
 equivalent = "1.0.0"
 fbinit = { workspace = true }
+fbinit-tokio = { workspace = true }
+futures = "0.3.30"
 lazy_static = "1.4.0"
 static_interner.version = "0.1"
 # @oss-disable: static_interner.path = "../../buck2/shed/static_interner"
