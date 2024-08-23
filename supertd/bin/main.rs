@@ -9,13 +9,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::future::Future;
-
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
+use td_util::executor::run_as_sync;
 
 /// Generic binary for the pieces of the new target-determinator framework.
 #[allow(clippy::large_enum_variant)] // Only one instance, so not a big deal
@@ -62,7 +61,7 @@ pub fn main(fb: FacebookInit) -> anyhow::Result<()> {
             #[cfg(fbcode_build)]
             Args::VerifiableMatcher(args) => verifiable_matcher::main(args),
             #[cfg(fbcode_build)]
-            Args::Ranker(args) => execute_on_runtime(ranker::main(args)),
+            Args::Ranker(args) => run_as_sync(ranker::main(args)),
             #[cfg(fbcode_build)]
             Args::Rerun(args) => rerun::main(fb, args),
             #[cfg(fbcode_build)]
@@ -82,14 +81,6 @@ fn get_version() -> &'static str {
 #[cfg(not(fbcode_build))]
 fn get_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
-}
-
-fn execute_on_runtime(f: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    rt.block_on(f)
 }
 
 #[cfg(test)]

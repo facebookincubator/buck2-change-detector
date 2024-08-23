@@ -12,6 +12,7 @@
 pub mod cli;
 pub mod command;
 pub mod directives;
+pub mod executor;
 pub mod json;
 pub mod knobs;
 pub mod no_hash;
