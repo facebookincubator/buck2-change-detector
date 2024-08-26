@@ -47,6 +47,7 @@ pub enum ScheduleType {
     Disabled,
     Master,
     Relbranch,
+    Coverage,
 }
 
 impl ScheduleType {
