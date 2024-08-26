@@ -157,7 +157,7 @@ impl ImpactTraceData {
     }
 
     #[cfg(test)]
-    pub fn sample() -> Self {
+    pub fn testing() -> Self {
         ImpactTraceData {
             affected_dep: "cell//foo:bar".to_owned(),
             root_cause: ("cell//baz:qux".to_owned(), RootImpactKind::Inputs),
@@ -776,7 +776,7 @@ mod tests {
 
         let changes = GraphImpact {
             recursive: Vec::new(),
-            non_recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::sample())],
+            non_recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::testing())],
             ..Default::default()
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
@@ -818,8 +818,8 @@ mod tests {
         ]);
 
         let changes = GraphImpact {
-            recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::sample())],
-            non_recursive: vec![(diff.targets().nth(1).unwrap(), ImpactTraceData::sample())],
+            recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::testing())],
+            non_recursive: vec![(diff.targets().nth(1).unwrap(), ImpactTraceData::testing())],
             ..Default::default()
         };
         let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
@@ -856,7 +856,7 @@ mod tests {
 
         let changes = GraphImpact::from_recursive(vec![(
             diff.targets().next().unwrap(),
-            ImpactTraceData::sample(),
+            ImpactTraceData::testing(),
         )]);
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
         let res = res.map(|xs| {
@@ -933,7 +933,7 @@ mod tests {
         let change_target =
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
         let changes =
-            GraphImpact::from_recursive(vec![(&change_target, ImpactTraceData::sample())]);
+            GraphImpact::from_recursive(vec![(&change_target, ImpactTraceData::testing())]);
         let res = recursive_target_changes(&diff, &changes, Some(1), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
@@ -963,7 +963,7 @@ mod tests {
         let changes = GraphImpact::from_recursive(
             diff.targets()
                 .take(2)
-                .map(|x| (x, ImpactTraceData::sample()))
+                .map(|x| (x, ImpactTraceData::testing()))
                 .collect(),
         );
         let res = recursive_target_changes(&diff, &changes, None, |_| true);
@@ -1142,9 +1142,10 @@ mod tests {
                 .count(),
             2
         );
-        impact
-            .recursive
-            .push((targets.targets().nth(1).unwrap(), ImpactTraceData::sample()));
+        impact.recursive.push((
+            targets.targets().nth(1).unwrap(),
+            ImpactTraceData::testing(),
+        ));
         assert_eq!(
             recursive_target_changes(&targets, &impact, None, |_| true)
                 .iter()
@@ -1172,7 +1173,7 @@ mod tests {
 
         let changes = GraphImpact::from_recursive(vec![(
             diff.targets().next().unwrap(),
-            ImpactTraceData::sample(),
+            ImpactTraceData::testing(),
         )]);
         let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
         assert_eq!(res[0].len(), 1);
@@ -1220,14 +1221,14 @@ mod tests {
 
         let changes = GraphImpact::from_recursive(vec![(
             diff.targets().find(|t| t.name.as_str() == "g").unwrap(),
-            ImpactTraceData::sample(),
+            ImpactTraceData::testing(),
         )]);
         check(&changes, 5, &["a", "x", "y", "z"]);
         check(&changes, 1, &["z"]);
 
         let changes = GraphImpact::from_recursive(vec![(
             diff.targets().find(|t| t.name.as_str() == "c").unwrap(),
-            ImpactTraceData::sample(),
+            ImpactTraceData::testing(),
         )]);
         check(&changes, 5, &["a", "x"]);
         check(&changes, 1, &["x"]);

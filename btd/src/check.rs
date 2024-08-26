@@ -356,7 +356,7 @@ mod tests {
                     target_entry("aaa", &[]),
                     target_entry("bbb", &["aaa", "ccc"])
                 ]),
-                &[(&modified_target, ImpactTraceData::sample(),)],
+                &[(&modified_target, ImpactTraceData::testing())],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -375,7 +375,7 @@ mod tests {
                     target_entry("bbb", &["aaa"]),
                     target_entry("ccc", &["ddd"])
                 ]),
-                &[(&modified_target, ImpactTraceData::sample(),)],
+                &[(&modified_target, ImpactTraceData::testing())],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -394,7 +394,7 @@ mod tests {
                     target_entry("aaa", &["ccc"]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[(&modified_target, ImpactTraceData::sample(),)],
+                &[(&modified_target, ImpactTraceData::testing())],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -412,7 +412,7 @@ mod tests {
                     target_entry("aaa", &["ccc"]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[(&modified_target, ImpactTraceData::sample(),)],
+                &[(&modified_target, ImpactTraceData::testing())],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),
@@ -430,7 +430,7 @@ mod tests {
                     target_entry("aaa", &[]),
                     target_entry("bbb", &["aaa"])
                 ]),
-                &[(&modified_target, ImpactTraceData::sample(),)],
+                &[(&modified_target, ImpactTraceData::testing())],
                 &[TargetPattern::new("foo//...")],
             )
             .len(),

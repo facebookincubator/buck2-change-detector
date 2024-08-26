@@ -113,7 +113,7 @@ mod tests {
             false,
             ImpactTraceData {
                 root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
-                ..ImpactTraceData::sample()
+                ..ImpactTraceData::testing()
             },
         );
         assert_eq!(serde_json::to_value(&output).unwrap(), json);
@@ -134,7 +134,7 @@ mod tests {
                 "depth": 3,
                 "labels": ["my_label", "another_label"],
                 "oncall": Value::Null,
-                "reason": ImpactTraceData::sample(),
+                "reason": ImpactTraceData::testing(),
             }
         );
         assert_eq!(
@@ -142,7 +142,7 @@ mod tests {
                 &target_no_oncall,
                 3,
                 false,
-                ImpactTraceData::sample(),
+                ImpactTraceData::testing(),
             ))
             .unwrap(),
             json_no_oncall
@@ -156,7 +156,7 @@ mod tests {
             package_values: PackageValues::new(&["must-come-first"], serde_json::Value::Null),
             ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
         };
-        let output = Output::from_target(&target, 3, false, ImpactTraceData::sample());
+        let output = Output::from_target(&target, 3, false, ImpactTraceData::testing());
         assert_eq!(
             output.labels,
             Labels::new(&["must-come-first", "target_label"])
