@@ -41,7 +41,6 @@ impl IgnoreSet {
     /// any committed files in buck-out.
     pub fn new_result(spec: &str) -> anyhow::Result<Self> {
         let mut patterns_builder = GlobSetBuilder::new();
-        let mut patterns = Vec::new();
         for val in spec.split(',') {
             let val = val.trim();
             if val.is_empty() {
@@ -61,7 +60,6 @@ impl IgnoreSet {
             } else {
                 patterns_builder.add(globset::Glob::new(&format!("{{{},{}/**}}", val, val))?);
             }
-            patterns.push(val.to_owned());
         }
 
         Ok(Self {
