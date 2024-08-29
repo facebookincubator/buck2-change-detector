@@ -39,6 +39,14 @@ impl IgnoreSet {
     ///
     /// We don't follow the implicit ignoring of buck-out, since we don't expect to see
     /// any committed files in buck-out.
+    ///
+    /// Differences from Buck2:
+    ///
+    /// In Buck2, each directory along the path is matched, along with the file itself.
+    /// In BTD we only match the file itself. To map over this difference, we change
+    /// $X to {$X,$X/**} which will trigger the same behavior.
+    ///
+    /// Buck2 actually does that for literals, even though it doesn't need to.
     pub fn new_result(spec: &str) -> anyhow::Result<Self> {
         let mut patterns_builder = GlobSetBuilder::new();
         for val in spec.split(',') {
@@ -53,7 +61,7 @@ impl IgnoreSet {
 
             if GLOB_CHARS.is_match(val) {
                 patterns_builder.add(
-                    globset::GlobBuilder::new(val)
+                    globset::GlobBuilder::new(&format!("{{{},{}/**}}", val, val))
                         .literal_separator(true)
                         .build()?,
                 );
@@ -84,5 +92,14 @@ mod tests {
         assert!(!set.is_match("foo/bar.txt"));
         assert!(set.is_match("extra/bar/baz/foo.txt"));
         assert!(set.is_match("hello/world/file.pyc"));
+    }
+
+    #[test]
+    fn test_ignore_directory_ignore_files() {
+        let set = IgnoreSet::new("foo/, bar/baz/**/tests, qux/*/test");
+        assert!(set.is_match("bar/baz/magic/tests/file.c"));
+        assert!(!set.is_match("bar/baz/magic/test/file.c"));
+        assert!(set.is_match("qux/file/test"));
+        assert!(set.is_match("qux/file/test/file.c"));
     }
 }
