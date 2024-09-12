@@ -130,6 +130,8 @@ pub enum ContinuousRunMode {
     TranslatorHourly,
     TranslatorNightly,
     TranslatorWeekend,
+    // To be used when shceduling Rl Translator jobs for multisect
+    TranslatorContinuousForMultisect,
 }
 
 impl ContinuousRunMode {
