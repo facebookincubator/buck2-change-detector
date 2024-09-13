@@ -9,6 +9,9 @@
 
 #![forbid(unsafe_code)]
 
+use std::process::ExitCode;
+use std::process::Termination;
+
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
@@ -39,7 +42,11 @@ enum Args {
 }
 
 #[fbinit::main]
-pub fn main(fb: FacebookInit) -> anyhow::Result<()> {
+
+// Temporarily return ExitCode to allow scheduler return warnings without exiting.
+// TODO(pfa): Extract the return code into proper struct to allow any part of the TD to set
+// workflow status flexibly.
+pub fn main(fb: FacebookInit) -> ExitCode {
     let _guard = td_util::init(fb);
 
     let mut command = Args::command();
@@ -50,25 +57,32 @@ pub fn main(fb: FacebookInit) -> anyhow::Result<()> {
         // But we might want to have it briefly on for a rollout.
         command = command.ignore_errors(true);
     }
-    let matches = command.get_matches_from(get_args()?);
-    match Args::from_arg_matches(&matches) {
+    let args = match get_args() {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("{:?}", err);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match Args::from_arg_matches(&command.get_matches_from(args)) {
         Err(err) => err.format(&mut Args::command()).exit(),
         Ok(args) => match args {
-            Args::Audit(args) => audit::main(args),
-            Args::Btd(args) => btd::main(args),
+            Args::Audit(args) => audit::main(args).report(),
+            Args::Btd(args) => btd::main(args).report(),
             #[cfg(fbcode_build)]
-            Args::Citadel(args) => verifiable_matcher::main(args),
+            Args::Citadel(args) => verifiable_matcher::main(args).report(),
             #[cfg(fbcode_build)]
-            Args::VerifiableMatcher(args) => verifiable_matcher::main(args),
+            Args::VerifiableMatcher(args) => verifiable_matcher::main(args).report(),
             #[cfg(fbcode_build)]
-            Args::Ranker(args) => run_as_sync(ranker::main(args)),
+            Args::Ranker(args) => run_as_sync(ranker::main(args)).report(),
             #[cfg(fbcode_build)]
-            Args::Rerun(args) => rerun::main(fb, args),
+            Args::Rerun(args) => rerun::main(fb, args).report(),
             #[cfg(fbcode_build)]
-            Args::Scheduler(args) => scheduler::main(fb, args),
-            Args::Targets(args) => targets::main(args),
+            Args::Scheduler(args) => scheduler::main(fb, args).report(),
+            Args::Targets(args) => targets::main(args).report(),
             #[cfg(all(fbcode_build, target_os = "linux"))]
-            Args::Verse(args) => verse_citadel_adaptor::main(args),
+            Args::Verse(args) => verse_citadel_adaptor::main(args).report(),
         },
     }
 }
