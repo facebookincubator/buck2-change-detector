@@ -18,6 +18,7 @@ use std::process::Command;
 
 use clap::Parser;
 use td_util::command::display_command;
+use td_util::workflow_result::WorkflowResult;
 
 /// Run `buck2 targets` with all the arguments required for BTD/Citadel.
 #[derive(Parser)]
@@ -61,7 +62,7 @@ pub fn targets_arguments() -> &'static [&'static str] {
     ]
 }
 
-pub fn main(args: Args) -> anyhow::Result<()> {
+pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
     run(
         &args.buck,
         args.output,
@@ -87,7 +88,7 @@ pub fn run(
     dry_run: bool,
     isolation_dir: Option<String>,
     arguments: &[String],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<WorkflowResult> {
     let t = std::time::Instant::now();
     let mut command = Command::new(buck);
 
@@ -105,7 +106,7 @@ pub fn run(
 
     if dry_run {
         println!("{}", display_command(&command));
-        return Ok(());
+        return Ok(WorkflowResult::Success);
     }
 
     let status = command.status()?;
@@ -114,7 +115,7 @@ pub fn run(
             event: TARGETS_SUCCESS,
             duration: t.elapsed(),
         );
-        Ok(())
+        Ok(WorkflowResult::Success)
     } else {
         process::exit(status.code().unwrap_or(1));
     }
