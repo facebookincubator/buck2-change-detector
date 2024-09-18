@@ -10,9 +10,10 @@
 #![forbid(unsafe_code)]
 
 use td_util::cli::parse_args;
+use td_util::workflow_result::WorkflowResult;
 
 #[fbinit::main]
-pub fn main(fb: fbinit::FacebookInit) -> anyhow::Result<()> {
+pub fn main(fb: fbinit::FacebookInit) -> anyhow::Result<WorkflowResult> {
     let _guard = td_util::init(fb);
     audit::main(parse_args()?)
 }
