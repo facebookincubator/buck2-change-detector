@@ -9,15 +9,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::process::ExitCode;
-use std::process::Termination;
-
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
 use td_util::executor::run_as_sync;
+use td_util::workflow_result::WorkflowResult;
 
 /// Generic binary for the pieces of the new target-determinator framework.
 #[allow(clippy::large_enum_variant)] // Only one instance, so not a big deal
@@ -43,10 +41,7 @@ enum Args {
 
 #[fbinit::main]
 
-// Temporarily return ExitCode to allow scheduler return warnings without exiting.
-// TODO(pfa): Extract the return code into proper struct to allow any part of the TD to set
-// workflow status flexibly.
-pub fn main(fb: FacebookInit) -> ExitCode {
+pub fn main(fb: FacebookInit) -> anyhow::Result<WorkflowResult> {
     let _guard = td_util::init(fb);
 
     let mut command = Args::command();
@@ -61,28 +56,28 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         Ok(args) => args,
         Err(err) => {
             eprintln!("{:?}", err);
-            return ExitCode::FAILURE;
+            return Err(err.context("Error parsing arguments"));
         }
     };
 
     match Args::from_arg_matches(&command.get_matches_from(args)) {
-        Err(err) => err.format(&mut Args::command()).exit(),
+        Err(err) => Err(anyhow::Error::new(err.format(&mut Args::command()))),
         Ok(args) => match args {
-            Args::Audit(args) => audit::main(args).report(),
-            Args::Btd(args) => btd::main(args).report(),
+            Args::Audit(args) => audit::main(args),
+            Args::Btd(args) => btd::main(args),
             #[cfg(fbcode_build)]
-            Args::Citadel(args) => verifiable_matcher::main(args).report(),
+            Args::Citadel(args) => verifiable_matcher::main(args),
             #[cfg(fbcode_build)]
-            Args::VerifiableMatcher(args) => verifiable_matcher::main(args).report(),
+            Args::VerifiableMatcher(args) => verifiable_matcher::main(args),
             #[cfg(fbcode_build)]
-            Args::Ranker(args) => run_as_sync(ranker::main(args)).report(),
+            Args::Ranker(args) => run_as_sync(ranker::main(args)),
             #[cfg(fbcode_build)]
-            Args::Rerun(args) => rerun::main(fb, args).report(),
+            Args::Rerun(args) => rerun::main(fb, args),
             #[cfg(fbcode_build)]
-            Args::Scheduler(args) => scheduler::main(fb, args).report(),
-            Args::Targets(args) => targets::main(args).report(),
+            Args::Scheduler(args) => scheduler::main(fb, args),
+            Args::Targets(args) => targets::main(args),
             #[cfg(all(fbcode_build, target_os = "linux"))]
-            Args::Verse(args) => verse_citadel_adaptor::main(args).report(),
+            Args::Verse(args) => verse_citadel_adaptor::main(args),
         },
     }
 }
