@@ -41,6 +41,7 @@ use clap::Parser;
 use serde::Serialize;
 use td_util::json;
 use td_util::prelude::*;
+use td_util::workflow_result::WorkflowResult;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tracing::error;
@@ -160,7 +161,7 @@ fn leak_targets(targets: Targets) -> impl Deref<Target = Targets> {
     ManuallyDrop::new(targets)
 }
 
-pub fn main(args: Args) -> anyhow::Result<()> {
+pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
     let output_format = OutputFormat::from_args(&args);
     let mut buck2 = Buck2::new(args.buck.clone(), args.isolation_dir);
 
@@ -205,7 +206,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             };
             if args.print_rerun {
                 print_rerun(&rerun);
-                return Ok(());
+                return Ok(WorkflowResult::Success);
             }
             let new = if ask_buck.is_empty() {
                 Targets::new(Vec::new())
@@ -321,7 +322,7 @@ pub fn main(args: Args) -> anyhow::Result<()> {
             "terminal_node_changes": recursive.iter().flatten().filter(|(_, r)| r.is_terminal).count(),
         })
     );
-    Ok(())
+    Ok(WorkflowResult::Success)
 }
 
 #[derive(Default, Debug)]
