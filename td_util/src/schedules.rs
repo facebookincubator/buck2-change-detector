@@ -138,8 +138,9 @@ impl ContinuousRunMode {
     pub fn to_translator_run_type(&self) -> &'static str {
         match self {
             ContinuousRunMode::TranslatorHourly => "hourly",
-            ContinuousRunMode::TranslatorNightly => "mightly",
+            ContinuousRunMode::TranslatorNightly => "nightly",
             ContinuousRunMode::TranslatorWeekend => "weekend",
+            ContinuousRunMode::TranslatorContinuousForMultisect => "diff",
             _ => "Unknown",
         }
     }
@@ -153,6 +154,9 @@ impl FromStr for ContinuousRunMode {
             "hourly" => Ok(ContinuousRunMode::TranslatorHourly),
             "nightly" => Ok(ContinuousRunMode::TranslatorNightly),
             "weekend" => Ok(ContinuousRunMode::TranslatorWeekend),
+            // We cannot convert "diff" to
+            // ContinuousRunMode::TranslatorContinuousForMultisect as that run
+            // type is used in multiple contexts.
             _ => Err(()),
         }
     }
@@ -179,5 +183,29 @@ mod tests {
 
         let s = serde_json::from_str::<ScheduleType>("\"postcommit\"");
         assert_eq!(s.unwrap(), ScheduleType::Postcommit);
+    }
+
+    #[test]
+    fn test_to_translator_run_type() {
+        assert_eq!(
+            ContinuousRunMode::TranslatorHourly.to_translator_run_type(),
+            "hourly"
+        );
+        assert_eq!(
+            ContinuousRunMode::TranslatorNightly.to_translator_run_type(),
+            "nightly"
+        );
+        assert_eq!(
+            ContinuousRunMode::TranslatorWeekend.to_translator_run_type(),
+            "weekend"
+        );
+        assert_eq!(
+            ContinuousRunMode::TranslatorContinuousForMultisect.to_translator_run_type(),
+            "diff",
+        );
+        assert_eq!(
+            ContinuousRunMode::AsicHourly.to_translator_run_type(),
+            "Unknown"
+        );
     }
 }
