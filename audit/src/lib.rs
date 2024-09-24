@@ -15,7 +15,7 @@
 use anyhow::anyhow;
 use clap::Parser;
 use td_util::command::display_command;
-use td_util::workflow_result::WorkflowResult;
+use td_util::workflow_error::WorkflowError;
 
 /// Run `buck2 audit` with all the arguments required for BTD/Citadel.
 #[derive(Parser, Debug)]
@@ -63,7 +63,7 @@ pub fn audit_config_arguments() -> &'static [&'static str] {
     ]
 }
 
-pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
+pub fn main(args: Args) -> Result<(), WorkflowError> {
     let (common, arguments) = match args.mode {
         AuditMode::Cell(common) => (common, audit_cell_arguments()),
         AuditMode::Config(common) => (common, audit_config_arguments()),
@@ -74,13 +74,13 @@ pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
 
     if common.dry_run {
         println!("{}", display_command(&command));
-        return Ok(WorkflowResult::Success);
+        return Ok(());
     }
 
-    let status = command.status()?;
+    let status = command.status().map_err(|err| anyhow!(err))?;
     if status.success() {
-        Ok(WorkflowResult::Success)
+        Ok(())
     } else {
-        Err(anyhow!("buck2 failed to execute"))
+        Err(anyhow!("buck2 failed to execute").into())
     }
 }

@@ -35,13 +35,14 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::anyhow;
 use anyhow::Context as _;
 use buck::types::Package;
 use clap::Parser;
 use serde::Serialize;
 use td_util::json;
 use td_util::prelude::*;
-use td_util::workflow_result::WorkflowResult;
+use td_util::workflow_error::WorkflowError;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tracing::error;
@@ -161,7 +162,7 @@ fn leak_targets(targets: Targets) -> impl Deref<Target = Targets> {
     ManuallyDrop::new(targets)
 }
 
-pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
+pub fn main(args: Args) -> Result<(), WorkflowError> {
     let output_format = OutputFormat::from_args(&args);
     let mut buck2 = Buck2::new(args.buck.clone(), args.isolation_dir);
 
@@ -206,13 +207,13 @@ pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
             };
             if args.print_rerun {
                 print_rerun(&rerun);
-                return Ok(WorkflowResult::Success);
+                return Ok(());
             }
             let new = if ask_buck.is_empty() {
                 Targets::new(Vec::new())
             } else {
                 step("running targets");
-                let file = NamedTempFile::new()?;
+                let file = NamedTempFile::new().map_err(|err| anyhow!(err))?;
                 buck2
                     .targets(&buck_args, &ask_buck, file.path())
                     .with_context(|| format!("When running `{}`", args.buck))?;
@@ -322,7 +323,7 @@ pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
             "terminal_node_changes": recursive.iter().flatten().filter(|(_, r)| r.is_terminal).count(),
         })
     );
-    Ok(WorkflowResult::Success)
+    Ok(())
 }
 
 #[derive(Default, Debug)]

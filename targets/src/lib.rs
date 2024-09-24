@@ -16,9 +16,10 @@ use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 
+use anyhow::anyhow;
 use clap::Parser;
 use td_util::command::display_command;
-use td_util::workflow_result::WorkflowResult;
+use td_util::workflow_error::WorkflowError;
 
 /// Run `buck2 targets` with all the arguments required for BTD/Citadel.
 #[derive(Parser)]
@@ -62,7 +63,7 @@ pub fn targets_arguments() -> &'static [&'static str] {
     ]
 }
 
-pub fn main(args: Args) -> anyhow::Result<WorkflowResult> {
+pub fn main(args: Args) -> Result<(), WorkflowError> {
     run(
         &args.buck,
         args.output,
@@ -88,7 +89,7 @@ pub fn run(
     dry_run: bool,
     isolation_dir: Option<String>,
     arguments: &[String],
-) -> anyhow::Result<WorkflowResult> {
+) -> Result<(), WorkflowError> {
     let t = std::time::Instant::now();
     let mut command = Command::new(buck);
 
@@ -106,16 +107,16 @@ pub fn run(
 
     if dry_run {
         println!("{}", display_command(&command));
-        return Ok(WorkflowResult::Success);
+        return Ok(());
     }
 
-    let status = command.status()?;
+    let status = command.status().map_err(|err| anyhow!(err))?;
     if status.success() {
         td_util::scuba!(
             event: TARGETS_SUCCESS,
             duration: t.elapsed(),
         );
-        Ok(WorkflowResult::Success)
+        Ok(())
     } else {
         process::exit(status.code().unwrap_or(1));
     }

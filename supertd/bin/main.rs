@@ -70,7 +70,7 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         Ok(args) => args,
     };
 
-    match args {
+    let ret = match args {
         Args::Audit(args) => audit::main(args),
         Args::Btd(args) => btd::main(args),
         #[cfg(fbcode_build)]
@@ -86,8 +86,12 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Verse(args) => verse_citadel_adaptor::main(args),
+    };
+
+    match ret {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => err.report(),
     }
-    .report()
 }
 
 #[cfg(fbcode_build)]
