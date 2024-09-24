@@ -24,7 +24,6 @@ pub mod string;
 pub mod supertd_events;
 pub mod tracing;
 pub mod workflow_error;
-pub mod workflow_result;
 pub mod xplat;
 
 /// Initialize `tracing` and `supertd_events` Scuba client.
