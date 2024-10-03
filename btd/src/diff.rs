@@ -15,6 +15,7 @@ use std::mem;
 use tracing::warn;
 
 use crate::buck::config::is_buckconfig_change;
+use crate::buck::config::is_target_with_buck_dependencies;
 use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
 use crate::buck::target_map::TargetMap;
@@ -207,6 +208,7 @@ pub fn immediate_target_changes<'a>(
         let mut ret = GraphImpact::from_non_recursive(
             diff.targets()
                 .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::UniversalFile)))
+                .filter(|(t, _)| is_target_with_buck_dependencies(t))
                 .collect(),
         );
         ret.sort();
@@ -484,12 +486,16 @@ fn annotate_terminal_nodes(
 
 #[cfg(test)]
 mod tests {
+
     use td_util::prelude::*;
 
     use super::*;
+    use crate::buck::cells::CellInfo;
+    use crate::buck::labels::Labels;
     use crate::buck::targets::BuckImport;
     use crate::buck::targets::TargetsEntry;
     use crate::buck::types::PackageValues;
+    use crate::buck::types::ProjectRelativePath;
     use crate::buck::types::TargetHash;
     use crate::buck::types::TargetPattern;
     use crate::sapling::status::Status;
@@ -1232,5 +1238,69 @@ mod tests {
         )]);
         check(&changes, 5, &["a", "x"]);
         check(&changes, 1, &["x"]);
+    }
+
+    #[test]
+    fn test_immediate_target_changes_returns_correct_targets_when_buckconfig_changes() {
+        fn create_buck_target(
+            name: &str,
+            rule_type: &str,
+            ci_deps: Option<&[&str]>,
+        ) -> TargetsEntry {
+            let bt = BuckTarget {
+                name: TargetName::new(name),
+                package: Package::new("myPackage"),
+                package_values: PackageValues::default(),
+                rule_type: RuleType::new(rule_type),
+                oncall: None,
+                deps: Box::new([]),
+                inputs: Box::new([]),
+                hash: TargetHash::new("myTargetHash"),
+                labels: Labels::default(),
+                ci_srcs: Box::new([]),
+                ci_deps: match ci_deps {
+                    Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
+                    None => Box::new([]),
+                },
+            };
+            TargetsEntry::Target(bt)
+        }
+        fn create_test_targets() -> Targets {
+            Targets::new(vec![
+                create_buck_target("a", "cpp_binary", Some(&["dep1", "dep2"])),
+                create_buck_target("b", "python_library", None),
+                create_buck_target("c", "ci_translator_workflow", None), // Target contains no deps and should be ignored
+                create_buck_target("d", "ci_translator_workflow", Some(&["/dep"])),
+            ])
+        }
+        fn create_buckconfig_changes() -> Changes {
+            let cell_json = serde_json::json!(
+                {
+                    "fbsource//tools/buckconfigs": "/fbsource-common.bcfg",
+                }
+            );
+            let cells = CellInfo::parse(&cell_json.to_string()).unwrap();
+            Changes::new(
+                &cells,
+                vec![
+                    Status::Modified(ProjectRelativePath::new("fbsource//tools/buckconfigs/")),
+                    Status::Added(ProjectRelativePath::new("path/to/changed/file2")),
+                ],
+            )
+            .unwrap()
+        }
+
+        // Initialize
+        let test_targets = create_test_targets();
+        let test_changes = create_buckconfig_changes();
+
+        // Act
+        let result = immediate_target_changes(&test_targets, &test_targets, &test_changes, true);
+
+        // Verify
+        let expected_target_names = ["a", "b", "d"];
+        result.iter().for_each(|(target, _)| {
+            assert!(expected_target_names.contains(&target.name.as_str()));
+        });
     }
 }

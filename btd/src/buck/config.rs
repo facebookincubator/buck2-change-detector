@@ -9,6 +9,7 @@
 
 //! Configuration that we hardcode, because parsing it is too expensive.
 
+use super::targets::BuckTarget;
 use crate::buck::types::CellPath;
 
 /// Certain bzl files should be excluded from transitive impact tracing.
@@ -41,9 +42,26 @@ pub fn is_buckconfig_change(path: &CellPath) -> bool {
                 || str.starts_with("fbsource//fbcode/mode/")))
 }
 
+pub fn is_target_with_buck_dependencies(buck_target: &BuckTarget) -> bool {
+    let dependency_checked_rule_types = ["ci_translator_workflow"];
+
+    if dependency_checked_rule_types.contains(&buck_target.rule_type.short()) {
+        !buck_target.ci_deps.is_empty()
+    } else {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::buck::labels::Labels;
+    use crate::buck::types::Package;
+    use crate::buck::types::PackageValues;
+    use crate::buck::types::RuleType;
+    use crate::buck::types::TargetHash;
+    use crate::buck::types::TargetName;
+    use crate::buck::types::TargetPattern;
 
     #[test]
     fn test_is_buck_deployment() {
@@ -90,5 +108,58 @@ mod tests {
         assert!(!is_buckconfig_change(&CellPath::new(
             "fbcode//buck2/tests/foo_data/.buckconfig"
         )));
+    }
+
+    fn run_is_target_with_dependency_test(
+        rule_types: &[&str],
+        deps: Option<&[&str]>,
+        expected: bool,
+    ) {
+        fn create_buck_target(rule_type: &str, ci_deps: Option<&[&str]>) -> BuckTarget {
+            BuckTarget {
+                name: TargetName::new("myTargetName"),
+                package: Package::new("myPackage"),
+                package_values: PackageValues::default(),
+                rule_type: RuleType::new(rule_type),
+                oncall: None,
+                deps: Box::new([]),
+                inputs: Box::new([]),
+                hash: TargetHash::new("myTargetHash"),
+                labels: Labels::default(),
+                ci_srcs: Box::new([]),
+                ci_deps: match ci_deps {
+                    Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
+                    None => Box::new([]),
+                },
+            }
+        }
+
+        let test_targets = rule_types
+            .iter()
+            .map(|&rule_type| create_buck_target(rule_type, deps))
+            .collect::<Vec<_>>();
+
+        for target in test_targets {
+            assert_eq!(is_target_with_buck_dependencies(&target), expected);
+        }
+    }
+
+    #[test]
+    fn test_is_target_with_buck_dependencies_returns_true_when_deps_are_set() {
+        let rule_types = ["ci_translator_workflow"];
+        run_is_target_with_dependency_test(&rule_types, Some(&["ci_dep1", "ci_dep2"]), true);
+    }
+
+    #[test]
+    fn test_is_target_with_buck_dependencies_returns_true_when_deps_are_not_set_and_is_custom_rule_type()
+     {
+        let rule_types = ["my_custom_rule_type"];
+        run_is_target_with_dependency_test(&rule_types, None, true);
+    }
+
+    #[test]
+    fn test_is_target_with_buck_dependencies_returns_false_when_deps_are_not_set() {
+        let rule_types = ["ci_translator_workflow"];
+        run_is_target_with_dependency_test(&rule_types, None, false);
     }
 }
