@@ -31,6 +31,7 @@ pub enum TdProject {
     RL,
     Waandroid,
     Wacommon,
+    Waserver,
     Www,
     Xplat,
 }
