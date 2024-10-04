@@ -89,3 +89,71 @@ impl Changes {
         self.filter_by_cell_path(|x| f(x.extension()))
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buck::types::CellPath;
+    use crate::buck::types::ProjectRelativePath;
+    use crate::sapling::status::Status;
+
+    #[test]
+    fn test_changes_empty() {
+        let changes = Changes::default();
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_changes_new() {
+        let cell_info = CellInfo::testing();
+        let project_paths = vec![
+            Status::Modified(ProjectRelativePath::new("src/lib.rs")),
+            Status::Modified(ProjectRelativePath::new("src/main.rs")),
+        ];
+        let changes = Changes::new(&cell_info, project_paths).unwrap();
+        assert!(!changes.is_empty());
+        assert_eq!(changes.paths.len(), 2);
+    }
+
+    #[test]
+    fn test_contains_cell_path() {
+        let cell_path = CellPath::new("cell1//");
+        let project_path = ProjectRelativePath::new("src/lib.rs");
+        let paths = vec![Status::Added((cell_path.clone(), project_path))];
+        let changes = Changes::from_paths(paths);
+        assert!(changes.contains_cell_path(&cell_path));
+    }
+
+    #[test]
+    fn test_filter_by_cell_path() {
+        let cell_path1 = CellPath::new("cell1//");
+        let cell_path2 = CellPath::new("cell2//");
+        let project_path1 = ProjectRelativePath::new("src/lib.rs");
+        let project_path2 = ProjectRelativePath::new("src/main.rs");
+        let paths = vec![
+            Status::Added((cell_path1.clone(), project_path1)),
+            Status::Added((cell_path2.clone(), project_path2)),
+        ];
+        let changes = Changes::from_paths(paths);
+        let filtered_changes = changes.filter_by_cell_path(|path| path == &cell_path1);
+        assert_eq!(filtered_changes.paths.len(), 1);
+        assert!(filtered_changes.contains_cell_path(&cell_path1));
+        assert!(!filtered_changes.contains_cell_path(&cell_path2));
+    }
+
+    #[test]
+    fn test_filter_by_extension() {
+        let cell_path1 = CellPath::new("Cell1//foo/bar/cell1.rs");
+        let cell_path2 = CellPath::new("Cell2//foo/baz/cell2.txt");
+        let project_path1 = ProjectRelativePath::new("foo/bar/cell1.rs");
+        let project_path2 = ProjectRelativePath::new("foo/baz/cell2.txt");
+        let paths = vec![
+            Status::Added((cell_path1.clone(), project_path1)),
+            Status::Added((cell_path2.clone(), project_path2)),
+        ];
+        let changes = Changes::from_paths(paths);
+        let filtered_changes = changes.filter_by_extension(|ext| ext == Some("rs"));
+        assert_eq!(filtered_changes.paths.len(), 1);
+        assert!(filtered_changes.contains_cell_path(&cell_path1));
+        assert!(!filtered_changes.contains_cell_path(&cell_path2));
+    }
+}
