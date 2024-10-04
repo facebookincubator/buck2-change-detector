@@ -120,6 +120,7 @@ pub enum ContinuousRunMode {
     Aarch64,
     #[default]
     AsicHourly,
+    CiWorkflows,
     Dev,
     Opt,
     OptHourly,
