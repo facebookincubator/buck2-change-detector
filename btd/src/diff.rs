@@ -246,10 +246,12 @@ pub fn immediate_target_changes<'a>(
 
         // "hidden feature" that allows using btd to find rdeps of a "package" (directory)
         // by including directory paths in the changes input
-        let change_package = some_if(
-            RootImpactKind::Package,
-            changes.contains_package(&target.package),
-        );
+        let change_package = || {
+            some_if(
+                RootImpactKind::Package,
+                changes.contains_package(&target.package),
+            )
+        };
 
         // Did the hash of the target change
         let change_hash = || some_if(RootImpactKind::Hash, old_target.hash != target.hash);
@@ -281,10 +283,16 @@ pub fn immediate_target_changes<'a>(
             )
         };
 
-        if let Some(reason) = change_package
+        // The ordering here is important and goes from fine -> coarse.
+        // We prioritize source file to cover code changes (most relevant)
+        // Then trigger based on target-level changes detected via attribute hashing
+        // Then additional trigger conditions until rule-based matching,
+        // which is intentionally last because we can't infer true impact
+        // just from the parsed graph and must schedule at least analysis.
+        if let Some(reason) = change_inputs()
             .or_else(change_hash)
-            .or_else(change_inputs)
             .or_else(change_ci_srcs)
+            .or_else(change_package)
             .or_else(change_rule)
         {
             res.recursive
