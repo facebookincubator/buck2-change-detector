@@ -15,7 +15,6 @@ use std::mem;
 use tracing::warn;
 
 use crate::buck::config::is_buckconfig_change;
-use crate::buck::config::is_target_with_buck_dependencies;
 use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
 use crate::buck::target_map::TargetMap;
@@ -208,7 +207,10 @@ pub fn immediate_target_changes<'a>(
         let mut ret = GraphImpact::from_non_recursive(
             diff.targets()
                 .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::UniversalFile)))
-                .filter(|(t, _)| is_target_with_buck_dependencies(t))
+                .filter(|(t, _)| {
+                    is_target_with_buck_dependencies(t)
+                        || is_target_with_changed_ci_srcs(t, changes)
+                })
                 .collect(),
         );
         ret.sort();
@@ -313,6 +315,25 @@ pub fn immediate_target_changes<'a>(
     // Sort to ensure deterministic output
     res.sort();
     res
+}
+
+pub fn is_target_with_changed_ci_srcs(buck_target: &BuckTarget, changes: &Changes) -> bool {
+    let ci_srcs_rule_types = ["ci_skycastle", "ci_sandcastle", "ci_translator_workflow"];
+
+    if ci_srcs_rule_types.contains(&buck_target.rule_type.short()) {
+        return is_changed_ci_srcs(&buck_target.ci_srcs, changes);
+    }
+    true
+}
+
+pub fn is_target_with_buck_dependencies(buck_target: &BuckTarget) -> bool {
+    let dependency_checked_rule_types = ["ci_translator_workflow", "ci_skycastle", "ci_sandcastle"];
+
+    if dependency_checked_rule_types.contains(&buck_target.rule_type.short()) {
+        !buck_target.ci_deps.is_empty()
+    } else {
+        true
+    }
 }
 
 fn hint_applies_to(target: &BuckTarget) -> Option<(&Package, TargetName)> {
@@ -1253,6 +1274,7 @@ mod tests {
         fn create_buck_target(
             name: &str,
             rule_type: &str,
+            ci_srcs: Option<&[&str]>,
             ci_deps: Option<&[&str]>,
         ) -> TargetsEntry {
             let bt = BuckTarget {
@@ -1265,7 +1287,10 @@ mod tests {
                 inputs: Box::new([]),
                 hash: TargetHash::new("myTargetHash"),
                 labels: Labels::default(),
-                ci_srcs: Box::new([]),
+                ci_srcs: match ci_srcs {
+                    Some(srcs) => srcs.iter().map(|&src| Glob::new(src)).collect(),
+                    None => Box::new([]),
+                },
                 ci_deps: match ci_deps {
                     Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
                     None => Box::new([]),
@@ -1275,10 +1300,12 @@ mod tests {
         }
         fn create_test_targets() -> Targets {
             Targets::new(vec![
-                create_buck_target("a", "cpp_binary", Some(&["dep1", "dep2"])),
-                create_buck_target("b", "python_library", None),
-                create_buck_target("c", "ci_translator_workflow", None), // Target contains no deps and should be ignored
-                create_buck_target("d", "ci_translator_workflow", Some(&["/dep"])),
+                create_buck_target("a", "cpp_binary", None, Some(&["dep1", "dep2"])),
+                create_buck_target("b", "python_library", None, None),
+                create_buck_target("c", "ci_translator_workflow", None, None), // Target contains no deps and no srcs and should be ignored
+                create_buck_target("d", "ci_translator_workflow", None, Some(&["/dep"])),
+                create_buck_target("e", "ci_skycastle", Some(&["path/to/changed/file2"]), None),
+                create_buck_target("f", "ci_sandcastle", None, None),
             ])
         }
         fn create_buckconfig_changes() -> Changes {
@@ -1304,11 +1331,124 @@ mod tests {
 
         // Act
         let result = immediate_target_changes(&test_targets, &test_targets, &test_changes, true);
-
         // Verify
-        let expected_target_names = ["a", "b", "d"];
+        let expected_target_names = ["a", "b", "d", "e"];
         result.iter().for_each(|(target, _)| {
             assert!(expected_target_names.contains(&target.name.as_str()));
         });
+    }
+
+    fn run_is_target_with_dependency_test(
+        rule_types: &[&str],
+        deps: Option<&[&str]>,
+        expected: bool,
+    ) {
+        fn create_buck_target(rule_type: &str, ci_deps: Option<&[&str]>) -> BuckTarget {
+            BuckTarget {
+                name: TargetName::new("myTargetName"),
+                package: Package::new("myPackage"),
+                package_values: PackageValues::default(),
+                rule_type: RuleType::new(rule_type),
+                oncall: None,
+                deps: Box::new([]),
+                inputs: Box::new([]),
+                hash: TargetHash::new("myTargetHash"),
+                labels: Labels::default(),
+                ci_srcs: Box::new([]),
+                ci_deps: match ci_deps {
+                    Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
+                    None => Box::new([]),
+                },
+            }
+        }
+
+        let test_targets = rule_types
+            .iter()
+            .map(|&rule_type| create_buck_target(rule_type, deps))
+            .collect::<Vec<_>>();
+
+        for target in test_targets {
+            assert_eq!(is_target_with_buck_dependencies(&target), expected);
+        }
+    }
+
+    #[test]
+    fn test_is_target_with_buck_dependencies_returns_true_when_deps_are_set() {
+        let rule_types = ["ci_translator_workflow"];
+        run_is_target_with_dependency_test(&rule_types, Some(&["ci_dep1", "ci_dep2"]), true);
+    }
+
+    #[test]
+    fn test_is_target_with_buck_dependencies_returns_true_when_deps_are_not_set_and_is_custom_rule_type()
+     {
+        let rule_types = ["my_custom_rule_type"];
+        run_is_target_with_dependency_test(&rule_types, None, true);
+    }
+
+    #[test]
+    fn test_is_target_with_buck_dependencies_returns_false_when_deps_are_not_set() {
+        let rule_types = ["ci_translator_workflow"];
+        run_is_target_with_dependency_test(&rule_types, None, false);
+    }
+
+    fn run_is_target_with_ci_srcs_test(
+        rule_types: &[&str],
+        ci_srcs: Option<&[&str]>,
+        changes: &Changes,
+        expected: bool,
+    ) {
+        fn create_buck_target(rule_type: &str, ci_srcs: Option<&[&str]>) -> BuckTarget {
+            BuckTarget {
+                name: TargetName::new("myTargetName"),
+                package: Package::new("myPackage"),
+                package_values: PackageValues::default(),
+                rule_type: RuleType::new(rule_type),
+                oncall: None,
+                deps: Box::new([]),
+                inputs: Box::new([]),
+                hash: TargetHash::new("myTargetHash"),
+                labels: Labels::default(),
+                ci_srcs: match ci_srcs {
+                    Some(srcs) => srcs.iter().map(|&src| Glob::new(src)).collect(),
+                    None => Box::new([]),
+                },
+                ci_deps: Box::new([]),
+            }
+        }
+
+        let test_targets = rule_types
+            .iter()
+            .map(|&rule_type| create_buck_target(rule_type, ci_srcs))
+            .collect::<Vec<_>>();
+
+        for target in test_targets {
+            assert_eq!(is_target_with_changed_ci_srcs(&target, changes), expected);
+        }
+    }
+
+    #[test]
+    fn test_is_target_with_ci_srcs_returns_true_when_ci_srcs_are_set() {
+        let cell_info = CellInfo::testing();
+        let project_paths = vec![
+            Status::Modified(ProjectRelativePath::new("src1/lib.rs")),
+            Status::Modified(ProjectRelativePath::new("src1/main.rs")),
+        ];
+        let changes = Changes::new(&cell_info, project_paths).unwrap();
+        run_is_target_with_ci_srcs_test(
+            &["ci_skycastle"],
+            Some(&["src1/lib.rs", "src2"]),
+            &changes,
+            true,
+        );
+    }
+
+    #[test]
+    fn test_is_target_with_ci_srcs_returns_false_when_ci_srcs_are_not_set() {
+        run_is_target_with_ci_srcs_test(&["ci_skycastle"], None, &Changes::default(), false);
+    }
+
+    #[test]
+    fn test_is_target_with_ci_srcs_returns_true_for_non_ci_skycastle_rule_type() {
+        run_is_target_with_ci_srcs_test(&["other_rule_type"], None, &Changes::default(), true);
     }
 }
