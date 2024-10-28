@@ -178,7 +178,7 @@ impl CellInfo {
             })
             .collect::<Vec<_>>();
         xs.sort();
-        for (cell, items) in &xs.iter().group_by(|x| x.0) {
+        for (cell, items) in &xs.iter().chunk_by(|x| x.0) {
             let cell = CellName::new(cell);
             let cell_data = match self.cells.get_mut(&cell) {
                 Some(data) => data,
