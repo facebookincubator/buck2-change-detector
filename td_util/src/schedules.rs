@@ -40,6 +40,7 @@ pub enum ScheduleType {
     Diff,
     Continuous,
     ContinuousStable,
+    #[serde(alias = "land")]
     Landcastle,
     Postcommit,
     Testwarden,
