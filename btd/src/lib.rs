@@ -279,7 +279,6 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     // can log existing issues.
     if let Some(error_file) = args.write_errors_to_file {
         step("writing all errors to file");
-        assert!(!universe.is_empty());
         let errors = check::dump_all_errors(&diff, &universe);
 
         write_errors_to_file(&errors, error_file, output_format)?;

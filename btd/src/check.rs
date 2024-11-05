@@ -48,7 +48,7 @@ pub enum ValidationError {
 }
 
 fn in_universe(universe: &[TargetPattern], dep: &TargetLabel) -> bool {
-    universe.iter().any(|p| p.matches(dep))
+    universe.is_empty() || universe.iter().any(|p| p.matches(dep))
 }
 
 /// We want to track existing issues in the graph so we can keep it as
