@@ -11,7 +11,12 @@
 //! We should seek to minimize (eventually remove) any project differences.
 
 use std::cmp::Eq;
+#[cfg(unix)]
+use std::ffi::OsString;
 use std::hash::Hash;
+use std::io;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt as _;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -42,8 +47,14 @@ impl TdProject {
     }
 }
 
-pub fn get_repo_root() -> anyhow::Result<PathBuf> {
-    let output = Command::new("hg").arg("root").output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout).replace('\n', "");
-    Ok(PathBuf::from(stdout))
+pub fn get_repo_root() -> io::Result<PathBuf> {
+    let mut output = Command::new("hg").arg("root").output()?;
+    output.stdout.truncate(output.stdout.trim_ascii_end().len());
+
+    #[cfg(unix)]
+    let s = OsString::from_vec(output.stdout);
+    #[cfg(windows)]
+    let s = String::from_utf8(output.stdout).map_err(io::Error::other)?;
+
+    Ok(PathBuf::from(s))
 }
