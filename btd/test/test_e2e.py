@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -26,7 +27,15 @@ def run(*args, output=None, log_output=None, expect_fail=None):
     sys.stderr.flush()
     try:
         result = subprocess.run(
-            tuple(args), check=True, capture_output=True, encoding="utf-8", timeout=30
+            tuple(args),
+            check=True,
+            env={
+                **os.environ,
+                "CHGDISABLE": "1",  # Avoid spawning long-lived hg processes.
+            },
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
         )
         if output:
             write_file(output, result.stdout)
@@ -68,6 +77,15 @@ def copy_tree(src, dst):
             copy_tree(s, d)
         else:
             shutil.copy2(s, d.removesuffix(".test"))
+
+
+def rmtree_with_retry(path, retry=3):
+    for _ in range(retry):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError:
+            time.sleep(1)
 
 
 def apply(base, patch):
@@ -197,6 +215,8 @@ def test_run(patch_name):
             check_properties(patch_name, output)
         rerun = read_file(out_rerun)
         check_properties_rerun(patch_name, rerun)
+
+        rmtree_with_retry(working_dir)
 
 
 def check_properties(patch, rdeps):
