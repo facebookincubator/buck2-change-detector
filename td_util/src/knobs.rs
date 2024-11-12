@@ -18,7 +18,11 @@ pub fn check_boolean_knob(name: &str) -> bool {
 }
 
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
-pub fn check_boolean_knob_with_switch(name: &str, switch_val: Option<&str>, default: bool) -> bool {
+pub fn check_boolean_knob_with_switch(
+    _name: &str,
+    _switch_val: Option<&str>,
+    default: bool,
+) -> bool {
     default
 }
 
@@ -29,9 +33,9 @@ pub fn check_boolean_knob_with_switch(name: &str, switch_val: Option<&str>, defa
 
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
 pub fn check_boolean_knob_with_switch_and_consistent_pass_rate(
-    name: &str,
-    hash_val: Option<&str>,
-    switch_val: Option<&str>,
+    _name: &str,
+    _hash_val: Option<&str>,
+    _switch_val: Option<&str>,
     default: bool,
 ) -> bool {
     default
