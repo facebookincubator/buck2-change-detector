@@ -40,6 +40,7 @@ pub enum ScheduleType {
     Diff,
     Continuous,
     ContinuousStable,
+    #[value(alias("land"))]
     #[serde(alias = "land")]
     Landcastle,
     Postcommit,
@@ -168,6 +169,18 @@ impl FromStr for ContinuousRunMode {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn test_from_str() {
+        assert_eq!(
+            ScheduleType::from_str("land", true),
+            Ok(ScheduleType::Landcastle)
+        );
+        assert_eq!(
+            ScheduleType::from_str("landcastle", true),
+            Ok(ScheduleType::Landcastle),
+        );
+    }
 
     #[test]
     fn test_schedule_serialization() {
