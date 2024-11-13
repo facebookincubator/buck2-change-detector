@@ -119,9 +119,9 @@ impl ScheduleType {
 pub enum ContinuousRunMode {
     #[serde(rename = "aarch64")]
     Aarch64,
-    #[default]
     AsicHourly,
     CiWorkflows,
+    #[default]
     Dev,
     Opt,
     OptHourly,
