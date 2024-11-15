@@ -16,9 +16,12 @@ use crate::buck::types::CellPath;
 /// will have its impact traced through other means, e.g., attribute changes.
 pub fn should_exclude_bzl_file_from_transitive_impact_tracing(path: &str) -> bool {
     path.ends_with(".bzl")
-        && ["fbcode//target_determinator/macros"]
-            .iter()
-            .any(|prefix| path.starts_with(*prefix))
+        && [
+            "fbcode//target_determinator/macros",
+            "fbsource//tools/target_determinator/macros",
+        ]
+        .iter()
+        .any(|prefix| path.starts_with(*prefix))
 }
 
 pub fn is_buck_deployment(path: &CellPath) -> bool {
