@@ -8,7 +8,7 @@
  */
 
 pub enum QEParamValue {
-    Bool,
+    Bool(bool),
     String(String),
     Int(i64),
 }
@@ -20,7 +20,10 @@ pub fn evaluate_qe(unit_id: u64, universe: &str, param: &str, expect: QEParamVal
 
     let qe = crate::executor::run_as_sync(QE2::from_unit_id(unit_id, &[universe]));
     let ret = match expect {
-        QEParamValue::Bool => qe.get_bool(universe, param, false),
+        QEParamValue::Bool(expect) => {
+            let qe_value = qe.get_bool(universe, param, false);
+            qe_value == expect
+        }
         QEParamValue::String(expect) => {
             let qe_value = qe.get_string(universe, param, "");
             qe_value == expect
