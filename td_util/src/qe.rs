@@ -47,6 +47,7 @@ pub fn evaluate_qe(unit_id: u64, universe: &str, param: &str, expect: QEParamVal
         "Check {param} from QE {universe}, value {value_for_logging} (expected {expect_str}): {ret}"
     );
     crate::scuba!(event: VERSE_QE_CHECK, data: json!({
+        "unit_id": unit_id,
         "param": param,
         "universe": universe,
         "value": value_for_logging,
