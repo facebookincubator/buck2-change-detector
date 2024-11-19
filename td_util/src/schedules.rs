@@ -130,6 +130,7 @@ pub enum ContinuousRunMode {
     OptAdhoc,
     RunwayShadow,
     RunwayCoverage,
+    RunwayOnlyRunDisabledTests,
     TranslatorHourly,
     TranslatorNightly,
     TranslatorWeekend,
