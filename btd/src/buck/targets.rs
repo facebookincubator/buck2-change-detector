@@ -176,6 +176,9 @@ pub struct BuckTarget {
     pub ci_srcs: Box<[Glob]>,
     /// Used as additional triggers
     #[serde(default, skip_serializing_if = "is_empty_slice")]
+    pub ci_srcs_must_match: Box<[Glob]>,
+    /// Used as additional triggers
+    #[serde(default, skip_serializing_if = "is_empty_slice")]
     pub ci_deps: Box<[TargetPattern]>,
 }
 
@@ -205,6 +208,7 @@ impl BuckTarget {
             labels: Labels::default(),
             oncall: None,
             ci_srcs: Box::new([]),
+            ci_srcs_must_match: Box::new([]),
             ci_deps: Box::new([]),
         }
     }

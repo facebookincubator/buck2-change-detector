@@ -53,7 +53,7 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--no-cache",
         "--show-unconfigured-target-hash",
         "--json-lines",
-        "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_deps$|^remote_execution$",
+        "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$",
         "--imports",
         // `buck.cfg_modifiers` is PACKAGE value key for modifiers which may change configurations of all targets
         // covered by the PACKAGE. We need BTD to specifically query for these PACKAGE values because buck currently

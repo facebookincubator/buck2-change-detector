@@ -260,7 +260,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         glean::glean_changes(&base, &diff, &changes, args.depth)
     } else {
         step("recursive changes");
-        diff::recursive_target_changes(&diff, &immediate, args.depth, |_| true)
+        diff::recursive_target_changes(&diff, &changes, &immediate, args.depth, |_| true)
     };
     let sudos = if args.propagate_uses_sudo {
         step("recursive sudo labels");

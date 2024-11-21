@@ -42,9 +42,9 @@ pub fn glean_changes<'a>(
         &changes.filter_by_extension(|x| x == Some("h")),
         true,
     );
-    let header_rec = recursive_target_changes(diff, &header, depth, |_| true);
+    let header_rec = recursive_target_changes(diff, changes, &header, depth, |_| true);
     let other = immediate_target_changes(base, diff, changes, true);
-    let other_rec = recursive_target_changes(diff, &other, depth, |x| !cxx_rule_type(x));
+    let other_rec = recursive_target_changes(diff, changes, &other, depth, |x| !cxx_rule_type(x));
     merge(header_rec, other_rec)
 }
 

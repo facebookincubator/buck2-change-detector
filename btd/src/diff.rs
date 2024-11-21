@@ -82,6 +82,17 @@ fn is_changed_ci_srcs(file_deps: &[Glob], changes: &Changes) -> bool {
     changes.project_paths().any(|x| glob.matches(x))
 }
 
+/// If target has `ci_srcs_must_match` set, it could be picked only if changes match any
+/// of the globs in `ci_srcs_must_match`.
+/// Checks if the target is allowed to be considered based on this rule.
+fn matches_ci_srcs_must_match(globs: &[Glob], changes: &Changes) -> bool {
+    if globs.is_empty() || changes.is_empty() {
+        return true;
+    }
+    let glob = GlobSpec::new(globs);
+    changes.project_paths().any(|x| glob.matches(x))
+}
+
 /// The result of `immediate_changes`.
 #[derive(Debug, Default)]
 pub struct GraphImpact<'a> {
@@ -211,6 +222,7 @@ pub fn immediate_target_changes<'a>(
                     is_target_with_buck_dependencies(t)
                         || is_target_with_changed_ci_srcs(t, changes)
                 })
+                .filter(|(t, _)| matches_ci_srcs_must_match(&t.ci_srcs_must_match, changes))
                 .collect(),
         );
         ret.sort();
@@ -274,7 +286,8 @@ pub fn immediate_target_changes<'a>(
         let change_ci_srcs = || {
             some_if(
                 RootImpactKind::CiSrcs,
-                is_changed_ci_srcs(&target.ci_srcs, changes),
+                is_changed_ci_srcs(&target.ci_srcs, changes)
+                    && matches_ci_srcs_must_match(&target.ci_srcs_must_match, changes),
             )
         };
         // Did the rule we point at change
@@ -344,19 +357,19 @@ fn hint_applies_to(target: &BuckTarget) -> Option<(&Package, TargetName)> {
         TargetName::new(target.name.as_str().strip_prefix("ci_hint@")?),
     ))
 }
-
 pub fn recursive_target_changes<'a>(
     diff: &'a Targets,
-    changes: &GraphImpact<'a>,
+    changes: &Changes,
+    impact: &GraphImpact<'a>,
     depth: Option<usize>,
     follow_rule_type: impl Fn(&RuleType) -> bool,
 ) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     // Just an optimisation, but saves building the reverse mapping
-    if changes.recursive.is_empty() && changes.removed.is_empty() {
-        let mut res = if changes.non_recursive.is_empty() {
+    if impact.recursive.is_empty() && impact.removed.is_empty() {
+        let mut res = if impact.non_recursive.is_empty() {
             Vec::new()
         } else {
-            vec![changes.non_recursive.clone()]
+            vec![impact.non_recursive.clone()]
         };
         // We use a empty list sentinel to show nothing missing
         res.push(Vec::new());
@@ -367,7 +380,10 @@ pub fn recursive_target_changes<'a>(
     // We expect most things will have at least one dependency, so a reasonable approximate size
     let mut rdeps: TargetMap<&BuckTarget> = TargetMap::with_capacity(diff.len_targets_upperbound());
     let mut hints: HashMap<(&Package, TargetName), TargetLabel> = HashMap::new();
-    for target in diff.targets() {
+    for target in diff
+        .targets()
+        .filter(|t| matches_ci_srcs_must_match(&t.ci_srcs_must_match, changes))
+    {
         for d in target.deps.iter() {
             rdeps.insert(d, target)
         }
@@ -414,15 +430,15 @@ pub fn recursive_target_changes<'a>(
     // We record them with `done[target] = false` and add them to `next_silent` (which becomes `todo_silent`).
     // This ensures we iterate over them if reached recursively, but don't add them to results twice.
 
-    let mut todo = changes.recursive.clone();
-    let mut non_recursive_changes = changes.non_recursive.clone();
+    let mut todo = impact.recursive.clone();
+    let mut non_recursive_changes = impact.non_recursive.clone();
 
-    let mut done: HashMap<TargetLabelKeyRef, bool> = changes
+    let mut done: HashMap<TargetLabelKeyRef, bool> = impact
         .recursive
         .iter()
         .map(|(x, _)| (x.label_key(), true))
         .chain(
-            changes
+            impact
                 .non_recursive
                 .iter()
                 .map(|(x, _)| (x.label_key(), false)),
@@ -433,7 +449,7 @@ pub fn recursive_target_changes<'a>(
 
     // Track targets depending on removed targets, but we don't add removed targets
     // to results
-    let mut todo_silent: Vec<(&BuckTarget, ImpactTraceData)> = changes.removed.clone();
+    let mut todo_silent: Vec<(&BuckTarget, ImpactTraceData)> = impact.removed.clone();
     let mut next_silent: Vec<(&BuckTarget, ImpactTraceData)> = Vec::new();
 
     fn add_result<'a>(
@@ -516,6 +532,7 @@ fn annotate_terminal_nodes(
 #[cfg(test)]
 mod tests {
 
+    use itertools::Itertools;
     use td_util::prelude::*;
 
     use super::*;
@@ -528,6 +545,10 @@ mod tests {
     use crate::buck::types::TargetHash;
     use crate::buck::types::TargetPattern;
     use crate::sapling::status::Status;
+
+    fn basic_changes() -> Changes {
+        Changes::testing(&[Status::Modified(CellPath::new("foo//irrelevant_file"))])
+    }
 
     #[test]
     fn test_immediate_changes() {
@@ -553,21 +574,21 @@ mod tests {
 
         // We could get a change because the hash changes or the input changes, or both
         // Or because the target is new.
-        let default_pacakge_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let default_package_value = PackageValues::new(&["default"], serde_json::Value::Null);
         let base = Targets::new(vec![
             target(
                 "foo//bar",
                 "aaa",
                 &[&file1, &file2],
                 "123",
-                &default_pacakge_value,
+                &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
-            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
-            target("foo//bar", "eee", &[], "123", &default_pacakge_value),
-            target("foo//bar", "ggg", &[&file4], "123", &default_pacakge_value),
+            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target("foo//bar", "ddd", &[], "123", &default_package_value),
+            target("foo//bar", "eee", &[], "123", &default_package_value),
+            target("foo//bar", "ggg", &[&file4], "123", &default_package_value),
             target(
                 "foo//bar",
                 "zzz",
@@ -582,14 +603,14 @@ mod tests {
                 "aaa",
                 &[&file1, &file4],
                 "123",
-                &default_pacakge_value,
+                &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
-            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
-            target("foo//bar", "fff", &[], "123", &default_pacakge_value),
-            target("foo//bar", "ggg", &[&file4], "321", &default_pacakge_value),
+            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target("foo//bar", "ddd", &[], "123", &default_package_value),
+            target("foo//bar", "fff", &[], "123", &default_package_value),
+            target("foo//bar", "ggg", &[&file4], "321", &default_package_value),
             // only package value changed
             target(
                 "foo//bar",
@@ -645,11 +666,11 @@ mod tests {
         let file2 = CellPath::new("foo//bar/file2.txt");
         let file3 = CellPath::new("foo//bar/file3.txt");
 
-        let default_pacakge_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let default_package_value = PackageValues::new(&["default"], serde_json::Value::Null);
         let base = Targets::new(vec![
-            target("foo//bar", "aaa", &[], "123", &default_pacakge_value),
-            target("foo//baz", "bbb", &[&file2], "123", &default_pacakge_value),
-            target("foo//bar", "ccc", &[&file3], "123", &default_pacakge_value),
+            target("foo//bar", "aaa", &[], "123", &default_package_value),
+            target("foo//baz", "bbb", &[&file2], "123", &default_package_value),
+            target("foo//bar", "ccc", &[&file3], "123", &default_package_value),
         ]);
         let res = immediate_target_changes(
             &base,
@@ -689,21 +710,21 @@ mod tests {
 
         // We could get a change because the hash changes or the input changes, or both
         // Or because the target is new.
-        let default_pacakge_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let default_package_value = PackageValues::new(&["default"], serde_json::Value::Null);
         let base = Targets::new(vec![
             target(
                 "foo//bar",
                 "aaa",
                 &[&file1, &file2],
                 "123",
-                &default_pacakge_value,
+                &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
-            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
-            target("foo//bar", "eee", &[], "123", &default_pacakge_value),
-            target("foo//bar", "ggg", &[&file4], "123", &default_pacakge_value),
+            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target("foo//bar", "ddd", &[], "123", &default_package_value),
+            target("foo//bar", "eee", &[], "123", &default_package_value),
+            target("foo//bar", "ggg", &[&file4], "123", &default_package_value),
             target(
                 "foo//bar",
                 "zzz",
@@ -718,14 +739,14 @@ mod tests {
                 "aaa",
                 &[&file1, &file4],
                 "123",
-                &default_pacakge_value,
+                &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_pacakge_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_pacakge_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_pacakge_value),
-            target("foo//bar", "ddd", &[], "123", &default_pacakge_value),
-            target("foo//bar", "fff", &[], "123", &default_pacakge_value),
-            target("foo//bar", "ggg", &[&file4], "321", &default_pacakge_value),
+            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target("foo//bar", "ddd", &[], "123", &default_package_value),
+            target("foo//bar", "fff", &[], "123", &default_package_value),
+            target("foo//bar", "ggg", &[&file4], "321", &default_package_value),
             // only package value changed
             target(
                 "foo//bar",
@@ -792,6 +813,7 @@ mod tests {
         let res = res.map(|x| x.as_str());
         assert_eq!(&res, &["foo//bar:aaa", "foo//bar:bbb",]);
     }
+
     #[test]
     fn test_recursive_changes_non_recursive_only() {
         fn target(name: &str, deps: &[&str], package_values: &PackageValues) -> TargetsEntry {
@@ -809,12 +831,12 @@ mod tests {
             &PackageValues::new(&["val"], serde_json::Value::Null),
         )]);
 
-        let changes = GraphImpact {
+        let impact = GraphImpact {
             recursive: Vec::new(),
             non_recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::testing())],
             ..Default::default()
         };
-        let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -852,12 +874,12 @@ mod tests {
             ),
         ]);
 
-        let changes = GraphImpact {
+        let impact = GraphImpact {
             recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::testing())],
             non_recursive: vec![(diff.targets().nth(1).unwrap(), ImpactTraceData::testing())],
             ..Default::default()
         };
-        let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -889,11 +911,11 @@ mod tests {
             target("package_value_only", &[]),
         ]);
 
-        let changes = GraphImpact::from_recursive(vec![(
+        let impact = GraphImpact::from_recursive(vec![(
             diff.targets().next().unwrap(),
             ImpactTraceData::testing(),
         )]);
-        let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(3), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -926,7 +948,7 @@ mod tests {
         ]);
 
         let changed_target = diff.targets().find(|t| t.name.as_str() == "a").unwrap();
-        let changes = GraphImpact {
+        let impact = GraphImpact {
             recursive: vec![(
                 changed_target,
                 ImpactTraceData::new(changed_target, RootImpactKind::Inputs),
@@ -937,7 +959,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let res = recursive_target_changes(&diff, &changes, Some(2), |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -967,15 +989,60 @@ mod tests {
 
         let change_target =
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
-        let changes =
+        let impact =
             GraphImpact::from_recursive(vec![(&change_target, ImpactTraceData::testing())]);
-        let res = recursive_target_changes(&diff, &changes, Some(1), |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
             xs
         });
         assert_eq!(res, vec![vec!["dep"], vec!["bar"]]);
+    }
+
+    #[test]
+    fn test_recursive_changes_custom_workflows() {
+        let diff = Targets::new(vec![
+            // ci_deps not affected, target ignored
+            create_buck_target(
+                "a",
+                "ci_sandcastle",
+                None,
+                None,
+                Some(&["foo//bar:other_dep"]),
+            ),
+            // ci_deps affected, target selected
+            create_buck_target("b", "ci_skycastle", None, None, Some(&["foo//bar:dep"])),
+            // ci_deps affected, ci_srcs_must_match matches, target included
+            create_buck_target(
+                "c",
+                "ci_translator_workflow",
+                None,
+                Some(&["changed"]),
+                Some(&["foo//bar:dep"]),
+            ),
+            // ci_deps affected, ci_srcs_must_match does not match, target ignored
+            create_buck_target(
+                "d",
+                "ci_sandcastle",
+                None,
+                Some(&["missing"]),
+                Some(&["foo//bar:dep"]),
+            ),
+        ]);
+
+        let change_target =
+            BuckTarget::testing("dep", "foo//bar", "prelude//rules.bzl:cxx_library");
+        let impact =
+            GraphImpact::from_recursive(vec![(&change_target, ImpactTraceData::testing())]);
+        let changes = Changes::testing(&[Status::Modified(CellPath::new("foo//changed"))]);
+        let res = recursive_target_changes(&diff, &changes, &impact, Some(1), |_| true);
+        let res = res.map(|xs| {
+            let mut xs = xs.map(|(x, _)| x.name.as_str());
+            xs.sort();
+            xs
+        });
+        assert_eq!(res, vec![vec!["dep"], vec!["b", "c"]]);
     }
 
     #[test]
@@ -995,13 +1062,13 @@ mod tests {
             target("d", &["a", "c"]),
         ]);
 
-        let changes = GraphImpact::from_recursive(
+        let impact = GraphImpact::from_recursive(
             diff.targets()
                 .take(2)
                 .map(|x| (x, ImpactTraceData::testing()))
                 .collect(),
         );
-        let res = recursive_target_changes(&diff, &changes, None, |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, None, |_| true);
         let res = res.map(|xs| xs.map(|(x, _)| x.name.as_str()));
         assert_eq!(res, vec![vec!["a", "b"], vec!["c", "d"], vec![]]);
     }
@@ -1171,7 +1238,7 @@ mod tests {
         assert_eq!(impact.recursive.len(), 1);
 
         assert_eq!(
-            recursive_target_changes(&targets, &impact, None, |_| true)
+            recursive_target_changes(&targets, &changes, &impact, None, |_| true)
                 .iter()
                 .flatten()
                 .count(),
@@ -1182,7 +1249,7 @@ mod tests {
             ImpactTraceData::testing(),
         ));
         assert_eq!(
-            recursive_target_changes(&targets, &impact, None, |_| true)
+            recursive_target_changes(&targets, &changes, &impact, None, |_| true)
                 .iter()
                 .flatten()
                 .count(),
@@ -1206,11 +1273,11 @@ mod tests {
             }),
         ]);
 
-        let changes = GraphImpact::from_recursive(vec![(
+        let impact = GraphImpact::from_recursive(vec![(
             diff.targets().next().unwrap(),
             ImpactTraceData::testing(),
         )]);
-        let res = recursive_target_changes(&diff, &changes, Some(3), |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(3), |_| true);
         assert_eq!(res[0].len(), 1);
         assert_eq!(res[1].len(), 1);
         assert_eq!(res[1][0].0.name, TargetName::new("baz"));
@@ -1242,8 +1309,9 @@ mod tests {
         ];
         let diff = Targets::new(entries);
 
-        let check = |changes: &GraphImpact, depth: usize, expected: &[&str]| {
-            let res = recursive_target_changes(&diff, changes, Some(depth), |_| true);
+        let check = |impact: &GraphImpact, depth: usize, expected: &[&str]| {
+            let res =
+                recursive_target_changes(&diff, &basic_changes(), impact, Some(depth), |_| true);
             let mut terminal = res
                 .iter()
                 .flatten()
@@ -1269,43 +1337,87 @@ mod tests {
         check(&changes, 1, &["x"]);
     }
 
+    fn create_buck_target(
+        name: &str,
+        rule_type: &str,
+        ci_srcs: Option<&[&str]>,
+        ci_srcs_must_match: Option<&[&str]>,
+        ci_deps: Option<&[&str]>,
+    ) -> TargetsEntry {
+        let bt = BuckTarget {
+            name: TargetName::new(name),
+            package: Package::new("myPackage"),
+            package_values: PackageValues::default(),
+            rule_type: RuleType::new(rule_type),
+            oncall: None,
+            deps: Box::new([]),
+            inputs: Box::new([]),
+            hash: TargetHash::new("myTargetHash"),
+            labels: Labels::default(),
+            ci_srcs: match ci_srcs {
+                Some(srcs) => srcs.iter().map(|&src| Glob::new(src)).collect(),
+                None => Box::new([]),
+            },
+            ci_srcs_must_match: match ci_srcs_must_match {
+                Some(srcs) => srcs.iter().map(|&src| Glob::new(src)).collect(),
+                None => Box::new([]),
+            },
+            ci_deps: match ci_deps {
+                Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
+                None => Box::new([]),
+            },
+        };
+        TargetsEntry::Target(bt)
+    }
+
     #[test]
     fn test_immediate_target_changes_returns_correct_targets_when_buckconfig_changes() {
-        fn create_buck_target(
-            name: &str,
-            rule_type: &str,
-            ci_srcs: Option<&[&str]>,
-            ci_deps: Option<&[&str]>,
-        ) -> TargetsEntry {
-            let bt = BuckTarget {
-                name: TargetName::new(name),
-                package: Package::new("myPackage"),
-                package_values: PackageValues::default(),
-                rule_type: RuleType::new(rule_type),
-                oncall: None,
-                deps: Box::new([]),
-                inputs: Box::new([]),
-                hash: TargetHash::new("myTargetHash"),
-                labels: Labels::default(),
-                ci_srcs: match ci_srcs {
-                    Some(srcs) => srcs.iter().map(|&src| Glob::new(src)).collect(),
-                    None => Box::new([]),
-                },
-                ci_deps: match ci_deps {
-                    Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
-                    None => Box::new([]),
-                },
-            };
-            TargetsEntry::Target(bt)
-        }
         fn create_test_targets() -> Targets {
             Targets::new(vec![
-                create_buck_target("a", "cpp_binary", None, Some(&["dep1", "dep2"])),
-                create_buck_target("b", "python_library", None, None),
-                create_buck_target("c", "ci_translator_workflow", None, None), // Target contains no deps and no srcs and should be ignored
-                create_buck_target("d", "ci_translator_workflow", None, Some(&["/dep"])),
-                create_buck_target("e", "ci_skycastle", Some(&["path/to/changed/file2"]), None),
-                create_buck_target("f", "ci_sandcastle", None, None),
+                create_buck_target("a", "cpp_binary", None, None, Some(&["dep1", "dep2"])),
+                create_buck_target("b", "python_library", None, None, None),
+                create_buck_target("c", "ci_translator_workflow", None, None, None), // Target contains no deps and no srcs and should be ignored
+                create_buck_target("d", "ci_translator_workflow", None, None, Some(&["/dep"])),
+                create_buck_target(
+                    "e",
+                    "ci_skycastle",
+                    Some(&["path/to/changed/file2"]),
+                    None,
+                    None,
+                ),
+                create_buck_target("f", "ci_sandcastle", None, None, None),
+                // Target contains ci_srcs_must_match which matches a change, target should be selected
+                create_buck_target(
+                    "g",
+                    "ci_sandcastle",
+                    Some(&["path/to/changed/file2"]),
+                    Some(&["path/to/changed/file2"]),
+                    None,
+                ),
+                // Target contains ci_srcs_must_match which matches a change, target should be selected
+                create_buck_target(
+                    "h",
+                    "ci_skycastle",
+                    None,
+                    Some(&["path/to/changed/file2"]),
+                    Some(&["/dep"]),
+                ),
+                // Target contains ci_srcs_must_match which does not match any changes, target should be ignored
+                create_buck_target(
+                    "i",
+                    "ci_translator_workflow",
+                    Some(&["path/to/changed/file2"]),
+                    Some(&["path/to/changed/missing"]),
+                    None,
+                ),
+                // Target contains ci_srcs_must_match which does not match any changes, target should be ignored
+                create_buck_target(
+                    "j",
+                    "ci_sandcastle",
+                    None,
+                    Some(&["path/to/changed/missing"]),
+                    Some(&["/dep"]),
+                ),
             ])
         }
         fn create_buckconfig_changes() -> Changes {
@@ -1331,11 +1443,70 @@ mod tests {
 
         // Act
         let result = immediate_target_changes(&test_targets, &test_targets, &test_changes, true);
+
         // Verify
-        let expected_target_names = ["a", "b", "d", "e"];
-        result.iter().for_each(|(target, _)| {
-            assert!(expected_target_names.contains(&target.name.as_str()));
-        });
+        let expected_target_names = vec!["a", "b", "d", "e", "g", "h"];
+        let result_targets = result
+            .iter()
+            .map(|(target, _)| target.name.as_str())
+            .collect_vec();
+        assert_eq!(expected_target_names, result_targets)
+    }
+
+    #[test]
+    fn test_immediate_target_changes_for_custom_workflows() {
+        fn create_test_targets() -> Targets {
+            Targets::new(vec![
+                // No ci_srcs, target should be ignored
+                create_buck_target("a", "ci_sandcastle", None, None, None),
+                // ci_srcs matches a change, target should be selected
+                create_buck_target(
+                    "b",
+                    "ci_skycastle",
+                    Some(&["path/to/changed/file1"]),
+                    None,
+                    None,
+                ),
+                // ci_srcs matches a change, ci_srcs_must_match also matches, target should be selected
+                create_buck_target(
+                    "c",
+                    "ci_translator_workflow",
+                    Some(&["path/to/changed/file1"]),
+                    Some(&["path/to/changed/file2"]),
+                    None,
+                ),
+                // ci_srcs matches a change, ci_srcs_must_match does not match, target should be ignored
+                create_buck_target(
+                    "d",
+                    "ci_sandcastle",
+                    Some(&["path/to/changed/file1"]),
+                    Some(&["path/to/changed/missing"]),
+                    None,
+                ),
+            ])
+        }
+
+        // Initialize
+        let test_targets = create_test_targets();
+        let test_changes = Changes::new(
+            &CellInfo::testing(),
+            vec![
+                Status::Added(ProjectRelativePath::new("path/to/changed/file1")),
+                Status::Added(ProjectRelativePath::new("path/to/changed/file2")),
+            ],
+        )
+        .unwrap();
+
+        // Act
+        let result = immediate_target_changes(&test_targets, &test_targets, &test_changes, true);
+
+        // Verify
+        let expected_target_names = vec!["b", "c"];
+        let result_targets = result
+            .iter()
+            .map(|(target, _)| target.name.as_str())
+            .collect_vec();
+        assert_eq!(expected_target_names, result_targets)
     }
 
     fn run_is_target_with_dependency_test(
@@ -1355,6 +1526,7 @@ mod tests {
                 hash: TargetHash::new("myTargetHash"),
                 labels: Labels::default(),
                 ci_srcs: Box::new([]),
+                ci_srcs_must_match: Box::new([]),
                 ci_deps: match ci_deps {
                     Some(deps) => deps.iter().map(|&dep| TargetPattern::new(dep)).collect(),
                     None => Box::new([]),
@@ -1412,6 +1584,7 @@ mod tests {
                     Some(srcs) => srcs.iter().map(|&src| Glob::new(src)).collect(),
                     None => Box::new([]),
                 },
+                ci_srcs_must_match: Box::new([]),
                 ci_deps: Box::new([]),
             }
         }
