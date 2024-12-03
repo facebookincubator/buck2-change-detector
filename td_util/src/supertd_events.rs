@@ -37,7 +37,21 @@ pub enum Event {
     BUILD_DIRECTIVES_SPECIFIED,
     RE_METADATA_SUCCESS,
     GENERATED_TARGETS_COUNT,
-    VERSE_QE_CHECK,
+    QE_CHECK,
+}
+
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+#[derive(serde::Serialize)]
+pub enum Step {
+    AUDIT,
+    TARGETS,
+    BTD,
+    VERIFIABLE_MATCHER,
+    RANKER,
+    VERSE,
+    SCHEDULER,
+    RERUN,
 }
 
 /// Initialize the Scuba client for the `supertd_events` dataset.

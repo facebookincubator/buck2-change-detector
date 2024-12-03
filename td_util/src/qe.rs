@@ -9,6 +9,8 @@
 
 use serde::Serialize;
 
+use crate::supertd_events;
+
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum QEParamValue {
@@ -18,7 +20,13 @@ pub enum QEParamValue {
 }
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
-pub fn evaluate_qe(unit_id: u64, universe: &str, param: &str, expect: QEParamValue) -> bool {
+pub fn evaluate_qe(
+    unit_id: u64,
+    universe: &str,
+    param: &str,
+    expect: QEParamValue,
+    step: supertd_events::Step,
+) -> bool {
     use sandcastle_qe2_client::QE2;
     use tracing::info;
 
@@ -46,18 +54,25 @@ pub fn evaluate_qe(unit_id: u64, universe: &str, param: &str, expect: QEParamVal
     info!(
         "Check {param} from QE {universe}, value {value_for_logging} (expected {expect_str}): {ret}"
     );
-    crate::scuba!(event: VERSE_QE_CHECK, data: json!({
+    crate::scuba!(event: QE_CHECK, data: json!({
         "unit_id": unit_id,
         "param": param,
         "universe": universe,
         "value": value_for_logging,
         "expect": expect,
         "result": ret,
+        "step": step
     }));
     ret
 }
 
 #[cfg(not(all(fbcode_build, target_os = "linux")))]
-pub fn evaluate_qe(unit_id: u64, universe: &str, param: &str, expect: QEParamValue) -> bool {
+pub fn evaluate_qe(
+    unit_id: u64,
+    universe: &str,
+    param: &str,
+    expect: QEParamValue,
+    step: supertd_events::Step,
+) -> bool {
     return false;
 }
