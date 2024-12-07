@@ -32,8 +32,6 @@ pub fn get_args() -> anyhow::Result<Vec<OsString>> {
         .context("When parsing arg files")
 }
 
-/// Set up tracing so it prints to stderr, and can be used for output.
-/// Most things should use `info` and `debug` level for showing messages.
 pub fn parse_args<T: Parser>() -> anyhow::Result<T> {
     Ok(T::parse_from(get_args()?))
 }
