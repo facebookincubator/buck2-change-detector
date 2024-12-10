@@ -11,65 +11,55 @@
 
 use crate::project::TdProject;
 
-pub fn get_app_specific_build_directives(directives: &Option<Vec<String>>) -> Option<Vec<String>> {
-    directives.as_ref().map(|directives| {
-        directives
+pub fn get_app_specific_build_directives(directives: Option<&[String]>) -> Option<Vec<String>> {
+    Some(
+        directives?
             .iter()
-            .filter_map(|directive| {
-                if directive.starts_with("@build[") && directive.ends_with(']') {
-                    Some(
-                        directive[7..directive.len() - 1]
-                            .split(',')
-                            .map(|s| s.to_string())
-                            .collect::<Vec<String>>(),
-                    )
-                } else {
-                    None
-                }
-            })
-            .flatten()
-            .collect::<Vec<String>>()
-    })
+            .filter_map(|directive| directive.strip_prefix("@build[")?.strip_suffix(']'))
+            .filter(|x| !x.is_empty())
+            .flat_map(|directive| directive.split(','))
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
 }
 
 pub fn app_specific_build_directives_matches_name(
-    app_specific_build_directives: &Option<Vec<String>>,
-    name: &String,
+    app_specific_build_directives: Option<&[String]>,
+    name: &str,
     exactly: bool,
     project: TdProject,
 ) -> bool {
-    app_specific_build_directives
-        .as_ref()
-        .map_or(false, |app_specific_build_directives| {
-            app_specific_build_directives.iter().any(|directive| {
-                if exactly && project != TdProject::Fbobjc {
-                    name == directive
-                } else {
-                    name.starts_with(directive) || name.ends_with(directive)
-                }
-            })
+    app_specific_build_directives.map_or(false, |app_specific_build_directives| {
+        app_specific_build_directives.iter().any(|directive| {
+            if exactly && project != TdProject::Fbobjc {
+                name == directive
+            } else {
+                name.starts_with(directive) || name.ends_with(directive)
+            }
         })
+    })
 }
 
-pub fn should_build_all_fbobjc(directives: &Option<Vec<String>>, project: TdProject) -> bool {
-    return directives
-        .iter()
-        .flatten()
-        .any(|build_directive| build_directive == "#buildall-fbobjc")
-        && project == TdProject::Fbobjc;
+pub fn should_build_all_fbobjc(directives: Option<&[String]>, project: TdProject) -> bool {
+    project == TdProject::Fbobjc
+        && directives
+            .into_iter()
+            .flatten()
+            .any(|build_directive| build_directive == "#buildall-fbobjc")
 }
 
-pub fn should_build_all_fbandroid(directives: &Option<Vec<String>>, project: TdProject) -> bool {
-    return directives
-        .iter()
-        .flatten()
-        .any(|build_directive| build_directive == "#buildall-fbandroid")
-        && project == TdProject::Fbandroid;
+pub fn should_build_all_fbandroid(directives: Option<&[String]>, project: TdProject) -> bool {
+    project == TdProject::Fbandroid
+        && directives
+            .into_iter()
+            .flatten()
+            .any(|build_directive| build_directive == "#buildall-fbandroid")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_get_app_specific_build_directives() {
         let directives = Some(vec![
@@ -77,9 +67,8 @@ mod tests {
             "@build[directive3]".to_string(),
             "not a directive".to_string(),
         ]);
-        let result = get_app_specific_build_directives(&directives);
         assert_eq!(
-            result,
+            get_app_specific_build_directives(directives.as_deref()),
             Some(vec![
                 "directive1".to_string(),
                 "directive2".to_string(),
@@ -87,12 +76,22 @@ mod tests {
             ])
         );
     }
+
     #[test]
     fn test_get_app_specific_build_directives_none() {
         let directives = None;
-        let result = get_app_specific_build_directives(&directives);
-        assert_eq!(result, None);
+        assert_eq!(get_app_specific_build_directives(directives), None);
     }
+
+    #[test]
+    fn test_get_app_specific_build_directives_empty() {
+        let directives = Some(vec!["@build[]".to_string()]);
+        assert_eq!(
+            get_app_specific_build_directives(directives.as_deref()),
+            Some(vec![]),
+        );
+    }
+
     #[test]
     fn test_app_specific_build_directives_contains_name() {
         let app_specific_build_directives = Some(vec![
@@ -101,14 +100,14 @@ mod tests {
             "directive3".to_string(),
         ]);
         assert!(app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
-            &"directive1".to_string(),
+            app_specific_build_directives.as_deref(),
+            "directive1",
             true,
             TdProject::Fbandroid
         ));
         assert!(!app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
-            &"directive4".to_string(),
+            app_specific_build_directives.as_deref(),
+            "directive4",
             true,
             TdProject::Fbandroid
         ));
@@ -117,8 +116,8 @@ mod tests {
     fn test_app_specific_build_directives_contains_name_none() {
         let app_specific_build_directives = None;
         assert!(!app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
-            &"directive1".to_string(),
+            app_specific_build_directives,
+            "directive1",
             true,
             TdProject::Fbandroid
         ));
@@ -132,8 +131,8 @@ mod tests {
             "directive3".to_string(),
         ]);
         assert!(app_specific_build_directives_matches_name(
-            &app_specific_build_directives,
-            &"directive1234".to_string(),
+            app_specific_build_directives.as_deref(),
+            "directive1234",
             false,
             TdProject::Fbandroid
         ));
@@ -146,34 +145,34 @@ mod tests {
             "-iphoneos-production-buck2".to_string(),
         ]);
         assert!(app_specific_build_directives_matches_name(
-            &fbobjc_app_specific_build_directives,
-            &"barcelona-distribution-iphoneos-release-buck2".to_string(),
+            fbobjc_app_specific_build_directives.as_deref(),
+            "barcelona-distribution-iphoneos-release-buck2",
             true,
             TdProject::Fbobjc
         ));
         assert!(app_specific_build_directives_matches_name(
-            &fbobjc_app_specific_build_directives,
-            &"igios-distribution-iphoneos-production-buck2".to_string(),
+            fbobjc_app_specific_build_directives.as_deref(),
+            "igios-distribution-iphoneos-production-buck2",
             true,
             TdProject::Fbobjc
         ));
         assert!(!app_specific_build_directives_matches_name(
-            &fbobjc_app_specific_build_directives,
-            &"igios-iphonesimulator-local-buck2".to_string(),
+            fbobjc_app_specific_build_directives.as_deref(),
+            "igios-iphonesimulator-local-buck2",
             true,
             TdProject::Fbobjc
         ));
         let fbandroid_app_specific_build_directives =
             Some(vec!["fb4a-debug".to_string(), "fb4a-release".to_string()]);
         assert!(app_specific_build_directives_matches_name(
-            &fbandroid_app_specific_build_directives,
-            &"automation-fb4a-debug".to_string(),
+            fbandroid_app_specific_build_directives.as_deref(),
+            "automation-fb4a-debug",
             false,
             TdProject::Fbandroid
         ));
         assert!(app_specific_build_directives_matches_name(
-            &fbandroid_app_specific_build_directives,
-            &"automation-fb4a-release".to_string(),
+            fbandroid_app_specific_build_directives.as_deref(),
+            "automation-fb4a-release",
             false,
             TdProject::Fbandroid
         ));
