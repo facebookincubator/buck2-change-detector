@@ -68,11 +68,11 @@ pub fn evaluate_qe(
 
 #[cfg(not(all(fbcode_build, target_os = "linux")))]
 pub fn evaluate_qe(
-    unit_id: u64,
-    universe: &str,
-    param: &str,
-    expect: QEParamValue,
-    step: supertd_events::Step,
+    _unit_id: u64,
+    _universe: &str,
+    _param: &str,
+    _expect: QEParamValue,
+    _step: supertd_events::Step,
 ) -> bool {
     return false;
 }

@@ -206,7 +206,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
                 Some(x) => x.modified.map(|x| x.as_pattern()),
             };
             if args.print_rerun {
-                print_rerun(&rerun);
+                print_rerun(rerun.as_ref());
                 return Ok(());
             }
             let new = if ask_buck.is_empty() {
@@ -332,7 +332,7 @@ struct Rerun {
 }
 
 /// Print out the patterns to rerun, in diff style.
-fn print_rerun(rerun: &Option<Rerun>) {
+fn print_rerun(rerun: Option<&Rerun>) {
     match rerun {
         None => println!("* everything"),
         Some(rerun) => {
