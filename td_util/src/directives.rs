@@ -11,6 +11,10 @@
 
 use crate::project::TdProject;
 
+pub const BUILD_ALL_DIRECTIVE: &str = "#buildall";
+pub const BUILD_ALL_FBANDROID_DIRECTIVE: &str = "#buildall-fbandroid";
+pub const BUILD_ALL_FBOBJC_DIRECTIVE: &str = "#buildall-fbobjc";
+
 pub fn get_app_specific_build_directives(directives: Option<&[String]>) -> Option<Vec<String>> {
     Some(
         directives?
@@ -40,12 +44,19 @@ pub fn app_specific_build_directives_matches_name(
     })
 }
 
+pub fn should_build_all(directives: Option<&[String]>) -> bool {
+    directives
+        .into_iter()
+        .flatten()
+        .any(|build_directive| build_directive == BUILD_ALL_DIRECTIVE)
+}
+
 pub fn should_build_all_fbobjc(directives: Option<&[String]>, project: TdProject) -> bool {
     project == TdProject::Fbobjc
         && directives
             .into_iter()
             .flatten()
-            .any(|build_directive| build_directive == "#buildall-fbobjc")
+            .any(|build_directive| build_directive == BUILD_ALL_FBOBJC_DIRECTIVE)
 }
 
 pub fn should_build_all_fbandroid(directives: Option<&[String]>, project: TdProject) -> bool {
@@ -53,7 +64,7 @@ pub fn should_build_all_fbandroid(directives: Option<&[String]>, project: TdProj
         && directives
             .into_iter()
             .flatten()
-            .any(|build_directive| build_directive == "#buildall-fbandroid")
+            .any(|build_directive| build_directive == BUILD_ALL_FBANDROID_DIRECTIVE)
 }
 
 #[cfg(test)]
