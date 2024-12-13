@@ -1286,8 +1286,6 @@ mod tests {
 
     #[test]
     fn test_terminal_nodes() {
-        // Create A -> B -> C -> D -> E
-        // And then assert that C and E are terminal nodes.
         fn target(name: &str, deps: &[&str]) -> TargetsEntry {
             let pkg = Package::new("foo//");
             TargetsEntry::Target(BuckTarget {
@@ -1295,6 +1293,8 @@ mod tests {
                 ..BuckTarget::testing(name, pkg.as_str(), "prelude//rules.bzl:cxx_library")
             })
         }
+
+        // a, x, y, z are terminal nodes.
         let entries = vec![
             target("a", &["b"]),
             target("b", &["c", "d"]),
@@ -1326,7 +1326,9 @@ mod tests {
             diff.targets().find(|t| t.name.as_str() == "g").unwrap(),
             ImpactTraceData::testing(),
         )]);
+        // All terminal nodes are within traversal distance.
         check(&changes, 5, &["a", "x", "y", "z"]);
+        // Due to truncated distance, only 1 terminal node is returned.
         check(&changes, 1, &["z"]);
 
         let changes = GraphImpact::from_recursive(vec![(
