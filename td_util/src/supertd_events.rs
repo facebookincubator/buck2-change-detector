@@ -38,6 +38,7 @@ pub enum Event {
     RE_METADATA_SUCCESS,
     GENERATED_TARGETS_COUNT,
     QE_CHECK,
+    RUNWAY_RELATES_CALL_FAILURE,
 }
 
 #[derive(Debug)]
