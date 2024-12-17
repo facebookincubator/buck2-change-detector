@@ -20,7 +20,7 @@ pub enum QEParamValue {
 }
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
-pub fn evaluate_qe(
+pub fn evaluate_qe_sync(
     unit_id: u64,
     universe: &str,
     param: &str,
@@ -67,7 +67,7 @@ pub fn evaluate_qe(
 }
 
 #[cfg(not(all(fbcode_build, target_os = "linux")))]
-pub fn evaluate_qe(
+pub fn evaluate_qe_sync(
     _unit_id: u64,
     _universe: &str,
     _param: &str,
