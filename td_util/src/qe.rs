@@ -20,7 +20,7 @@ pub enum QEParamValue {
 }
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
-pub fn evaluate_qe_sync(
+pub async fn evaluate_qe(
     unit_id: u64,
     universe: &str,
     param: &str,
@@ -31,7 +31,7 @@ pub fn evaluate_qe_sync(
     use tracing::info;
 
     let value_for_logging: serde_json::Value;
-    let qe = crate::executor::run_as_sync(QE2::from_unit_id(unit_id, &[universe]));
+    let qe = QE2::from_unit_id(unit_id, &[universe]).await;
     let ret = match &expect {
         QEParamValue::Bool(expect) => {
             let qe_value = qe.get_bool(universe, param, false);
@@ -67,12 +67,24 @@ pub fn evaluate_qe_sync(
 }
 
 #[cfg(not(all(fbcode_build, target_os = "linux")))]
-pub fn evaluate_qe_sync(
+pub async fn evaluate_qe(
     _unit_id: u64,
     _universe: &str,
     _param: &str,
     _expect: QEParamValue,
     _step: supertd_events::Step,
 ) -> bool {
-    return false;
+    false
+}
+
+/// Sync API for checking QE2.
+/// This does not work from existing `run_as_sync` contexts, and will deadlock.
+pub fn evaluate_qe_sync(
+    unit_id: u64,
+    universe: &str,
+    param: &str,
+    expect: QEParamValue,
+    step: supertd_events::Step,
+) -> bool {
+    crate::executor::run_as_sync(evaluate_qe(unit_id, universe, param, expect, step))
 }
