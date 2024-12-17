@@ -19,9 +19,12 @@ pub enum QEParamValue {
     Int(i64),
 }
 
+/// Evaluate the given phabricator version number against the QE universe.
+///
+/// The API internally converts to the right unit ID based on the universe.
 #[cfg(all(fbcode_build, target_os = "linux"))]
 pub async fn evaluate_qe(
-    unit_id: u64,
+    phabricator_version_number: u64,
     universe: &str,
     param: &str,
     expect: QEParamValue,
@@ -31,7 +34,7 @@ pub async fn evaluate_qe(
     use tracing::info;
 
     let value_for_logging: serde_json::Value;
-    let qe = QE2::from_unit_id(unit_id, &[universe]).await;
+    let qe = QE2::from_unit_id(phabricator_version_number, &[universe]).await;
     let ret = match &expect {
         QEParamValue::Bool(expect) => {
             let qe_value = qe.get_bool(universe, param, false);
@@ -55,7 +58,7 @@ pub async fn evaluate_qe(
         "Check {param} from QE {universe}, value {value_for_logging} (expected {expect_str}): {ret}"
     );
     crate::scuba!(event: QE_CHECK, data: json!({
-        "unit_id": unit_id,
+        "phabricator_version_number": phabricator_version_number,
         "param": param,
         "universe": universe,
         "value": value_for_logging,
@@ -68,7 +71,7 @@ pub async fn evaluate_qe(
 
 #[cfg(not(all(fbcode_build, target_os = "linux")))]
 pub async fn evaluate_qe(
-    _unit_id: u64,
+    _phabricator_version_number: u64,
     _universe: &str,
     _param: &str,
     _expect: QEParamValue,
@@ -80,11 +83,17 @@ pub async fn evaluate_qe(
 /// Sync API for checking QE2.
 /// This does not work from existing `run_as_sync` contexts, and will deadlock.
 pub fn evaluate_qe_sync(
-    unit_id: u64,
+    phabricator_version_number: u64,
     universe: &str,
     param: &str,
     expect: QEParamValue,
     step: supertd_events::Step,
 ) -> bool {
-    crate::executor::run_as_sync(evaluate_qe(unit_id, universe, param, expect, step))
+    crate::executor::run_as_sync(evaluate_qe(
+        phabricator_version_number,
+        universe,
+        param,
+        expect,
+        step,
+    ))
 }
