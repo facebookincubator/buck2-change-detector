@@ -17,6 +17,7 @@ use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
+use td_util::executor::run_as_sync;
 
 /// Generic binary for the pieces of the new target-determinator framework.
 #[allow(clippy::large_enum_variant)] // Only one instance, so not a big deal
@@ -41,7 +42,8 @@ enum Args {
 }
 
 #[fbinit::main]
-pub async fn main(fb: FacebookInit) -> ExitCode {
+
+pub fn main(fb: FacebookInit) -> ExitCode {
     let _guard = td_util::init(fb);
 
     let mut command = Args::command();
@@ -76,7 +78,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::VerifiableMatcher(args) => verifiable_matcher::main(args),
         #[cfg(fbcode_build)]
-        Args::Ranker(args) => ranker::main(args).await,
+        Args::Ranker(args) => run_as_sync(ranker::main(args)),
         #[cfg(fbcode_build)]
         Args::Rerun(args) => rerun::main(fb, args),
         #[cfg(fbcode_build)]
