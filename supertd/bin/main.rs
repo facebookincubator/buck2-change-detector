@@ -74,9 +74,9 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         Args::Audit(args) => audit::main(args),
         Args::Btd(args) => btd::main(args),
         #[cfg(fbcode_build)]
-        Args::Citadel(args) => verifiable_matcher::main(args),
+        Args::Citadel(args) => run_as_sync(verifiable_matcher::main(args)),
         #[cfg(fbcode_build)]
-        Args::VerifiableMatcher(args) => verifiable_matcher::main(args),
+        Args::VerifiableMatcher(args) => run_as_sync(verifiable_matcher::main(args)),
         #[cfg(fbcode_build)]
         Args::Ranker(args) => run_as_sync(ranker::main(args)),
         #[cfg(fbcode_build)]
