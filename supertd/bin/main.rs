@@ -80,7 +80,7 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::Ranker(args) => run_as_sync(ranker::main(args)),
         #[cfg(fbcode_build)]
-        Args::Rerun(args) => rerun::main(fb, args),
+        Args::Rerun(args) => run_as_sync(rerun::main(fb, args)),
         #[cfg(fbcode_build)]
         Args::Scheduler(args) => run_as_sync(scheduler::main(fb, args)),
         Args::Targets(args) => targets::main(args),
