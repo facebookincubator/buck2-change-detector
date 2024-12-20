@@ -17,7 +17,6 @@ use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
-use td_util::executor::run_as_sync;
 
 /// Generic binary for the pieces of the new target-determinator framework.
 #[allow(clippy::large_enum_variant)] // Only one instance, so not a big deal
@@ -42,8 +41,7 @@ enum Args {
 }
 
 #[fbinit::main]
-
-pub fn main(fb: FacebookInit) -> ExitCode {
+pub async fn main(fb: FacebookInit) -> ExitCode {
     let _guard = td_util::init(fb);
 
     let mut command = Args::command();
@@ -74,18 +72,18 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         Args::Audit(args) => audit::main(args),
         Args::Btd(args) => btd::main(args),
         #[cfg(fbcode_build)]
-        Args::Citadel(args) => run_as_sync(verifiable_matcher::main(args)),
+        Args::Citadel(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
-        Args::VerifiableMatcher(args) => run_as_sync(verifiable_matcher::main(args)),
+        Args::VerifiableMatcher(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
-        Args::Ranker(args) => run_as_sync(ranker::main(args)),
+        Args::Ranker(args) => ranker::main(args).await,
         #[cfg(fbcode_build)]
-        Args::Rerun(args) => run_as_sync(rerun::main(fb, args)),
+        Args::Rerun(args) => rerun::main(fb, args).await,
         #[cfg(fbcode_build)]
-        Args::Scheduler(args) => run_as_sync(scheduler::main(fb, args)),
+        Args::Scheduler(args) => scheduler::main(fb, args).await,
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::Verse(args) => run_as_sync(verse_citadel_adaptor::main(args)),
+        Args::Verse(args) => verse_citadel_adaptor::main(args).await,
     };
 
     match ret {
