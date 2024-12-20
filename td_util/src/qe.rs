@@ -79,21 +79,3 @@ pub async fn evaluate_qe(
 ) -> bool {
     false
 }
-
-/// Sync API for checking QE2.
-/// This does not work from existing `run_as_sync` contexts, and will deadlock.
-pub fn evaluate_qe_sync(
-    phabricator_version_number: u64,
-    universe: &str,
-    param: &str,
-    expect: QEParamValue,
-    step: supertd_events::Step,
-) -> bool {
-    crate::executor::run_as_sync(evaluate_qe(
-        phabricator_version_number,
-        universe,
-        param,
-        expect,
-        step,
-    ))
-}

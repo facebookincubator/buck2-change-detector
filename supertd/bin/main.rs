@@ -85,7 +85,7 @@ pub fn main(fb: FacebookInit) -> ExitCode {
         Args::Scheduler(args) => run_as_sync(scheduler::main(fb, args)),
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::Verse(args) => verse_citadel_adaptor::main(args),
+        Args::Verse(args) => run_as_sync(verse_citadel_adaptor::main(args)),
     };
 
     match ret {
