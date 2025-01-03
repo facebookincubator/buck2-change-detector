@@ -12,10 +12,10 @@ use std::process::Termination;
 use thiserror::Error;
 
 // Exit codes are handled by the [orchestrator classifiers](https://fburl.com/code/k33ivq2j)
-const EXIT_CODE_WARNING: u8 = 100;
-const EXIT_CODE_SKIPPED: u8 = 101;
-const EXIT_CODE_USER_FAILURE: u8 = 102;
-const EXIT_CODE_INFRA_FAILURE: u8 = 103;
+const EXIT_CODE_WARNING: u8 = 2;
+const EXIT_CODE_SKIPPED: u8 = 3;
+const EXIT_CODE_USER_FAILURE: u8 = 4;
+const EXIT_CODE_INFRA_FAILURE: u8 = 5;
 
 // Error type for workflow errors.
 // Supports setting a workflow status by using custom constructors for [`Self::ReturnStatus`]
