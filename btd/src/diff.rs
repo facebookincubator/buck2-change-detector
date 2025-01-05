@@ -1265,7 +1265,7 @@ mod tests {
                 ..BuckTarget::testing(
                     "ci_hint@baz",
                     "foo//bar",
-                    "fbcode//target_determinator/macros/rules/ci_hint.bzl:ci_hint",
+                    "fbsource//tools/target_determinator/macros/rules/ci_hint.bzl:ci_hint",
                 )
             }),
             TargetsEntry::Target(BuckTarget {
