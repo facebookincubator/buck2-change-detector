@@ -15,7 +15,10 @@ use scuba::ScubaSampleBuilder;
 pub use serde_json;
 pub use tracing;
 
+use crate::knobs::check_boolean_knob;
+
 const SCUBA_DATASET: &str = "supertd_events";
+pub const USE_LOGGER_KNOB: &str = "ci_efficiency/citadel:use_supertd_events_logger";
 
 static BUILDER: OnceLock<ScubaSampleBuilder> = OnceLock::new();
 
@@ -69,17 +72,22 @@ pub enum Step {
 /// Panics if `SUPERTD_SCUBA_LOGFILE` is set and the log file cannot be opened
 /// for writing.
 pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
-    let mut builder = match std::env::var_os("SUPERTD_SCUBA_LOGFILE") {
-        None => ScubaSampleBuilder::new(fb, SCUBA_DATASET),
-        Some(path) => ScubaSampleBuilder::with_discard()
-            .with_log_file(path)
-            .unwrap(),
-    };
-    builder.add_common_server_data();
-    add_sandcastle_columns(&mut builder);
-    if BUILDER.set(builder).is_err() {
-        tracing::error!("supertd_events Scuba client initialized twice");
+    if should_use_logger() {
+        crate::supertd_events_logger::init(fb);
+    } else {
+        let mut builder = match std::env::var_os("SUPERTD_SCUBA_LOGFILE") {
+            None => ScubaSampleBuilder::new(fb, SCUBA_DATASET),
+            Some(path) => ScubaSampleBuilder::with_discard()
+                .with_log_file(path)
+                .unwrap(),
+        };
+        builder.add_common_server_data();
+        add_sandcastle_columns(&mut builder);
+        if BUILDER.set(builder).is_err() {
+            tracing::error!("supertd_events Scuba client initialized twice");
+        }
     }
+
     ScubaClientGuard(())
 }
 
@@ -114,12 +122,16 @@ pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
 #[macro_export]
 macro_rules! scuba {
     ( event: $event:ident $(, $key:ident : $value:expr)* $(,)? ) => {
-        let mut builder = $crate::supertd_events::sample_builder();
-        builder.add("event", format!("{:?}", &$crate::supertd_events::Event::$event));
-        $($crate::scuba! { @SET_FIELD(builder, $key, $value) })*
-        if let Err(e) = builder.try_log() {
-            $crate::supertd_events::tracing::error!(
-                "Failed to log to supertd_events Scuba: {:?}", e);
+        if $crate::supertd_events::should_use_logger() {
+            $crate::scuba_logger! {event: $event $(, $key : $value)*};
+        } else {
+            let mut builder = $crate::supertd_events::sample_builder();
+            builder.add("event", format!("{:?}", &$crate::supertd_events::Event::$event));
+            $($crate::scuba! { @SET_FIELD(builder, $key, $value) })*
+            if let Err(e) = builder.try_log() {
+                $crate::supertd_events::tracing::error!(
+                    "Failed to log to supertd_events Scuba: {:?}", e);
+            }
         }
     };
     ( $($key:ident : $value:expr),* $(,)? ) => {
@@ -170,6 +182,11 @@ pub fn sample_builder() -> ScubaSampleBuilder {
         .get()
         .cloned()
         .unwrap_or_else(ScubaSampleBuilder::with_discard)
+}
+
+#[doc(hidden)]
+pub fn should_use_logger() -> bool {
+    check_boolean_knob(USE_LOGGER_KNOB)
 }
 
 fn add_sandcastle_columns(sample: &mut ScubaSampleBuilder) {

@@ -23,6 +23,7 @@ pub mod qe;
 pub mod schedules;
 pub mod string;
 pub mod supertd_events;
+pub mod supertd_events_logger;
 pub mod tracing;
 pub mod workflow_error;
 pub mod xplat;
