@@ -73,7 +73,7 @@ pub enum Step {
 /// for writing.
 pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
     if should_use_logger() {
-        crate::supertd_events_logger::init(fb);
+        // @oss-disable: crate::supertd_events_logger::init(fb);
     } else {
         let mut builder = match std::env::var_os("SUPERTD_SCUBA_LOGFILE") {
             None => ScubaSampleBuilder::new(fb, SCUBA_DATASET),
@@ -123,7 +123,7 @@ pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
 macro_rules! scuba {
     ( event: $event:ident $(, $key:ident : $value:expr)* $(,)? ) => {
         if $crate::supertd_events::should_use_logger() {
-            $crate::scuba_logger! {event: $event $(, $key : $value)*};
+            // @oss-disable: $crate::scuba_logger! {event: $event $(, $key : $value)*};
         } else {
             let mut builder = $crate::supertd_events::sample_builder();
             builder.add("event", format!("{:?}", &$crate::supertd_events::Event::$event));
