@@ -1117,6 +1117,92 @@ mod tests {
     }
 
     #[test]
+    fn test_prelude_change_impact_on_ci_udr() {
+        let targets = Targets::new(vec![
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("fbcode//bar/BUCK"),
+                imports: Box::new([
+                    CellPath::new("fbsource//tools/target_determinator/macros/ci_sandcastle.bzl"),
+                    CellPath::new("fbcode//my_rules.bzl"),
+                ]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("fbcode//my_rules.bzl"),
+                imports: Box::new([
+                    CellPath::new("fbsource//tools/target_determinator/macros/ci_sandcastle.bzl"),
+                    CellPath::new("prelude//prelude.bzl"),
+                ]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("fbsource//tools/target_determinator/macros/ci_sandcastle.bzl"),
+                imports: Box::new([CellPath::new("prelude//prelude.bzl")]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("prelude//prelude.bzl"),
+                imports: Box::new([CellPath::new("prelude//rules.bzl")]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("prelude//rules.bzl"),
+                imports: Box::new([CellPath::new("prelude//utils.bzl")]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("prelude//utils.bzl"),
+                imports: Box::new([]),
+                package: None,
+            }),
+            TargetsEntry::Target(BuckTarget::testing(
+                "ci",
+                "fbcode//bar",
+                "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl:ci_sandcastle",
+            )),
+            TargetsEntry::Target(BuckTarget::testing(
+                "foo",
+                "fbcode//bar",
+                "fbcode//my_rules.bzl:my_rule",
+            )),
+            TargetsEntry::Target(BuckTarget::testing(
+                "baz",
+                "fbcode//bar",
+                "prelude//rules.bzl:genrule",
+            )),
+        ]);
+
+        let check = |file, check, expect: usize| {
+            let res = immediate_target_changes(
+                &targets,
+                &targets,
+                &Changes::testing(&[Status::Modified(CellPath::new(file))]),
+                check,
+            );
+            assert_eq!(res.len(), expect);
+        };
+        // Changes to non-prelude rules still tracks rule changes.
+        check("fbcode//my_rules.bzl", false, 1);
+        check("fbcode//my_rules.bzl", true, 1);
+        // CI defs are excluded.
+        check(
+            "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl",
+            false,
+            0,
+        );
+        check(
+            "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl",
+            true,
+            0,
+        );
+        // Changes from prelude are only tracked if the boolean is set.
+        check("prelude//rules.bzl", false, 0);
+        check("prelude//rules.bzl", true, 2);
+        check("prelude//utils.bzl", false, 0);
+        check("prelude//utils.bzl", true, 2);
+    }
+
+    #[test]
     fn test_non_prelude_rule_changes() {
         // test.bzl imports my_rules.bzl which imports prelude//rules.bzl
         let targets = Targets::new(vec![
