@@ -1079,7 +1079,15 @@ mod tests {
         let targets = Targets::new(vec![
             TargetsEntry::Import(BuckImport {
                 file: CellPath::new("prelude//prelude.bzl"),
-                imports: Box::new([CellPath::new("prelude//rules.bzl")]),
+                imports: Box::new([CellPath::new("prelude//native.bzl")]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("prelude//native.bzl"),
+                imports: Box::new([
+                    CellPath::new("prelude//rules.bzl"),
+                    CellPath::new("prelude//unrelated.bzl"),
+                ]),
                 package: None,
             }),
             TargetsEntry::Import(BuckImport {
@@ -1089,6 +1097,11 @@ mod tests {
             }),
             TargetsEntry::Import(BuckImport {
                 file: CellPath::new("prelude//utils.bzl"),
+                imports: Box::new([]),
+                package: None,
+            }),
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("prelude//unrelated.bzl"),
                 imports: Box::new([]),
                 package: None,
             }),
@@ -1114,6 +1127,7 @@ mod tests {
         check("prelude//rules.bzl", true, 1);
         check("prelude//utils.bzl", true, 1);
         check("prelude//prelude.bzl", true, 0);
+        check("prelude//unrelated.bzl", true, 0);
     }
 
     #[test]
@@ -1197,9 +1211,9 @@ mod tests {
         );
         // Changes from prelude are only tracked if the boolean is set.
         check("prelude//rules.bzl", false, 0);
-        check("prelude//rules.bzl", true, 2);
+        check("prelude//rules.bzl", true, 1);
         check("prelude//utils.bzl", false, 0);
-        check("prelude//utils.bzl", true, 2);
+        check("prelude//utils.bzl", true, 1);
     }
 
     #[test]
