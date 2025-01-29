@@ -38,6 +38,8 @@ enum Args {
     Targets(targets::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Verse(verse_citadel_adaptor::Args),
+    #[cfg(all(fbcode_build, target_os = "linux"))]
+    Orchestrator(orchestrator::Args),
 }
 
 #[fbinit::main]
@@ -84,6 +86,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Verse(args) => verse_citadel_adaptor::main(args).await,
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::Orchestrator(args) => orchestrator::main(fb, args).await,
     };
 
     match ret {
