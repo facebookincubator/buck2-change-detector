@@ -137,6 +137,7 @@ pub enum ContinuousRunMode {
     // To be used when shceduling Rl Translator jobs for multisect
     TranslatorContinuousForMultisect,
     FlakyTestsDev,
+    Supplemental,
 }
 
 impl ContinuousRunMode {
