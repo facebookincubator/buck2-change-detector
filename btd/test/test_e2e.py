@@ -265,7 +265,19 @@ def check_properties(patch, rdeps):
                     "root_cause": ["root//inner:baz", "hash"],
                     "is_terminal": False,
                 },
-            }
+            },
+            {
+                "depth": 1,
+                "labels": [],
+                "target": "root//:bar",
+                "type": "my_rule",
+                "oncall": None,
+                "reason": {
+                    "affected_dep": "root//inner:baz",
+                    "root_cause": ["root//inner:baz", "hash"],
+                    "is_terminal": True,
+                },
+            },
         ]
     elif patch == "new_buck":
         assert len(rdeps) == 1
