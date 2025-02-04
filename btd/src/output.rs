@@ -153,7 +153,7 @@ mod tests {
     fn test_label_ordering() {
         let target = BuckTarget {
             labels: Labels::new(&["target_label"]),
-            package_values: PackageValues::new(&["must-come-first"], serde_json::Value::Null),
+            package_values: PackageValues::new(&["must-come-first"]),
             ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
         };
         let output = Output::from_target(&target, 3, false, ImpactTraceData::testing());

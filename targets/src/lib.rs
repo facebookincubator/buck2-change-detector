@@ -55,11 +55,7 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--json-lines",
         "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$",
         "--imports",
-        // `buck.cfg_modifiers` is PACKAGE value key for modifiers which may change configurations of all targets
-        // covered by the PACKAGE. We need BTD to specifically query for these PACKAGE values because buck currently
-        // does not hash PACKAGE modifiers for target hashing.
-        // TODO(scottcao): Remove `buck.cfg_modifiers` once we have a way to hash PACKAGE modifiers.
-        "--package-values-regex=^citadel\\.labels$|^buck\\.cfg_modifiers$",
+        "--package-values-regex=^citadel\\.labels$",
     ]
 }
 

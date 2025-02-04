@@ -262,7 +262,7 @@ def check_properties(patch, rdeps):
                 "oncall": None,
                 "reason": {
                     "affected_dep": "",
-                    "root_cause": ["root//inner:baz", "package_values"],
+                    "root_cause": ["root//inner:baz", "hash"],
                     "is_terminal": False,
                 },
             }

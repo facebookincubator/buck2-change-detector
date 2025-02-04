@@ -9,9 +9,7 @@
 
 //! All these types mirror their equivalent in the Buck2 codebase
 
-use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
-use std::hash::Hasher;
 use std::str::FromStr;
 
 use parse_display::Display;
@@ -543,67 +541,16 @@ impl Package {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
-pub struct CfgModifiersHash {
-    cfg_modifiers_hash: u64,
-}
-impl CfgModifiersHash {
-    pub fn new(value: &serde_json::Value) -> Self {
-        let cfg_modifiers_hash = Self::hash_cfg_modifiers(value);
-        Self { cfg_modifiers_hash }
-    }
-    fn hash_cfg_modifiers(cfg_modifiers: &serde_json::Value) -> u64 {
-        match cfg_modifiers {
-            serde_json::Value::Null => 0,
-            _ => {
-                let serialized = serde_json::to_string(cfg_modifiers)
-                    .expect("Failed to serialize cfg_modifiers");
-                let mut hasher = DefaultHasher::new();
-                serialized.hash(&mut hasher);
-                hasher.finish()
-            }
-        }
-    }
-}
-impl<'de> Deserialize<'de> for CfgModifiersHash {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-        match &value {
-            serde_json::Value::Object(map)
-                if map.len() == 1 && map.contains_key("cfg_modifiers_hash") =>
-            {
-                if let Some(serde_json::Value::Number(n)) = map.get("cfg_modifiers_hash") {
-                    if let Some(hash_value) = n.as_u64() {
-                        return Ok(CfgModifiersHash {
-                            cfg_modifiers_hash: hash_value,
-                        });
-                    }
-                }
-                Err(serde::de::Error::custom("Invalid hash value"))
-            }
-            _ => Ok(Self::new(&value)),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PackageValues {
     #[serde(rename = "citadel.labels", default)]
     pub labels: Labels,
-    // We don't care what structure modifiers actually hold, so let's just keep this as arbitrary JSON.
-    // TODO(scottcao): Remove this once PACKAGE modifiers are recognized by buck2 for target hashing.
-    #[serde(rename = "buck.cfg_modifiers", default)]
-    cfg_modifiers_hash: CfgModifiersHash,
 }
 
 impl PackageValues {
-    pub fn new(values: &[&str], cfg_modifiers: serde_json::Value) -> Self {
+    pub fn new(values: &[&str]) -> Self {
         Self {
             labels: Labels::new(values),
-            cfg_modifiers_hash: CfgModifiersHash::new(&cfg_modifiers),
         }
     }
 
@@ -780,60 +727,5 @@ mod tests {
         let t = TargetLabel::new(s);
         assert_eq!(t.as_str(), s);
         assert_eq!(t.to_string(), s);
-    }
-
-    use serde_json::json;
-    #[test]
-    fn test_package_values_equality() {
-        let cfg_modifiers1 = json!(["mod1", "mod2"]);
-        let cfg_modifiers2 = json!(["mod3", "mod4"]);
-        let values1 = PackageValues::new(&["label1", "label2"], cfg_modifiers1.clone());
-        let values2 = PackageValues::new(&["label1", "label2"], cfg_modifiers1.clone());
-        let values3 = PackageValues::new(&["label1"], cfg_modifiers1.clone());
-        let values4 = PackageValues::new(&["label1", "label2"], cfg_modifiers2.clone());
-        // Test equality based on labels and cfg_modifiers_hash
-        assert_eq!(
-            values1, values2,
-            "Values with the same labels and cfg_modifiers should be equal"
-        );
-        assert_ne!(
-            values1, values3,
-            "Values with different labels should not be equal"
-        );
-        assert_ne!(
-            values1, values4,
-            "Values with different cfg_modifiers should not be equal"
-        );
-        // Test that different cfg_modifiers result in different hashes
-        assert_ne!(
-            values1.cfg_modifiers_hash, values4.cfg_modifiers_hash,
-            "Different cfg_modifiers should result in different hashes"
-        );
-    }
-
-    #[test]
-    fn test_package_values_deserialization() {
-        let json_data = json!({
-            "buck.type": "prelude//prelude.bzl:my_rule",
-            "buck.deps": [],
-            "buck.inputs": ["root//inner/src1.txt", "root//inner/src2.txt"],
-            "buck.target_hash": "a1fc98833741810454433e2ed98b22d1",
-            "buck.package": "root//inner",
-            "buck.package_values": {
-                "buck.cfg_modifiers": ["ovr_config//os:linux"]
-            },
-            "name": "baz",
-            "labels": ["hello", "world"]
-        });
-        let package_values: PackageValues =
-            serde_json::from_value(json_data["buck.package_values"].clone())
-                .expect("Deserialization failed");
-        assert_ne!(
-            package_values.cfg_modifiers_hash,
-            CfgModifiersHash {
-                cfg_modifiers_hash: 0
-            },
-            "cfg_modifiers_hash should not be zero"
-        );
     }
 }

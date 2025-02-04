@@ -314,10 +314,7 @@ mod tests {
                 ]),
                 inputs: Box::new([CellPath::new("fbcode//me/file.bzl")]),
                 hash: TargetHash::new("43ce1a7a56f10225413a2991febb853a"),
-                package_values: PackageValues::new(
-                    &["ci:@fbcode//mode/opt"],
-                    serde_json::Value::Null,
-                ),
+                package_values: PackageValues::new(&["ci:@fbcode//mode/opt"]),
                 ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
             }),
             TargetsEntry::Target(BuckTarget {

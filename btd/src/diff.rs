@@ -574,7 +574,7 @@ mod tests {
 
         // We could get a change because the hash changes or the input changes, or both
         // Or because the target is new.
-        let default_package_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let default_package_value = PackageValues::new(&["default"]);
         let base = Targets::new(vec![
             target(
                 "foo//bar",
@@ -594,7 +594,7 @@ mod tests {
                 "zzz",
                 &[&file4],
                 "123",
-                &PackageValues::new(&["val1"], serde_json::Value::Null),
+                &PackageValues::new(&["val1"]),
             ),
         ]);
         let diff = Targets::new(vec![
@@ -617,7 +617,7 @@ mod tests {
                 "zzz",
                 &[&file4],
                 "123",
-                &PackageValues::new(&["val2"], serde_json::Value::Null),
+                &PackageValues::new(&["val2"]),
             ),
         ]);
         let res = immediate_target_changes(
@@ -666,7 +666,7 @@ mod tests {
         let file2 = CellPath::new("foo//bar/file2.txt");
         let file3 = CellPath::new("foo//bar/file3.txt");
 
-        let default_package_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let default_package_value = PackageValues::new(&["default"]);
         let base = Targets::new(vec![
             target("foo//bar", "aaa", &[], "123", &default_package_value),
             target("foo//baz", "bbb", &[&file2], "123", &default_package_value),
@@ -710,7 +710,7 @@ mod tests {
 
         // We could get a change because the hash changes or the input changes, or both
         // Or because the target is new.
-        let default_package_value = PackageValues::new(&["default"], serde_json::Value::Null);
+        let default_package_value = PackageValues::new(&["default"]);
         let base = Targets::new(vec![
             target(
                 "foo//bar",
@@ -730,7 +730,7 @@ mod tests {
                 "zzz",
                 &[&file4],
                 "123",
-                &PackageValues::new(&["val1"], serde_json::Value::Null),
+                &PackageValues::new(&["val1"]),
             ),
         ]);
         let diff = Targets::new(vec![
@@ -753,7 +753,7 @@ mod tests {
                 "zzz",
                 &[&file4],
                 "123",
-                &PackageValues::new(&["val2"], serde_json::Value::Null),
+                &PackageValues::new(&["val2"]),
             ),
         ]);
         let res = immediate_target_changes(
@@ -825,11 +825,7 @@ mod tests {
             })
         }
 
-        let diff = Targets::new(vec![target(
-            "a",
-            &[],
-            &PackageValues::new(&["val"], serde_json::Value::Null),
-        )]);
+        let diff = Targets::new(vec![target("a", &[], &PackageValues::new(&["val"]))]);
 
         let impact = GraphImpact {
             recursive: Vec::new(),
@@ -857,21 +853,9 @@ mod tests {
         }
 
         let diff = Targets::new(vec![
-            target(
-                "a",
-                &[],
-                &PackageValues::new(&["val"], serde_json::Value::Null),
-            ),
-            target(
-                "b",
-                &["a"],
-                &PackageValues::new(&["non_recursive_change"], serde_json::Value::Null),
-            ),
-            target(
-                "c",
-                &["b"],
-                &PackageValues::new(&["val"], serde_json::Value::Null),
-            ),
+            target("a", &[], &PackageValues::new(&["val"])),
+            target("b", &["a"], &PackageValues::new(&["non_recursive_change"])),
+            target("c", &["b"], &PackageValues::new(&["val"])),
         ]);
 
         let impact = GraphImpact {
@@ -1306,7 +1290,7 @@ mod tests {
             "prelude//rules.bzl:genrule",
         ))]);
         let after = Targets::new(vec![TargetsEntry::Target(BuckTarget {
-            package_values: PackageValues::new(&["foo"], serde_json::Value::Null),
+            package_values: PackageValues::new(&["foo"]),
             ..BuckTarget::testing("foo", "code//bar", "prelude//rules.bzl:genrule")
         })]);
         // The hash of the target doesn't change, but the package.value does
