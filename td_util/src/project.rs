@@ -38,6 +38,7 @@ pub enum TdProject {
     Wacommon,
     Wameta,
     Waserver,
+    Wavoip,
     Www,
     Xplat,
 }
