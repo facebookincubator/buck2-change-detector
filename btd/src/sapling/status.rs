@@ -42,6 +42,7 @@ impl Status<ProjectRelativePath> {
             Some('A') => Ok(Self::Added(path)),
             Some('M') => Ok(Self::Modified(path)),
             Some('R') => Ok(Self::Removed(path)),
+            Some('D') => Ok(Self::Removed(path)), // used by jujutsu
             _ => Err(StatusParseError::UnknownPrefix(value.to_owned()).into()),
         }
     }
