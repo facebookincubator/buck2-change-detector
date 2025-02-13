@@ -138,6 +138,7 @@ pub enum ContinuousRunMode {
     TranslatorContinuousForMultisect,
     FlakyTestsDev,
     Supplemental,
+    CodeCoverage,
 }
 
 impl ContinuousRunMode {
