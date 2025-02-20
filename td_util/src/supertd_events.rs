@@ -42,6 +42,7 @@ pub enum Event {
     GENERATED_TARGETS_COUNT,
     QE_CHECK,
     RUNWAY_RELATES_CALL_FAILURE,
+    TARGETS_WITHOUT_BUDGET_ENTITY,
 }
 
 #[derive(Debug)]
