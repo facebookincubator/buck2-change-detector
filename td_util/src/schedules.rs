@@ -128,6 +128,7 @@ pub enum ContinuousRunMode {
     OptHourly,
     OptEarlyAdoptor,
     OptAdhoc,
+    Release,
     RunwayShadow,
     RunwayCoverage,
     RunwayOnlyRunDisabledTests,
