@@ -17,6 +17,7 @@ use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
+use td_util::supertd_events::tracing::info;
 
 /// Generic binary for the pieces of the new target-determinator framework.
 #[allow(clippy::large_enum_variant)] // Only one instance, so not a big deal
@@ -45,6 +46,8 @@ enum Args {
 #[fbinit::main]
 pub async fn main(fb: FacebookInit) -> ExitCode {
     let _guard = td_util::init(fb);
+
+    info!("Supertd started");
 
     let mut command = Args::command();
     if std::env::var_os("SUPERTD_IGNORE_EXTRA_ARGUMENTS") == Some("1".into()) {
