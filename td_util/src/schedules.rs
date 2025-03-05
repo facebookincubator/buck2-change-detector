@@ -50,7 +50,6 @@ pub enum ScheduleType {
     Master,
     Relbranch,
     Coverage,
-    Adhoc,
 }
 
 impl ScheduleType {
@@ -96,7 +95,6 @@ impl ScheduleType {
                     ScheduleType::ContinuousStable | ScheduleType::Continuous | ScheduleType::Diff
                 )
             }
-            ScheduleType::Adhoc => matches!(other, ScheduleType::Continuous),
             _ => *other == self,
         }
     }
