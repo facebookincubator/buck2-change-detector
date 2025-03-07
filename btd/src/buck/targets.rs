@@ -34,7 +34,7 @@ pub struct Targets(Vec<TargetsEntry>);
 
 impl Targets {
     pub fn from_file(file: &Path) -> anyhow::Result<Targets> {
-        Ok(Self(json::read_file_lines_unordered(file)?))
+        Ok(Self(json::read_file_lines_parallel(file)?))
     }
 
     pub fn new(entries: Vec<TargetsEntry>) -> Self {

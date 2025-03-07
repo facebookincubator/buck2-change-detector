@@ -45,7 +45,7 @@ fn open_file(filename: &Path) -> anyhow::Result<impl BufRead + Send> {
 
 /// Read a file that consists of many JSON blobs, one per line.
 /// The order of the entries does not matter.
-pub fn read_file_lines_unordered<T: for<'a> Deserialize<'a> + Send>(
+pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
     fn f<T: for<'a> Deserialize<'a> + Send>(filename: &Path) -> anyhow::Result<Vec<T>> {
@@ -54,12 +54,15 @@ pub fn read_file_lines_unordered<T: for<'a> Deserialize<'a> + Send>(
         let file = open_file(filename)?;
 
         rayon::scope(|s| {
-            for x in file.lines() {
-                s.spawn(|_| match parse_line(x) {
+            let error = &error;
+            let result = &result;
+
+            for (i, x) in file.lines().enumerate() {
+                s.spawn(move |_| match parse_line(x) {
                     Err(e) => {
                         error.lock().unwrap().get_or_insert(e);
                     }
-                    Ok(v) => result.lock().unwrap().push(v),
+                    Ok(v) => result.lock().unwrap().push((i, v)),
                 });
             }
         });
@@ -67,8 +70,12 @@ pub fn read_file_lines_unordered<T: for<'a> Deserialize<'a> + Send>(
         if let Some(err) = error.into_inner().unwrap() {
             return Err(err);
         }
-        Ok(result.into_inner().unwrap())
+
+        let mut result = result.into_inner().unwrap();
+        result.sort_by_key(|(i, _)| *i);
+        Ok(result.into_iter().map(|(_, v)| v).collect())
     }
+
     f(filename).with_context(|| format!("When reading JSON-lines file `{}`", filename.display()))
 }
 
@@ -137,7 +144,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use crate::json::read_file_lines;
-    use crate::json::read_file_lines_unordered;
+    use crate::json::read_file_lines_parallel;
     use crate::json::write_json_lines;
     use crate::json::write_json_per_line;
 
@@ -147,7 +154,7 @@ mod tests {
         let data: Vec<i32> = (0..100).collect();
         write_json_lines(file.as_file_mut(), &data).unwrap();
         assert_eq!(read_file_lines::<i32>(file.path()).unwrap(), data);
-        let mut unordered = read_file_lines_unordered::<i32>(file.path()).unwrap();
+        let mut unordered = read_file_lines_parallel::<i32>(file.path()).unwrap();
         unordered.sort();
         assert_eq!(unordered, data);
     }
@@ -183,7 +190,7 @@ mod tests {
         file.write_all(b"Not an i32\n").unwrap();
         write_json_lines(file.as_file_mut(), &data).unwrap();
 
-        assert!(read_file_lines_unordered::<i32>(file.path()).is_err());
+        assert!(read_file_lines_parallel::<i32>(file.path()).is_err());
         assert!(read_file_lines::<i32>(file.path()).is_err());
     }
 }
