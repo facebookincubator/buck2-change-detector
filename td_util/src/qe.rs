@@ -64,7 +64,8 @@ pub async fn evaluate_qe(
         "value": value_for_logging,
         "expect": expect,
         "result": ret,
-        "step": step
+        "step": step,
+        "in_experiment": qe.in_experiment(universe),
     }));
     ret
 }
