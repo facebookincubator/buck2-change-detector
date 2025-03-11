@@ -9,11 +9,15 @@
 
 //! Parsing directives from skycastle
 
+use std::collections::HashSet;
+
 use crate::project::TdProject;
 
 pub const BUILD_ALL_DIRECTIVE: &str = "#buildall";
 pub const BUILD_ALL_FBANDROID_DIRECTIVE: &str = "#buildall-fbandroid";
 pub const BUILD_ALL_FBOBJC_DIRECTIVE: &str = "#buildall-fbobjc";
+const BUILD_RULE_TYPE_DIRECTIVE_PREFIX: &str = "#build_rule_type[";
+const RUNWAY_TEST_TAG_DIRECTIVE_PREFIX: &str = "#runway_test_tag[";
 
 pub fn get_app_specific_build_directives(directives: Option<&[String]>) -> Option<Vec<String>> {
     Some(
@@ -45,10 +49,43 @@ pub fn app_specific_build_directives_matches_name(
 }
 
 pub fn should_build_all(directives: Option<&[String]>) -> bool {
+    let Some(directives) = directives else {
+        return false;
+    };
+    directives.iter().any(|x| x == BUILD_ALL_DIRECTIVE)
+}
+
+pub fn should_skip_relates(directives: Option<&[String]>, target: &str) -> bool {
+    let Some(directives) = directives else {
+        return false;
+    };
     directives
-        .into_iter()
-        .flatten()
-        .any(|build_directive| build_directive == BUILD_ALL_DIRECTIVE)
+        .iter()
+        .any(|x| x == "#skip_relates_all" || *x == format!("#skip_relates[{}]", target))
+}
+
+pub fn extract_runway_test_tag(directives: Option<&[String]>) -> HashSet<String> {
+    get_directive_hash_set_values(directives, RUNWAY_TEST_TAG_DIRECTIVE_PREFIX)
+}
+
+pub fn get_build_rule_types(directives: Option<&[String]>) -> HashSet<String> {
+    get_directive_hash_set_values(directives, BUILD_RULE_TYPE_DIRECTIVE_PREFIX)
+}
+
+fn get_directive_hash_set_values(
+    directives: Option<&[String]>,
+    directive_prefix: &str,
+) -> HashSet<String> {
+    let Some(directives) = directives else {
+        return HashSet::new();
+    };
+    directives
+        .iter()
+        .filter_map(|directive| directive.strip_prefix(directive_prefix)?.strip_suffix(']'))
+        .filter(|x| !x.is_empty())
+        .flat_map(|rule_types| rule_types.split(','))
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 pub fn should_build_all_fbobjc(directives: Option<&[String]>, project: TdProject) -> bool {
@@ -70,6 +107,66 @@ pub fn should_build_all_fbandroid(directives: Option<&[String]>, project: TdProj
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_get_build_rule_types() {
+        assert_eq!(
+            HashSet::from(["cxx_library".to_owned(), "rust_library".to_owned()]),
+            get_build_rule_types(Some(&[
+                "#build_rule_type[cxx_library,rust_library]".to_owned(),
+                "#build_rule_type[cxx_library]".to_owned()
+            ]))
+        );
+
+        assert_eq!(
+            HashSet::new(),
+            get_build_rule_types(Some(&["#buildall".to_owned()])),
+        );
+
+        assert_eq!(
+            HashSet::new(),
+            get_build_rule_types(Some(&["#build_rule_type[]".to_owned()])),
+        );
+    }
+
+    #[test]
+    fn test_extract_runway_test_tag() {
+        assert_eq!(
+            HashSet::new(),
+            extract_runway_test_tag(Some(&["#other_directive".to_owned()]))
+        );
+
+        assert_eq!(
+            HashSet::from(["push-blocking".to_owned(), "tenant".to_owned()]),
+            extract_runway_test_tag(Some(&[
+                "#runway_test_tag[push-blocking,tenant,push-blocking]".to_owned(),
+                "#other_directive[]".to_owned()
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_malformed_runway_test_tag() {
+        assert_eq!(
+            HashSet::new(),
+            extract_runway_test_tag(Some(&["#runway_test_tag[]".to_owned(),]))
+        );
+
+        assert_eq!(
+            HashSet::new(),
+            extract_runway_test_tag(Some(&["#runway_test_tag[".to_owned()]))
+        );
+
+        assert_eq!(
+            HashSet::from(["two:tag".to_owned()]),
+            extract_runway_test_tag(Some(&["#runway_test_tag[two:tag]".to_owned()]))
+        );
+
+        assert_eq!(
+            HashSet::from(["tag".to_owned(), "2:tag".to_owned()]),
+            extract_runway_test_tag(Some(&["#runway_test_tag[tag,2:tag]".to_owned()]))
+        );
+    }
 
     #[test]
     fn test_get_app_specific_build_directives() {
