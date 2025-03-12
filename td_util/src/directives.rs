@@ -9,6 +9,7 @@
 
 //! Parsing directives from skycastle
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::project::TdProject;
@@ -18,6 +19,7 @@ pub const BUILD_ALL_FBANDROID_DIRECTIVE: &str = "#buildall-fbandroid";
 pub const BUILD_ALL_FBOBJC_DIRECTIVE: &str = "#buildall-fbobjc";
 const BUILD_RULE_TYPE_DIRECTIVE_PREFIX: &str = "#build_rule_type[";
 const RUNWAY_TEST_TAG_DIRECTIVE_PREFIX: &str = "#runway_test_tag[";
+const RUNWAY_WORKER_OVERRIDE_DIRECTIVE_PREFIX: &str = "#runway_worker_override[";
 
 pub fn get_app_specific_build_directives(directives: Option<&[String]>) -> Option<Vec<String>> {
     Some(
@@ -72,6 +74,16 @@ pub fn get_build_rule_types(directives: Option<&[String]>) -> HashSet<String> {
     get_directive_hash_set_values(directives, BUILD_RULE_TYPE_DIRECTIVE_PREFIX)
 }
 
+pub fn get_runway_worker_overrides(directives: Option<&[String]>) -> HashMap<String, String> {
+    get_directive_hash_set_values(directives, RUNWAY_WORKER_OVERRIDE_DIRECTIVE_PREFIX)
+        .into_iter()
+        .filter_map(|x| {
+            let (target, worker_count) = x.split_once('|')?;
+            Some((target.to_owned(), worker_count.to_owned()))
+        })
+        .collect()
+}
+
 fn get_directive_hash_set_values(
     directives: Option<&[String]>,
     directive_prefix: &str,
@@ -84,6 +96,7 @@ fn get_directive_hash_set_values(
         .filter_map(|directive| directive.strip_prefix(directive_prefix)?.strip_suffix(']'))
         .filter(|x| !x.is_empty())
         .flat_map(|rule_types| rule_types.split(','))
+        .map(|rule_type| rule_type.trim())
         .map(ToOwned::to_owned)
         .collect()
 }
@@ -284,5 +297,35 @@ mod tests {
             false,
             TdProject::Fbandroid
         ));
+    }
+
+    #[test]
+    fn test_runway_worker_override() {
+        assert_eq!(
+            get_runway_worker_overrides(Some(&[
+                "#runway_worker_override[foo//ex:target|2, bar|3]".to_owned()
+            ])),
+            HashMap::from([
+                ("foo//ex:target".to_owned(), "2".to_owned()),
+                ("bar".to_owned(), "3".to_owned())
+            ]),
+        );
+        assert_eq!(
+            get_runway_worker_overrides(Some(&["#runway_worker_override[foo|2,bar|3]".to_owned()])),
+            HashMap::from([
+                ("foo".to_owned(), "2".to_owned()),
+                ("bar".to_owned(), "3".to_owned())
+            ]),
+        );
+        assert_eq!(
+            get_runway_worker_overrides(Some(&[
+                "#other_directive[foo|12, bar|7]".to_owned(),
+                "#runway_worker_override[foo|2,bar|3]".to_owned()
+            ])),
+            HashMap::from([
+                ("foo".to_owned(), "2".to_owned()),
+                ("bar".to_owned(), "3".to_owned())
+            ]),
+        );
     }
 }
