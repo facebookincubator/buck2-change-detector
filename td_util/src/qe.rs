@@ -21,7 +21,12 @@ pub enum QEParamValue {
 
 /// Evaluate the given phabricator version number against the QE universe.
 ///
-/// The API internally converts to the right unit ID based on the universe.
+/// We support version-level, diff-level, and author-level experiments. The interngraph endpoint
+/// converts the version number to the correct unit ID based on the universes' configuration.
+/// You *should not* pass in a FBID here!
+/// References:
+/// Interngraph call: https://fburl.com/code/0h1llwen
+/// Conversion logic: https://fburl.com/code/nn1jsc55
 #[cfg(all(fbcode_build, target_os = "linux"))]
 pub async fn evaluate_qe(
     phabricator_version_number: u64,
