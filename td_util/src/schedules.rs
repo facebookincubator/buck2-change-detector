@@ -50,6 +50,7 @@ pub enum ScheduleType {
     Master,
     Relbranch,
     Coverage,
+    CherryPick,
 }
 
 impl ScheduleType {
