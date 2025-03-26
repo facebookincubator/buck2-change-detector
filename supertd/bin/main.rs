@@ -17,6 +17,7 @@ use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
+use td_util::logging::init_logger_start_time;
 use td_util::supertd_events::tracing::info;
 
 /// Generic binary for the pieces of the new target-determinator framework.
@@ -46,6 +47,7 @@ enum Args {
 #[fbinit::main]
 pub async fn main(fb: FacebookInit) -> ExitCode {
     let _guard = td_util::init(fb);
+    init_logger_start_time();
 
     info!("Supertd started");
 

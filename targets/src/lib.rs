@@ -19,6 +19,7 @@ use std::process::Command;
 use anyhow::anyhow;
 use clap::Parser;
 use td_util::command::display_command;
+use td_util::logging::elapsed;
 use td_util::workflow_error::WorkflowError;
 
 /// Run `buck2 targets` with all the arguments required for BTD/Citadel.
@@ -86,7 +87,6 @@ pub fn run(
     isolation_dir: Option<String>,
     arguments: &[String],
 ) -> Result<(), WorkflowError> {
-    let t = std::time::Instant::now();
     let mut command = Command::new(buck);
 
     // This is an argument for buck.
@@ -110,7 +110,7 @@ pub fn run(
     if status.success() {
         td_util::scuba!(
             event: TARGETS_SUCCESS,
-            duration: t.elapsed(),
+            duration: elapsed(),
         );
         Ok(())
     } else {

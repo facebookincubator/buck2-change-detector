@@ -33,7 +33,6 @@ use std::io::stdout;
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use anyhow::anyhow;
 use anyhow::Context as _;
@@ -41,12 +40,13 @@ use buck::types::Package;
 use clap::Parser;
 use serde::Serialize;
 use td_util::json;
+use td_util::logging::elapsed;
+use td_util::logging::step;
 use td_util::prelude::*;
 use td_util::workflow_error::WorkflowError;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tracing::error;
-use tracing::info;
 
 use crate::buck::cells::CellInfo;
 use crate::buck::run::Buck2;
@@ -173,9 +173,6 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         .flat_map(|x| ["--flagfile".to_owned(), x.to_owned()])
         .chain(args.buck_arg)
         .collect::<Vec<_>>();
-
-    let t = Instant::now();
-    let step = |name| info!("Starting {} at {:.3}s", name, t.elapsed().as_secs_f64());
 
     step("reading cells");
     let mut cells = match &args.cells {
@@ -308,7 +305,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     }
     td_util::scuba!(
         event: BTD_SUCCESS,
-        duration: t.elapsed(),
+        duration: elapsed(),
         data: json!({
             "changeset_samples": changeset_samples,
             "immediate_changes": immediate_changes,

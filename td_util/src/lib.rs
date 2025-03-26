@@ -16,6 +16,7 @@ pub mod executor;
 pub mod file_writer;
 pub mod json;
 pub mod knobs;
+pub mod logging;
 pub mod no_hash;
 pub mod prelude;
 pub mod project;
