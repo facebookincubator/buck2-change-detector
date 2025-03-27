@@ -141,6 +141,7 @@ pub enum ContinuousRunMode {
     FlakyTestsDev,
     Supplemental,
     CodeCoverage,
+    DevHourly,
 }
 
 impl ContinuousRunMode {
