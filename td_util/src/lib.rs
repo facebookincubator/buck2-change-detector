@@ -20,7 +20,6 @@ pub mod logging;
 pub mod no_hash;
 pub mod prelude;
 pub mod project;
-pub mod qe;
 pub mod schedules;
 pub mod string;
 pub mod supertd_events;
