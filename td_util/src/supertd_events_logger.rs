@@ -191,6 +191,15 @@ mod linux {
             log_entry.set_build_revision(BuildInfo::get_revision().to_owned());
             log_entry.set_build_rule(BuildInfo::get_rule().to_owned());
         }
+
+        #[cfg(target_os = "linux")]
+        log_entry.set_operating_system("linux".to_owned());
+
+        #[cfg(target_os = "macos")]
+        log_entry.set_operating_system("macos".to_owned());
+
+        #[cfg(target_os = "windows")]
+        log_entry.set_operating_system("windows".to_owned());
     }
 
     fn apply_verifiable(var: &str, variables_path: &Path, f: impl FnOnce(String)) {
