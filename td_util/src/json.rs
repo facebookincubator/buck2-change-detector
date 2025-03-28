@@ -53,6 +53,8 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
         let error = Mutex::new(None);
         let file = open_file(filename)?;
 
+        let mut len = 0;
+
         rayon::scope(|s| {
             let error = &error;
             let result = &result;
@@ -62,8 +64,16 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
                     Err(e) => {
                         error.lock().unwrap().get_or_insert(e);
                     }
-                    Ok(v) => result.lock().unwrap().push((i, v)),
+                    Ok(v) => {
+                        // We only work with the spare capacity here.
+                        let mut guard = result.lock().unwrap();
+                        let buff = &mut *guard;
+                        buff.reserve(i + 1);
+                        buff.spare_capacity_mut()[i].write(v);
+                    }
                 });
+
+                len += 1;
             }
         });
 
@@ -72,8 +82,18 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
         }
 
         let mut result = result.into_inner().unwrap();
-        result.sort_by_key(|(i, _)| *i);
-        Ok(result.into_iter().map(|(_, v)| v).collect())
+
+        // SAFETY: the question to answer here is: are the first `len` elements
+        // in the `result` Vec initalized?
+        // Here's why it is: rayon::scope will propagate panics from the
+        // threads it starts, so if we got here, that means we didn't panic. If
+        // we didn't panic, then that means all the spawns completed. If all the
+        // spanws completed, then that means they either all pushed things to
+        // our array (in which case it has the right size), or at least one of
+        // them pushed an error (in which case we returned a few lines earlier).
+        unsafe { result.set_len(len) };
+
+        Ok(result)
     }
 
     f(filename).with_context(|| format!("When reading JSON-lines file `{}`", filename.display()))
