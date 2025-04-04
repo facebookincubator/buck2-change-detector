@@ -9,7 +9,6 @@
 
 pub mod cli;
 pub mod command;
-pub mod directives;
 pub mod executor;
 pub mod file_writer;
 pub mod json;
@@ -24,7 +23,6 @@ pub mod supertd_events;
 // @oss-disable: pub mod supertd_events_logger;
 pub mod tracing;
 pub mod workflow_error;
-pub mod xplat;
 
 /// Initialize `tracing` and `supertd_events` Scuba client.
 ///
