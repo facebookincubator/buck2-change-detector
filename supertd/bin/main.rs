@@ -90,7 +90,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Scheduler(args) => scheduler::main(fb, args).await,
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::Verse(args) => verse_citadel_adaptor::main(args).await,
+        Args::Verse(args) => verse_citadel_adaptor::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Orchestrator(args) => orchestrator::main(fb, args).await,
     };
