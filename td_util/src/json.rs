@@ -12,6 +12,7 @@
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Write;
 use std::io::{self};
 use std::path::Path;
@@ -83,14 +84,15 @@ pub fn read_file_lines<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::R
 
 /// Write out information as a list of JSON lines.
 pub fn write_json_lines<W: Write, T: Serialize>(
-    mut out: W,
+    out: W,
     xs: impl IntoIterator<Item = T>,
 ) -> anyhow::Result<()> {
+    let mut writer = BufWriter::new(out);
     for x in xs.into_iter() {
-        serde_json::to_writer(&mut out, &x)?;
-        out.write_all(b"\n")?;
+        serde_json::to_writer(&mut writer, &x)?;
+        writer.write_all(b"\n")?;
     }
-    out.flush()?;
+    writer.flush()?;
     Ok(())
 }
 
