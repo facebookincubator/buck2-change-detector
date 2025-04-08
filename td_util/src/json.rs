@@ -10,14 +10,15 @@
 //! Utilities for working with JSON and JSON-lines files.
 
 use std::fs::File;
-use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
+use std::io::{self};
 use std::path::Path;
-use std::sync::Mutex;
 
-use anyhow::Context as _;
+use anyhow::Context;
+use itertools::Itertools;
+use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -48,55 +49,22 @@ fn open_file(filename: &Path) -> anyhow::Result<impl BufRead + Send> {
 pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
-    fn f<T: for<'a> Deserialize<'a> + Send>(filename: &Path) -> anyhow::Result<Vec<T>> {
-        let result = Mutex::new(Vec::new());
-        let error = Mutex::new(None);
-        let file = open_file(filename)?;
+    let file = open_file(filename)?;
 
-        let mut len = 0;
+    let chunk_size = 5000;
+    let mut results = Vec::new();
 
-        rayon::scope(|s| {
-            let error = &error;
-            let result = &result;
+    for lines_chunk in &file.lines().chunks(chunk_size) {
+        let lines_vec: Vec<_> = lines_chunk.collect();
+        let chunk_results = lines_vec
+            .into_par_iter()
+            .map(parse_line)
+            .collect::<Result<Vec<_>, _>>()?;
 
-            for (i, x) in file.lines().enumerate() {
-                s.spawn(move |_| match parse_line(x) {
-                    Err(e) => {
-                        error.lock().unwrap().get_or_insert(e);
-                    }
-                    Ok(v) => {
-                        // We only work with the spare capacity here.
-                        let mut guard = result.lock().unwrap();
-                        let buff = &mut *guard;
-                        buff.reserve(i + 1);
-                        buff.spare_capacity_mut()[i].write(v);
-                    }
-                });
-
-                len += 1;
-            }
-        });
-
-        if let Some(err) = error.into_inner().unwrap() {
-            return Err(err);
-        }
-
-        let mut result = result.into_inner().unwrap();
-
-        // SAFETY: the question to answer here is: are the first `len` elements
-        // in the `result` Vec initalized?
-        // Here's why it is: rayon::scope will propagate panics from the
-        // threads it starts, so if we got here, that means we didn't panic. If
-        // we didn't panic, then that means all the spawns completed. If all the
-        // spanws completed, then that means they either all pushed things to
-        // our array (in which case it has the right size), or at least one of
-        // them pushed an error (in which case we returned a few lines earlier).
-        unsafe { result.set_len(len) };
-
-        Ok(result)
+        results.extend(chunk_results);
     }
 
-    f(filename).with_context(|| format!("When reading JSON-lines file `{}`", filename.display()))
+    Ok(results)
 }
 
 /// Read a file that consists of many JSON blobs, one per line.
