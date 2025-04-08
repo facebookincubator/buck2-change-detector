@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::mem;
 use std::sync::Arc;
 
+use tracing::info;
 use tracing::warn;
 
 use crate::buck::config::is_buckconfig_change;
@@ -211,6 +212,8 @@ pub enum RootImpactKind {
     ManualForRerun,
     /// Universal file is touched
     UniversalFile,
+    /// We want to select all targets.
+    SelectAll,
 }
 
 pub fn immediate_target_changes<'a>(
@@ -236,11 +239,11 @@ pub fn immediate_target_changes<'a>(
 
     // If there is no base graph, then everything is new.
     if base.len_targets_upperbound() == 0 {
-        let recursive = diff
+        let all_targets = diff
             .targets()
-            .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::New)))
+            .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::SelectAll)))
             .collect();
-        return GraphImpact::from_recursive(recursive);
+        return GraphImpact::from_non_recursive(all_targets);
     }
 
     // Find those targets which are different
@@ -371,6 +374,7 @@ pub fn recursive_target_changes<'a>(
 ) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     // Just an optimisation, but saves building the reverse mapping
     if impact.recursive.is_empty() && impact.removed.is_empty() {
+        info!("No recursive target changes");
         let mut res = if impact.non_recursive.is_empty() {
             Vec::new()
         } else {
