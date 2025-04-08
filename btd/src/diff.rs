@@ -11,6 +11,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem;
+use std::sync::Arc;
 
 use tracing::warn;
 
@@ -147,10 +148,10 @@ impl<'a> GraphImpact<'a> {
 pub struct ImpactTraceData {
     /// The target name of the direct dependency which
     /// caused this target to be impacted.
-    pub affected_dep: String, // parent_target_name
+    pub affected_dep: Arc<String>, // parent_target_name
     /// The target name of the dependency which actually changed,
     /// and the type of change that we detected in it.
-    pub root_cause: (String, RootImpactKind), // root_target_name, reason
+    pub root_cause: (Arc<String>, RootImpactKind), // root_target_name, reason
     /// Whether the node is a root in the dependency graph.
     pub is_terminal: bool,
 }
@@ -158,9 +159,13 @@ pub struct ImpactTraceData {
 impl ImpactTraceData {
     pub fn new(target: &BuckTarget, kind: RootImpactKind) -> Self {
         ImpactTraceData {
-            affected_dep: String::new(),
+            affected_dep: Arc::new(String::new()),
             root_cause: (
-                format!("{}:{}", target.package.as_str(), target.name.as_str()),
+                Arc::new(format!(
+                    "{}:{}",
+                    target.package.as_str(),
+                    target.name.as_str()
+                )),
                 kind,
             ),
             is_terminal: false,
@@ -170,8 +175,8 @@ impl ImpactTraceData {
     #[cfg(test)]
     pub fn testing() -> Self {
         ImpactTraceData {
-            affected_dep: "cell//foo:bar".to_owned(),
-            root_cause: ("cell//baz:qux".to_owned(), RootImpactKind::Inputs),
+            affected_dep: Arc::new("cell//foo:bar".to_owned()),
+            root_cause: (Arc::new("cell//baz:qux".to_owned()), RootImpactKind::Inputs),
             is_terminal: false,
         }
     }
@@ -474,7 +479,7 @@ pub fn recursive_target_changes<'a>(
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if follow_rule_type(&lbl.rule_type) {
                 let updated_reason = ImpactTraceData {
-                    affected_dep: lbl.label().to_string(),
+                    affected_dep: Arc::new(lbl.label().to_string()),
                     root_cause: reason.root_cause.clone(),
                     is_terminal: false,
                 };

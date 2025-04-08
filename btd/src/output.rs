@@ -112,7 +112,7 @@ mod tests {
             3,
             false,
             ImpactTraceData {
-                root_cause: ("fbcode//me:test".to_owned(), RootImpactKind::Inputs),
+                root_cause: ("fbcode//me:test".to_owned().into(), RootImpactKind::Inputs),
                 ..ImpactTraceData::testing()
             },
         );
