@@ -158,7 +158,7 @@ pub fn check_dangling(
             if !exists_after.contains_key(&key.to_ref())
                 && base_targets_map
                     .get(&target.label_key())
-                    .map_or(true, |t| !t.deps.iter().any(|d| d == dep))
+                    .is_none_or(|t| !t.deps.iter().any(|d| d == dep))
                 && in_universe(universe, dep)
             {
                 errors.push(ValidationError::BrokenEdge {
