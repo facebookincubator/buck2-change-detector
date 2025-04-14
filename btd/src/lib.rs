@@ -36,6 +36,8 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use anyhow::Context as _;
+#[cfg(fbcode_build)]
+use btd_run_stats::BTDRunStats;
 use buck::types::Package;
 use clap::Parser;
 use serde::Serialize;
@@ -154,6 +156,10 @@ pub struct Args {
     /// If a target depends on a target with the label `uses_sudo`, should we propagate the label.
     #[arg(long)]
     propagate_uses_sudo: bool,
+
+    /// Write stats related to the BTD run to the specified file
+    #[arg(long)]
+    write_run_stats_to_file: Option<PathBuf>,
 }
 
 /// Rather than waiting to deallocate all our big JSON objects, we just forget them with `ManuallyDrop`.
@@ -303,6 +309,12 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         let root_impact_kind = reason.root_cause.1;
         *reason_counts.entry(root_impact_kind).or_default() += 1;
     }
+    let input_targets = base.targets().count();
+    let diff_targets = diff.targets().count();
+    if let Some(stats_file) = args.write_run_stats_to_file {
+        write_run_stats_to_file(stats_file, input_targets, diff_targets)?;
+    }
+
     td_util::scuba!(
         event: BTD_SUCCESS,
         duration: elapsed(),
@@ -312,9 +324,9 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
             "immediate_change_samples": immediate_change_samples,
             "total_changes": total_changes,
             "reason_counts": reason_counts,
-            "input_targets": base.targets().count(),
+            "input_targets": input_targets,
             "input_parse_errors": base.errors().count(),
-            "diff_targets": diff.targets().count(),
+            "diff_targets": diff_targets,
             "diff_parse_errors": diff.errors().count(),
             "terminal_node_changes": recursive.iter().flatten().filter(|(_, r)| r.is_terminal).count(),
         })
@@ -509,6 +521,26 @@ fn write_errors_to_file(
                 error!("{}", e);
             }
         }
+    }
+    Ok(())
+}
+
+fn write_run_stats_to_file(
+    graph_size_changes_file: PathBuf,
+    input_targets: usize,
+    diff_targets: usize,
+) -> anyhow::Result<()> {
+    #[cfg(fbcode_build)]
+    {
+        let out = File::create(graph_size_changes_file)?;
+
+        serde_json::to_writer_pretty(
+            out,
+            &BTDRunStats {
+                base_graph_size: input_targets as i64,
+                target_graph_size: diff_targets as i64,
+            },
+        )?
     }
     Ok(())
 }
