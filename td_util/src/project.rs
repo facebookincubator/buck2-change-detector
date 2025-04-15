@@ -36,6 +36,7 @@ pub enum TdProject {
     RL,
     Waandroid,
     Wacommon,
+    Waios,
     Wameta,
     Waserver,
     Wavoip,
