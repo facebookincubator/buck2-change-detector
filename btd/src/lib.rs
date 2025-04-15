@@ -34,8 +34,8 @@ use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-use anyhow::anyhow;
 use anyhow::Context as _;
+use anyhow::anyhow;
 #[cfg(fbcode_build)]
 use btd_run_stats::BTDRunStats;
 use buck::types::Package;

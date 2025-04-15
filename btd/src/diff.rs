@@ -7,9 +7,9 @@
  * of this source tree.
  */
 
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::Entry;
 use std::mem;
 use std::sync::Arc;
 

@@ -16,10 +16,10 @@ use std::hash::Hasher;
 
 use equivalent::Equivalent;
 use parse_display::Display;
-use serde::de::Visitor;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
+use serde::de::Visitor;
 use static_interner::Intern;
 use static_interner::Interner;
 

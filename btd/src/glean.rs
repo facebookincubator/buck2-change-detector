@@ -16,9 +16,9 @@ use crate::buck::targets::Targets;
 use crate::buck::types::RuleType;
 use crate::buck::types::TargetLabelKeyRef;
 use crate::changes::Changes;
+use crate::diff::ImpactTraceData;
 use crate::diff::immediate_target_changes;
 use crate::diff::recursive_target_changes;
-use crate::diff::ImpactTraceData;
 
 fn cxx_rule_type(typ: &RuleType) -> bool {
     let short = typ.short();
