@@ -13,12 +13,12 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
+use std::io::Read;
 use std::io::Write;
 use std::io::{self};
 use std::path::Path;
 
 use anyhow::Context;
-use itertools::Itertools;
 use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -36,12 +36,12 @@ fn is_zstd(filename: &Path) -> bool {
     }
 }
 
-fn open_file(filename: &Path) -> anyhow::Result<impl BufRead + Send> {
+fn open_file(filename: &Path) -> anyhow::Result<Box<dyn Read + Send>> {
     let file = File::open(filename)?;
     if is_zstd(filename) {
-        Ok(Box::new(BufReader::new(zstd::Decoder::new(file)?)) as Box<dyn BufRead + Send>)
+        Ok(Box::new(zstd::Decoder::new(file)?))
     } else {
-        Ok(Box::new(BufReader::new(file)))
+        Ok(Box::new(file))
     }
 }
 
@@ -51,19 +51,14 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
     let file = open_file(filename)?;
+    // 10MB buffer
+    let rdr = BufReader::with_capacity(10 * 1024 * 1024, file);
 
-    let chunk_size = 5000;
-    let mut results = Vec::new();
-
-    for lines_chunk in &file.lines().chunks(chunk_size) {
-        let lines_vec: Vec<_> = lines_chunk.collect();
-        let chunk_results = lines_vec
-            .into_par_iter()
-            .map(parse_line)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        results.extend(chunk_results);
-    }
+    let results = rdr
+        .lines()
+        .par_bridge()
+        .map(parse_line)
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(results)
 }
@@ -72,8 +67,10 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
 pub fn read_file_lines<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
     fn f<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
         let file = open_file(filename)?;
+        let rdr = BufReader::new(file);
+
         let mut res = Vec::new();
-        for line in file.lines() {
+        for line in rdr.lines() {
             res.push(parse_line(line)?)
         }
         Ok(res)
