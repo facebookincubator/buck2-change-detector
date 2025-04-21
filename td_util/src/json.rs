@@ -24,6 +24,9 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
+/// Buffer size for reading files (10MB)
+const BUFFER_SIZE: usize = 10 * 1024 * 1024;
+
 // Function definition mostly to get the error types to line up
 fn parse_line<T: for<'a> Deserialize<'a>>(x: Result<String, io::Error>) -> anyhow::Result<T> {
     let x = x?;
@@ -53,7 +56,7 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
 ) -> anyhow::Result<Vec<T>> {
     let file = open_file(filename)?;
     // 10MB buffer
-    let rdr = BufReader::with_capacity(10 * 1024 * 1024, file);
+    let rdr = BufReader::with_capacity(BUFFER_SIZE, file);
     let chunk_size = 5000;
     let mut results = Vec::new();
 
@@ -73,8 +76,7 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
 pub fn read_file_lines<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
     fn f<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
         let file = open_file(filename)?;
-        let rdr = BufReader::new(file);
-
+        let rdr = BufReader::with_capacity(BUFFER_SIZE, file);
         let mut res = Vec::new();
         for line in rdr.lines() {
             res.push(parse_line(line)?)
