@@ -19,6 +19,7 @@ use std::io::{self};
 use std::path::Path;
 
 use anyhow::Context;
+use itertools::Itertools;
 use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -53,12 +54,17 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
     let file = open_file(filename)?;
     // 10MB buffer
     let rdr = BufReader::with_capacity(10 * 1024 * 1024, file);
+    let chunk_size = 5000;
+    let mut results = Vec::new();
 
-    let results = rdr
-        .lines()
-        .par_bridge()
-        .map(parse_line)
-        .collect::<Result<Vec<_>, _>>()?;
+    for lines_chunk in &rdr.lines().chunks(chunk_size) {
+        let lines_vec: Vec<_> = lines_chunk.collect();
+        let chunk_results = lines_vec
+            .into_par_iter()
+            .map(parse_line)
+            .collect::<Result<Vec<_>, _>>()?;
+        results.extend(chunk_results);
+    }
 
     Ok(results)
 }
