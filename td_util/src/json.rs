@@ -50,8 +50,8 @@ fn open_file(filename: &Path) -> anyhow::Result<Box<dyn Read + Send>> {
 }
 
 /// Read a file that consists of many JSON blobs, one per line.
-/// The order of the entries does not matter.
-pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
+/// Preserves the order of items from the input file.
+pub fn read_file_lines_parallel_ordered<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
     let file = open_file(filename)?;
@@ -68,6 +68,24 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
             .collect::<Result<Vec<_>, _>>()?;
         results.extend(chunk_results);
     }
+
+    Ok(results)
+}
+
+/// Read a file that consists of many JSON blobs, one per line.
+/// The order of the entries is not guaranteed.
+/// ~25% faster than ordered version above.
+pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
+    filename: &Path,
+) -> anyhow::Result<Vec<T>> {
+    let file = open_file(filename)?;
+    // 10MB buffer
+    let rdr = BufReader::with_capacity(BUFFER_SIZE, file);
+    let results = rdr
+        .lines()
+        .par_bridge()
+        .map(parse_line)
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(results)
 }
@@ -140,6 +158,7 @@ mod tests {
 
     use crate::json::read_file_lines;
     use crate::json::read_file_lines_parallel;
+    use crate::json::read_file_lines_parallel_ordered;
     use crate::json::write_json_lines;
     use crate::json::write_json_per_line;
 
@@ -148,7 +167,15 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         let data: Vec<i32> = (0..100).collect();
         write_json_lines(file.as_file_mut(), &data).unwrap();
+
+        // Check single-thread reading
         assert_eq!(read_file_lines::<i32>(file.path()).unwrap(), data);
+
+        // Check ordered parallel reading
+        let ordered = read_file_lines_parallel_ordered::<i32>(file.path()).unwrap();
+        assert_eq!(ordered, data);
+
+        // Check unordered parallel reading
         let mut unordered = read_file_lines_parallel::<i32>(file.path()).unwrap();
         unordered.sort();
         assert_eq!(unordered, data);
@@ -186,6 +213,7 @@ mod tests {
         write_json_lines(file.as_file_mut(), &data).unwrap();
 
         assert!(read_file_lines_parallel::<i32>(file.path()).is_err());
+        assert!(read_file_lines_parallel_ordered::<i32>(file.path()).is_err());
         assert!(read_file_lines::<i32>(file.path()).is_err());
     }
 }
