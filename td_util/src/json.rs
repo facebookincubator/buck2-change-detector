@@ -78,16 +78,19 @@ pub fn read_file_lines_parallel_ordered<T: for<'a> Deserialize<'a> + Send>(
 pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
+    read_file_lines_par_iter(filename)?.collect::<anyhow::Result<Vec<T>>>()
+}
+
+/// Returns an unordered parallel iterator over the parsed lines.
+/// Convenience function to avoid unnecessary allocations for when further processing is needed.
+pub fn read_file_lines_par_iter<T: for<'a> Deserialize<'a> + Send>(
+    filename: &Path,
+) -> anyhow::Result<impl ParallelIterator<Item = anyhow::Result<T>>> {
     let file = open_file(filename)?;
     // 10MB buffer
     let rdr = BufReader::with_capacity(BUFFER_SIZE, file);
-    let results = rdr
-        .lines()
-        .par_bridge()
-        .map(parse_line)
-        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(results)
+    Ok(rdr.lines().par_bridge().map(parse_line::<T>))
 }
 
 /// Read a file that consists of many JSON blobs, one per line.
