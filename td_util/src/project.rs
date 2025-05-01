@@ -42,6 +42,7 @@ pub enum TdProject {
     Wavoip,
     Www,
     Xplat,
+    Fasttrack,
 }
 
 impl TdProject {
