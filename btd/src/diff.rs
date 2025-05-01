@@ -150,9 +150,10 @@ pub struct ImpactTraceData {
     /// The target name of the direct dependency which
     /// caused this target to be impacted.
     pub affected_dep: Arc<String>, // parent_target_name
-    /// The target name of the dependency which actually changed,
-    /// and the type of change that we detected in it.
-    pub root_cause: (Arc<String>, RootImpactKind), // root_target_name, reason
+    /// The target name of the dependency which actually changed
+    pub root_cause_target: Arc<String>,
+    /// The type of change that we detected in it.
+    pub root_cause_reason: RootImpactKind,
     /// Whether the node is a root in the dependency graph.
     pub is_terminal: bool,
 }
@@ -161,14 +162,12 @@ impl ImpactTraceData {
     pub fn new(target: &BuckTarget, kind: RootImpactKind) -> Self {
         ImpactTraceData {
             affected_dep: Arc::new(String::new()),
-            root_cause: (
-                Arc::new(format!(
-                    "{}:{}",
-                    target.package.as_str(),
-                    target.name.as_str()
-                )),
-                kind,
-            ),
+            root_cause_target: Arc::new(format!(
+                "{}:{}",
+                target.package.as_str(),
+                target.name.as_str()
+            )),
+            root_cause_reason: kind,
             is_terminal: false,
         }
     }
@@ -177,7 +176,8 @@ impl ImpactTraceData {
     pub fn testing() -> Self {
         ImpactTraceData {
             affected_dep: Arc::new("cell//foo:bar".to_owned()),
-            root_cause: (Arc::new("cell//baz:qux".to_owned()), RootImpactKind::Inputs),
+            root_cause_target: Arc::new("cell//baz:qux".to_owned()),
+            root_cause_reason: RootImpactKind::Inputs,
             is_terminal: false,
         }
     }
@@ -484,7 +484,8 @@ pub fn recursive_target_changes<'a>(
             if follow_rule_type(&lbl.rule_type) {
                 let updated_reason = ImpactTraceData {
                     affected_dep: Arc::new(lbl.label().to_string()),
-                    root_cause: reason.root_cause.clone(),
+                    root_cause_target: reason.root_cause_target.clone(),
+                    root_cause_reason: reason.root_cause_reason,
                     is_terminal: false,
                 };
                 for rdep in rdeps.get(&lbl.label()) {

@@ -306,7 +306,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     // BTreeMap so that reasons are consistently ordered in logs
     let mut reason_counts: BTreeMap<RootImpactKind, u64> = BTreeMap::new();
     for (_, reason) in recursive.iter().flatten() {
-        let root_impact_kind = reason.root_cause.1;
+        let root_impact_kind = reason.root_cause_reason;
         *reason_counts.entry(root_impact_kind).or_default() += 1;
     }
     let input_targets = base.targets().count();

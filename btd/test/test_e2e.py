@@ -231,7 +231,8 @@ def check_properties(patch, rdeps):
             "oncall": None,
             "reason": {
                 "affected_dep": "",
-                "root_cause": ["root//inner:baz", "inputs"],
+                "root_cause_target": "root//inner:baz",
+                "root_cause_reason": "inputs",
                 "is_terminal": False,
             },
         } in rdeps
@@ -245,7 +246,8 @@ def check_properties(patch, rdeps):
             "oncall": None,
             "reason": {
                 "affected_dep": "",
-                "root_cause": ["root//inner:baz", "hash"],
+                "root_cause_target": "root//inner:baz",
+                "root_cause_reason": "hash",
                 "is_terminal": False,
             },
         } in rdeps
@@ -262,7 +264,8 @@ def check_properties(patch, rdeps):
                 "oncall": None,
                 "reason": {
                     "affected_dep": "",
-                    "root_cause": ["root//inner:baz", "hash"],
+                    "root_cause_target": "root//inner:baz",
+                    "root_cause_reason": "hash",
                     "is_terminal": False,
                 },
             },
@@ -274,7 +277,8 @@ def check_properties(patch, rdeps):
                 "oncall": None,
                 "reason": {
                     "affected_dep": "root//inner:baz",
-                    "root_cause": ["root//inner:baz", "hash"],
+                    "root_cause_target": "root//inner:baz",
+                    "root_cause_reason": "hash",
                     "is_terminal": True,
                 },
             },

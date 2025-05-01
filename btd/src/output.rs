@@ -91,7 +91,8 @@ mod tests {
                 "reason": {
                     "affected_dep": "cell//foo:bar",
                     "is_terminal": false,
-                    "root_cause": ["fbcode//me:test", "inputs"],
+                    "root_cause_target": "fbcode//me:test",
+                    "root_cause_reason": "inputs",
                 }
             }
         );
@@ -112,7 +113,8 @@ mod tests {
             3,
             false,
             ImpactTraceData {
-                root_cause: ("fbcode//me:test".to_owned().into(), RootImpactKind::Inputs),
+                root_cause_target: "fbcode//me:test".to_owned().into(),
+                root_cause_reason: RootImpactKind::Inputs,
                 ..ImpactTraceData::testing()
             },
         );
