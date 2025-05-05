@@ -338,19 +338,21 @@ pub fn immediate_target_changes<'a>(
     res
 }
 
-pub fn is_target_with_changed_ci_srcs(buck_target: &BuckTarget, changes: &Changes) -> bool {
+pub fn is_ci_target(buck_target: &BuckTarget) -> bool {
     let ci_srcs_rule_types = ["ci_skycastle", "ci_sandcastle", "ci_translator_workflow"];
 
-    if ci_srcs_rule_types.contains(&buck_target.rule_type.short()) {
+    ci_srcs_rule_types.contains(&buck_target.rule_type.short())
+}
+
+pub fn is_target_with_changed_ci_srcs(buck_target: &BuckTarget, changes: &Changes) -> bool {
+    if is_ci_target(buck_target) {
         return is_changed_ci_srcs(&buck_target.ci_srcs, changes);
     }
     true
 }
 
 pub fn is_target_with_buck_dependencies(buck_target: &BuckTarget) -> bool {
-    let dependency_checked_rule_types = ["ci_translator_workflow", "ci_skycastle", "ci_sandcastle"];
-
-    if dependency_checked_rule_types.contains(&buck_target.rule_type.short()) {
+    if is_ci_target(buck_target) {
         !buck_target.ci_deps.is_empty()
     } else {
         true
