@@ -39,7 +39,6 @@ pub enum TdProject {
     Waclient,
     Waios,
     Waserver,
-    Wavoip,
     Www,
     Xplat,
     Fasttrack,
