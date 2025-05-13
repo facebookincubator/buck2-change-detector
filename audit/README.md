@@ -11,5 +11,7 @@ supertd audit cells
 supertd audit config
 ```
 
-Within Meta a precompiled version of `supertd` is available at
-`~/fbsource/tools/utd/supertd/supertd`.
+Within Meta a precompiled version of `supertd` is available as devfeature at
+`/usr/local/bin/supertd`.
+
+Devfeature should install automatically on devservers and ondemands, but could also be installed explicitly via `feature install supertd`.
