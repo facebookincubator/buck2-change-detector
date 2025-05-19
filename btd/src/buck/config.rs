@@ -17,7 +17,6 @@ use crate::buck::types::CellPath;
 pub fn should_exclude_bzl_file_from_transitive_impact_tracing(path: &str) -> bool {
     path.ends_with(".bzl")
         && [
-            "fbcode//target_determinator/macros",
             "fbsource//tools/target_determinator/macros",
             // This is the public interface and auto-imported by all bzl files.
             // By tracing through this, all macros and rules outside the prelude
