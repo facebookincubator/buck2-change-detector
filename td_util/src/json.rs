@@ -85,7 +85,7 @@ pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
 /// Convenience function to avoid unnecessary allocations for when further processing is needed.
 pub fn read_file_lines_par_iter<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
-) -> anyhow::Result<impl ParallelIterator<Item = anyhow::Result<T>>> {
+) -> anyhow::Result<impl ParallelIterator<Item = anyhow::Result<T>> + use<T>> {
     let file = open_file(filename)?;
     // 10MB buffer
     let rdr = BufReader::with_capacity(BUFFER_SIZE, file);

@@ -84,19 +84,19 @@ mod linux {
     /// ```
     #[macro_export]
     macro_rules! scuba_logger {
-    ( event: $event:ident $(, $key:ident : $value:expr)* $(,)? ) => {
+    ( event: $event:ident $(, $key:ident : $value:expr_2021)* $(,)? ) => {
         let mut builder = $crate::supertd_events_logger::log_entry();
         builder.set_event(format!("{:?}", &$crate::supertd_events::Event::$event));
         $($crate::scuba_logger! { @SET_FIELD(builder, $key, $value) })*
         $crate::supertd_events_logger::log(&builder);
     };
-    ( $($key:ident : $value:expr),* $(,)? ) => {
+    ( $($key:ident : $value:expr_2021),* $(,)? ) => {
         compile_error!("`event` must be the first field in the `scuba!` macro");
     };
-    ( @SET_FIELD ( $builder:ident, event, $value:expr ) ) => {
+    ( @SET_FIELD ( $builder:ident, event, $value:expr_2021 ) ) => {
         compile_error!("duplicate `event` field in `scuba!` macro");
     };
-    ( @SET_FIELD ( $builder:ident, data, $value:expr ) ) => {{
+    ( @SET_FIELD ( $builder:ident, data, $value:expr_2021 ) ) => {{
         use $crate::supertd_events::serde_json::json;
         match $crate::supertd_events::serde_json::to_string(&$value) {
             Ok(json) => {
@@ -108,13 +108,13 @@ mod linux {
             }
         }
     }};
-    ( @SET_FIELD ( $builder:ident, duration, $value:expr ) ) => {
+    ( @SET_FIELD ( $builder:ident, duration, $value:expr_2021 ) ) => {
         $builder.set_duration_ms(::std::time::Duration::as_millis(&$value) as i64);
     };
-    ( @SET_FIELD ( $builder:ident, duration_ms, $value:expr ) ) => {
+    ( @SET_FIELD ( $builder:ident, duration_ms, $value:expr_2021 ) ) => {
         compile_error!("unrecognized column name in `scuba!` macro: duration_ms (use `duration` instead)");
     };
-    ( @SET_FIELD ( $builder:ident, $key:ident, $value:expr ) ) => {
+    ( @SET_FIELD ( $builder:ident, $key:ident, $value:expr_2021 ) ) => {
         compile_error!(concat!("unrecognized column name in `scuba!` macro: ", stringify!($key)));
     };
 }

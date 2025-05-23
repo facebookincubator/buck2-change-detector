@@ -14,7 +14,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
-pub fn file_writer(file_path: &Path) -> anyhow::Result<impl Write> {
+pub fn file_writer(file_path: &Path) -> anyhow::Result<impl Write + use<>> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
