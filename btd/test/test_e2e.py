@@ -247,7 +247,7 @@ def check_properties(patch, rdeps):
             "reason": {
                 "affected_dep": "",
                 "root_cause_target": "root//inner:baz",
-                "root_cause_reason": "hash",
+                "root_cause_reason": "labels",
                 "is_terminal": False,
             },
         } in rdeps
@@ -288,6 +288,20 @@ def check_properties(patch, rdeps):
         assert rdeps[0]["target"] == "root//new:target"
     elif patch == "new_outside_universe" or patch == "new_ignored":
         assert rdeps == []
+    elif patch == "change_package_label":
+        assert {
+            "depth": 0,
+            "labels": ["package", "hello", "world"],
+            "target": "root//inner:baz",
+            "type": "my_rule",
+            "oncall": None,
+            "reason": {
+                "affected_dep": "",
+                "root_cause_target": "root//inner:baz",
+                "root_cause_reason": "labels",
+                "is_terminal": False,
+            },
+        } in rdeps
     else:
         raise AssertionError("No properties known for: " + patch)
 
@@ -309,6 +323,8 @@ def check_properties_rerun(patch, rerun):
         assert rerun == "+ root//\n+ root//new\n"
     elif patch == "new_outside_universe" or patch == "new_ignored":
         assert rerun == ""
+    elif patch == "change_package_label":
+        assert rerun == "+ root//inner\n"
     else:
         raise AssertionError("No properties known for: " + patch)
 

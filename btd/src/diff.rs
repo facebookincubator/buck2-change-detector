@@ -198,14 +198,14 @@ pub enum RootImpactKind {
     Package,
     /// The hash of a target changed.
     Hash,
+    /// Labels configured by users have changed
+    Labels,
     /// The sources a target points at changed.
     Inputs,
     /// The `ci_srcs` of a target (used as additional triggers) changed.
     CiSrcs,
     /// The Buck rule used to define a target changed.
     Rule,
-    /// The `buck.package_values` of a target changed.
-    PackageValues,
     /// The target is removed
     Remove,
     /// When we want to manually rerun the target.
@@ -277,10 +277,19 @@ pub fn immediate_target_changes<'a>(
 
         // Did the hash of the target change
         let change_hash = || some_if(RootImpactKind::Hash, old_target.hash != target.hash);
-        // Did the package values change
-        let change_package_values = || {
+
+        // Did any of the target labels change
+        let change_target_labels = || {
             some_if(
-                RootImpactKind::PackageValues,
+                RootImpactKind::Labels,
+                change_hash().is_some() && old_target.labels != target.labels,
+            )
+        };
+        // Did the package labels change (this is separated from target labels to add package value changes to non-recursive)
+        // Only package values we read are citadel.labels
+        let change_package_labels = || {
+            some_if(
+                RootImpactKind::Labels,
                 old_target.package_values != target.package_values,
             )
         };
@@ -313,6 +322,7 @@ pub fn immediate_target_changes<'a>(
         // which is intentionally last because we can't infer true impact
         // just from the parsed graph and must schedule at least analysis.
         if let Some(reason) = change_inputs()
+            .or_else(change_target_labels)
             .or_else(change_hash)
             .or_else(change_ci_srcs)
             .or_else(change_package)
@@ -320,7 +330,7 @@ pub fn immediate_target_changes<'a>(
         {
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
-        } else if let Some(reason) = change_package_values() {
+        } else if let Some(reason) = change_package_labels() {
             res.non_recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         }

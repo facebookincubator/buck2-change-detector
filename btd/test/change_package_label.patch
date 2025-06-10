@@ -1,0 +1,12 @@
+diff --git a/inner/PACKAGE b/inner/PACKAGE
+--- a/inner/PACKAGE
++++ b/inner/PACKAGE
+@@ -5,3 +5,8 @@
+ set_modifiers(
+     modifiers,
+ )
++
++write_package_value(
++    "citadel.labels",
++    ["package"],
++)
