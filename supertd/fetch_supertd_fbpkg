@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+
+SUPERTD_PACKAGE_NAME="target_determinator.supertd"
+SUPERTD_PACKAGE_VERSION=${SUPERTD_PACKAGE_VERSION:-"prod"}
+SUPERTD_BASE_PATH=${SUPERTD_BASE_PATH:-"/tmp/supertd_fbpkg"}
+
+UUID=$(fbpkg info "${SUPERTD_PACKAGE_NAME}":"${SUPERTD_PACKAGE_VERSION}" --json | jq -r ".uuid")
+if [[ -z "$UUID" ]]; then
+    echo "Failed to get UUID for ${SUPERTD_PACKAGE_NAME}:${SUPERTD_PACKAGE_VERSION}" >&2
+    exit 1
+fi
+DIR="${SUPERTD_BASE_PATH}/${UUID}"
+echo "Using supertd fbpkg ${UUID} and tmp directory ${DIR}" >&2
+
+if [[ ! -d "$DIR" ]]; then
+    mkdir -p "$DIR"
+    echo "Fetching ${SUPERTD_PACKAGE_NAME}:${UUID}..." >&2
+    fbpkg fetch "${SUPERTD_PACKAGE_NAME}:${UUID}" -d "$DIR" >&2 || { echo "fbpkg fetch failed" >&2; exit 1; }
+fi
+
+echo "$DIR/supertd"
