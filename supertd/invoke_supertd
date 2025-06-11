@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
-if [ -n "$SKYCASTLE_WORKFLOW_RUN_ID" ]; then
-    # If running in Skycastle, supertd binary should be in the PATH, provided by supertd tool.
-    echo "Running in Skycastle, using supertd binary from PATH" 1>&2
-    SUPERTD="supertd"
-elif [[ "$SANDCASTLE" == "1" ]]; then
+set -euo pipefail
+
+if [[ "${SANDCASTLE:-}" == "1" ]]; then
     # If running in Sandcastle, we need to download fbpkg.
     echo "Running in Sandcastle, fetching supertd fbpkg" 1>&2
     FETCH_FBPKG="$(hg root)/fbcode/target_determinator/supertd/fetch_supertd_fbpkg"
-    SUPERTD=$($FETCH_FBPKG) || { echo "Failed to fetch supertd fbpkg" 1>&2; exit 1; }
+    SUPERTD=$($FETCH_FBPKG)
     echo "Using supertd binary from $SUPERTD" 1>&2
 else
     echo "Running locally, using supertd devfeature" 1>&2
     SUPERTD="supertd"
 fi
 
-"$SUPERTD" "$@"
+exec "$SUPERTD" "$@"
