@@ -13,9 +13,10 @@ if [[ -z "$UUID" ]]; then
     exit 1
 fi
 DIR="${SUPERTD_BASE_PATH}/${UUID}"
+SUPERTD_BINARY="${DIR}/supertd"
 echo "Using supertd fbpkg ${UUID} and tmp directory ${DIR}" >&2
 
-if [[ ! -d "$DIR" ]]; then
+if [[ ! -d "$SUPERTD_BINARY" ]]; then
     mkdir -p "$DIR"
     echo "Fetching ${SUPERTD_PACKAGE_NAME}:${UUID}..." >&2
     fbpkg fetch "${SUPERTD_PACKAGE_NAME}:${UUID}" -d "$DIR" >&2
