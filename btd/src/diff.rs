@@ -206,6 +206,8 @@ pub enum RootImpactKind {
     CiSrcs,
     /// The Buck rule used to define a target changed.
     Rule,
+    /// The `buck.package_values` of a target changed.
+    PackageValues,
     /// The target is removed
     Remove,
     /// When we want to manually rerun the target.
@@ -293,6 +295,14 @@ pub fn immediate_target_changes<'a>(
                 old_target.package_values != target.package_values,
             )
         };
+
+        // Did the package values change (this is only package labels changes that are not ci labels)
+        let change_package_values = || {
+            some_if(
+                RootImpactKind::PackageValues,
+                old_target.package_values != target.package_values,
+            )
+        };
         // Did any of the sources we point at change
         let change_inputs = || {
             some_if(
@@ -337,7 +347,7 @@ pub fn immediate_target_changes<'a>(
         {
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
-        } else if let Some(reason) = change_package_labels() {
+        } else if let Some(reason) = change_package_labels().or_else(change_package_values) {
             res.non_recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         }
