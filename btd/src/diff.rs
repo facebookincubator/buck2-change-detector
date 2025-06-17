@@ -102,7 +102,7 @@ pub struct GraphImpact<'a> {
     /// things that depend on them (they changed recursively).
     recursive: Vec<(&'a BuckTarget, ImpactTraceData)>,
     /// Targets which changed in a way that won't impact things recursively.
-    /// Currently only package value changes.
+    /// Currently only package value changes and label changes.
     non_recursive: Vec<(&'a BuckTarget, ImpactTraceData)>,
     /// Targets which are removed.
     removed: Vec<(&'a BuckTarget, ImpactTraceData)>,
@@ -317,12 +317,19 @@ pub fn immediate_target_changes<'a>(
 
         // The ordering here is important and goes from fine -> coarse.
         // We prioritize source file to cover code changes (most relevant)
-        // Then trigger based on target-level changes detected via attribute hashing
-        // Then additional trigger conditions until rule-based matching,
-        // which is intentionally last because we can't infer true impact
+        // Then target-level changes detected via label changes - these are added to non_recursive
+        // so they won't impact things that depend on them recursively.
+        // Then additional trigger conditions based on hash changes, CI sources, and package changes
+        // which are added to recursive and will impact dependent targets.
+        // Until rule-based matching, which is intentionally last because we can't infer true impact
         // just from the parsed graph and must schedule at least analysis.
-        if let Some(reason) = change_inputs()
-            .or_else(change_target_labels)
+        if let Some(reason) = change_inputs() {
+            res.recursive
+                .push((target, ImpactTraceData::new(target, reason)));
+        } else if let Some(reason) = change_target_labels() {
+            res.non_recursive
+                .push((target, ImpactTraceData::new(target, reason)));
+        } else if let Some(reason) = change_hash()
             .or_else(change_hash)
             .or_else(change_ci_srcs)
             .or_else(change_package)

@@ -251,7 +251,7 @@ def check_properties(patch, rdeps):
                 "is_terminal": False,
             },
         } in rdeps
-        assert len(rdeps) == 2
+        assert len(rdeps) == 1
     elif patch == "buckconfig":
         assert len(rdeps) == 3
     elif patch == "cfg_modifiers":
