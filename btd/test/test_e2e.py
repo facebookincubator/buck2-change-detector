@@ -247,11 +247,11 @@ def check_properties(patch, rdeps):
             "reason": {
                 "affected_dep": "",
                 "root_cause_target": "root//inner:baz",
-                "root_cause_reason": "labels",
+                "root_cause_reason": "hash",
                 "is_terminal": False,
             },
         } in rdeps
-        assert len(rdeps) == 1
+        assert len(rdeps) == 2
     elif patch == "buckconfig":
         assert len(rdeps) == 3
     elif patch == "cfg_modifiers":
@@ -291,7 +291,7 @@ def check_properties(patch, rdeps):
     elif patch == "change_package_label":
         assert {
             "depth": 0,
-            "labels": ["package", "hello", "world"],
+            "labels": ["ci:package", "hello", "world"],
             "target": "root//inner:baz",
             "type": "my_rule",
             "oncall": None,
@@ -299,6 +299,20 @@ def check_properties(patch, rdeps):
                 "affected_dep": "",
                 "root_cause_target": "root//inner:baz",
                 "root_cause_reason": "labels",
+                "is_terminal": False,
+            },
+        } in rdeps
+    elif patch == "change_package_value":
+        assert {
+            "depth": 0,
+            "labels": ["package", "hello", "world"],
+            "target": "root//inner:baz",
+            "type": "my_rule",
+            "oncall": None,
+            "reason": {
+                "affected_dep": "",
+                "root_cause_target": "root//inner:baz",
+                "root_cause_reason": "package_values",
                 "is_terminal": False,
             },
         } in rdeps
@@ -324,6 +338,8 @@ def check_properties_rerun(patch, rerun):
     elif patch == "new_outside_universe" or patch == "new_ignored":
         assert rerun == ""
     elif patch == "change_package_label":
+        assert rerun == "+ root//inner\n"
+    elif patch == "change_package_value":
         assert rerun == "+ root//inner\n"
     else:
         raise AssertionError("No properties known for: " + patch)

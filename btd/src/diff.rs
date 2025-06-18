@@ -19,6 +19,7 @@ use tracing::warn;
 use crate::buck::config::is_buckconfig_change;
 use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use crate::buck::glob::GlobSpec;
+use crate::buck::labels::Labels;
 use crate::buck::target_map::TargetMap;
 use crate::buck::targets::BuckTarget;
 use crate::buck::targets::Targets;
@@ -281,18 +282,21 @@ pub fn immediate_target_changes<'a>(
         let change_hash = || some_if(RootImpactKind::Hash, old_target.hash != target.hash);
 
         // Did any of the target labels change
-        let change_target_labels = || {
+        let change_target_ci_labels = || {
             some_if(
                 RootImpactKind::Labels,
-                change_hash().is_some() && old_target.labels != target.labels,
+                change_hash().is_some() && !ci_labels_unchanged(&target.labels, &old_target.labels),
             )
         };
         // Did the package labels change (this is separated from target labels to add package value changes to non-recursive)
         // Only package values we read are citadel.labels
-        let change_package_labels = || {
+        let change_package_ci_labels = || {
             some_if(
                 RootImpactKind::Labels,
-                old_target.package_values != target.package_values,
+                !ci_labels_unchanged(
+                    &target.package_values.labels,
+                    &old_target.package_values.labels,
+                ),
             )
         };
 
@@ -336,18 +340,17 @@ pub fn immediate_target_changes<'a>(
         if let Some(reason) = change_inputs() {
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
-        } else if let Some(reason) = change_target_labels() {
+        } else if let Some(reason) = change_target_ci_labels() {
             res.non_recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         } else if let Some(reason) = change_hash()
-            .or_else(change_hash)
             .or_else(change_ci_srcs)
             .or_else(change_package)
             .or_else(change_rule)
         {
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
-        } else if let Some(reason) = change_package_labels().or_else(change_package_values) {
+        } else if let Some(reason) = change_package_ci_labels().or_else(change_package_values) {
             res.non_recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         }
@@ -369,6 +372,10 @@ pub fn is_ci_target(buck_target: &BuckTarget) -> bool {
     let ci_srcs_rule_types = ["ci_skycastle", "ci_sandcastle", "ci_translator_workflow"];
 
     ci_srcs_rule_types.contains(&buck_target.rule_type.short())
+}
+
+pub fn ci_labels_unchanged(labels: &Labels, old_labels: &Labels) -> bool {
+    Labels::filter_ci_labels(labels).eq(&Labels::filter_ci_labels(old_labels))
 }
 
 pub fn is_target_with_changed_ci_srcs(buck_target: &BuckTarget, changes: &Changes) -> bool {

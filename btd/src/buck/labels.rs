@@ -50,6 +50,17 @@ impl Labels {
                 .collect(),
         )
     }
+
+    pub fn filter_ci_labels(labels: &Labels) -> Labels {
+        // We are filtering for CI specific labels so we can compare them and determine CI label changes
+        Labels(
+            labels
+                .iter()
+                .filter(|l| l.as_str().starts_with("ci:"))
+                .cloned()
+                .collect(),
+        )
+    }
 }
 
 impl Deref for Labels {
