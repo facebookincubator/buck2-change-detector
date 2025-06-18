@@ -157,6 +157,12 @@ pub struct ImpactTraceData {
     pub root_cause_reason: RootImpactKind,
     /// Whether the node is a root in the dependency graph.
     pub is_terminal: bool,
+    /// New labels added to the target.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub added_labels: Vec<Arc<String>>,
+    /// labels that were removed from the target.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub removed_labels: Vec<Arc<String>>,
 }
 
 impl ImpactTraceData {
@@ -170,6 +176,8 @@ impl ImpactTraceData {
             )),
             root_cause_reason: kind,
             is_terminal: false,
+            added_labels: vec![],
+            removed_labels: vec![],
         }
     }
 
@@ -180,6 +188,8 @@ impl ImpactTraceData {
             root_cause_target: Arc::new("cell//baz:qux".to_owned()),
             root_cause_reason: RootImpactKind::Inputs,
             is_terminal: false,
+            added_labels: vec![],
+            removed_labels: vec![],
         }
     }
 }
@@ -341,8 +351,37 @@ pub fn immediate_target_changes<'a>(
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         } else if let Some(reason) = change_target_ci_labels() {
-            res.non_recursive
-                .push((target, ImpactTraceData::new(target, reason)));
+            res.non_recursive.push((
+                target,
+                ImpactTraceData {
+                    // We want to add addded and removed labels to trace data so we can flag key differences later on, this only gets included if reason is labels.
+                    added_labels: if reason == RootImpactKind::Labels {
+                        let old_set: HashSet<_> =
+                            old_target.labels.iter().map(|l| l.as_str()).collect();
+                        target
+                            .labels
+                            .iter()
+                            .filter(|l| !old_set.contains(l.as_str()))
+                            .map(|l| Arc::new(l.to_string()))
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                    removed_labels: if reason == RootImpactKind::Labels {
+                        let new_set: HashSet<_> =
+                            target.labels.iter().map(|l| l.as_str()).collect();
+                        old_target
+                            .labels
+                            .iter()
+                            .filter(|l| !new_set.contains(l.as_str()))
+                            .map(|l| Arc::new(l.to_string()))
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                    ..ImpactTraceData::new(target, reason)
+                },
+            ));
         } else if let Some(reason) = change_hash()
             .or_else(change_ci_srcs)
             .or_else(change_package)
@@ -351,11 +390,38 @@ pub fn immediate_target_changes<'a>(
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         } else if let Some(reason) = change_package_ci_labels().or_else(change_package_values) {
-            res.non_recursive
-                .push((target, ImpactTraceData::new(target, reason)));
+            res.non_recursive.push((
+                target,
+                ImpactTraceData {
+                    added_labels: if reason == RootImpactKind::Labels {
+                        let old_set: HashSet<_> =
+                            old_target.labels.iter().map(|l| l.as_str()).collect();
+                        target
+                            .labels
+                            .iter()
+                            .filter(|l| !old_set.contains(l.as_str()))
+                            .map(|l| Arc::new(l.to_string()))
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                    removed_labels: if reason == RootImpactKind::Labels {
+                        let new_set: HashSet<_> =
+                            target.labels.iter().map(|l| l.as_str()).collect();
+                        old_target
+                            .labels
+                            .iter()
+                            .filter(|l| !new_set.contains(l.as_str()))
+                            .map(|l| Arc::new(l.to_string()))
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                    ..ImpactTraceData::new(target, reason)
+                },
+            ));
         }
     }
-
     // We remove targets from `old` when iterating `diff` above.
     // At this point, only removed targets are left in `old`.
     res.removed = old
@@ -523,6 +589,8 @@ pub fn recursive_target_changes<'a>(
                     root_cause_target: reason.root_cause_target.clone(),
                     root_cause_reason: reason.root_cause_reason,
                     is_terminal: false,
+                    added_labels: reason.added_labels.clone(),
+                    removed_labels: reason.removed_labels.clone(),
                 };
                 for rdep in rdeps.get(&lbl.label()) {
                     match done.entry(rdep.label_key()) {
