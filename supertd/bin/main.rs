@@ -44,7 +44,7 @@ enum Args {
     Orchestrator(orchestrator::Args),
 }
 
-#[fbinit::main]
+#[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
 pub async fn main(fb: FacebookInit) -> ExitCode {
     let _guard = td_util::init(fb);
     init_logger_start_time();
