@@ -42,6 +42,8 @@ enum Args {
     Verse(verse_citadel_adaptor::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Orchestrator(orchestrator::Args),
+    #[cfg(fbcode_build)]
+    Summary(citrace_v2::summary::Args),
 }
 
 #[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
@@ -93,6 +95,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Verse(args) => verse_citadel_adaptor::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Orchestrator(args) => orchestrator::main(fb, args).await,
+        #[cfg(fbcode_build)]
+        Args::Summary(args) => citrace_v2::summary::run_summary(args),
     };
 
     match ret {
