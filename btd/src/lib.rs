@@ -330,6 +330,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
             "diff_targets": diff_targets,
             "diff_parse_errors": diff.errors().count(),
             "terminal_node_changes": recursive.iter().flatten().filter(|(_, r)| r.is_terminal).count(),
+            "host_parallelism": std::thread::available_parallelism().unwrap_or(std::num::NonZero::new(1).unwrap())
         })
     );
     step("done");
