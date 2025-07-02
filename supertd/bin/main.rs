@@ -44,7 +44,7 @@ enum Args {
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Orchestrator(orchestrator::Args),
     #[cfg(fbcode_build)]
-    Summary(citrace_v2::summary::Args),
+    Summary(citrace_v2::cli::SummaryArgs),
 }
 
 #[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
