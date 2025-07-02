@@ -162,6 +162,18 @@ impl<'a> From<Key<(&'a str, &'a str, &'a str)>> for StrData {
     }
 }
 
+impl PartialEq<str> for InternString {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<String> for InternString {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
 impl InternString {
     pub fn new(x: &str) -> Self {
         InternString(INTERNER.intern(Key(x)))
@@ -178,6 +190,19 @@ impl InternString {
 
     pub fn as_str(&self) -> &str {
         &self.0.0
+    }
+
+    pub fn starts_with(&self, prefix: &str) -> bool {
+        self.as_str().starts_with(prefix)
+    }
+    pub fn split_once(&self, sep: char) -> Option<(&str, &str)> {
+        self.as_str().split_once(sep)
+    }
+    pub fn strip_prefix(&self, prefix: &str) -> Option<&str> {
+        self.as_str().strip_prefix(prefix)
+    }
+    pub fn contains(&self, needle: &str) -> bool {
+        self.as_str().contains(needle)
     }
 }
 

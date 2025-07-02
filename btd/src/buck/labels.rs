@@ -29,6 +29,15 @@ impl Labels {
         Self(labels.iter().map(|x| InternString::new(x)).collect())
     }
 
+    pub fn from_strings(labels: &[String]) -> Self {
+        Self(
+            labels
+                .iter()
+                .map(|x| InternString::new(x.as_str()))
+                .collect(),
+        )
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -61,6 +70,13 @@ impl Labels {
                 .cloned()
                 .collect(),
         )
+    }
+
+    pub fn any<F>(&self, predicate: F) -> bool
+    where
+        F: Fn(&InternString) -> bool,
+    {
+        self.0.iter().any(predicate)
     }
 }
 
