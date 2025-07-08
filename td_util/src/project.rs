@@ -33,6 +33,7 @@ pub enum TdProject {
     Fbcode,
     Fbandroid,
     Fbobjc,
+    Genai,
     Mobile,
     RL,
     Waandroid,
