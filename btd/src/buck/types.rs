@@ -10,6 +10,7 @@
 
 //! All these types mirror their equivalent in the Buck2 codebase
 
+use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
 
@@ -612,6 +613,12 @@ impl Oncall {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl fmt::Display for Oncall {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0.as_str())
     }
 }
 
