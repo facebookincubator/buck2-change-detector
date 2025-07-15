@@ -11,10 +11,10 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::buck::targets::BuckTarget;
-use crate::buck::targets::Targets;
-use crate::buck::types::TargetLabel;
-use crate::buck::types::TargetLabelKeyRef;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::TargetLabel;
+use td_util_buck::types::TargetLabelKeyRef;
 
 // Currently, this function doesn't support progagating 'uses_sudo' label for target patterns.
 // We can possibly live with this version until a use case found.
@@ -49,11 +49,12 @@ pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKeyRef
 
 #[cfg(test)]
 mod tests {
+    use td_util_buck::labels::Labels;
+    use td_util_buck::targets::TargetsEntry;
+    use td_util_buck::types::Package;
+    use td_util_buck::types::TargetName;
+
     use super::*;
-    use crate::buck::labels::Labels;
-    use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::Package;
-    use crate::buck::types::TargetName;
 
     #[test]
     fn test_requires_sudo_recursively() {

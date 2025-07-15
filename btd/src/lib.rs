@@ -16,7 +16,6 @@
 // Things we disagree with
 #![allow(clippy::len_without_is_empty)]
 
-pub mod buck;
 pub mod changes;
 pub mod check;
 pub mod diff;
@@ -40,7 +39,6 @@ use anyhow::Context as _;
 use anyhow::anyhow;
 #[cfg(fbcode_build)]
 use btd_run_stats::BTDRunStats;
-use buck::types::Package;
 use clap::Parser;
 use serde::Serialize;
 use td_util::json;
@@ -48,16 +46,17 @@ use td_util::logging::elapsed;
 use td_util::logging::step;
 use td_util::prelude::*;
 use td_util::workflow_error::WorkflowError;
+use td_util_buck::cells::CellInfo;
+use td_util_buck::run::Buck2;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::Package;
+use td_util_buck::types::TargetLabelKeyRef;
+use td_util_buck::types::TargetPattern;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tracing::error;
 
-use crate::buck::cells::CellInfo;
-use crate::buck::run::Buck2;
-use crate::buck::targets::BuckTarget;
-use crate::buck::targets::Targets;
-use crate::buck::types::TargetLabelKeyRef;
-use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
 use crate::check::ValidationError;
 use crate::diff::ImpactTraceData;

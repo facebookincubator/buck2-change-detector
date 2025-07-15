@@ -12,14 +12,15 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::buck::cells::CellInfo;
-use crate::buck::config::is_buck_deployment;
-use crate::buck::config::is_buckconfig_change;
-use crate::buck::package_resolver::PackageResolver;
-use crate::buck::targets::Targets;
-use crate::buck::types::CellName;
-use crate::buck::types::CellPath;
-use crate::buck::types::Package;
+use td_util_buck::cells::CellInfo;
+use td_util_buck::config::is_buck_deployment;
+use td_util_buck::config::is_buckconfig_change;
+use td_util_buck::package_resolver::PackageResolver;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::CellName;
+use td_util_buck::types::CellPath;
+use td_util_buck::types::Package;
+
 use crate::changes::Changes;
 use crate::sapling::status::Status;
 
@@ -237,13 +238,14 @@ fn find_closest_enclosing_package(
 
 #[cfg(test)]
 mod tests {
+    use td_util_buck::targets::BuckError;
+    use td_util_buck::targets::BuckImport;
+    use td_util_buck::targets::BuckTarget;
+    use td_util_buck::targets::TargetsEntry;
+    use td_util_buck::types::TargetHash;
+    use td_util_buck::types::TargetLabel;
+
     use super::*;
-    use crate::buck::targets::BuckError;
-    use crate::buck::targets::BuckImport;
-    use crate::buck::targets::BuckTarget;
-    use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::TargetHash;
-    use crate::buck::types::TargetLabel;
 
     #[test]
     fn test_rerun_globs() {

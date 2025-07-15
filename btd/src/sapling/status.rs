@@ -12,9 +12,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context as _;
+use td_util_buck::types::ProjectRelativePath;
 use thiserror::Error;
-
-use crate::buck::types::ProjectRelativePath;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Status<Path> {

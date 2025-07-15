@@ -18,14 +18,13 @@ use anyhow::Context as _;
 use audit::audit_cell_arguments;
 use audit::audit_config_arguments;
 use itertools::Itertools;
-use targets::targets_arguments;
 use td_util::command::with_command;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-use crate::buck::cells::CellInfo;
-use crate::buck::types::Package;
-use crate::buck::types::TargetPattern;
+use crate::cells::CellInfo;
+use crate::types::Package;
+use crate::types::TargetPattern;
 
 /// A struct to represent running Buck2 commands.
 /// All methods are `&mut` to avoid simultaneous Buck2 commands.
@@ -162,4 +161,18 @@ impl Buck2 {
 
         with_command(command, |mut command| Ok(command.status()?.exit_ok()?))
     }
+}
+
+pub fn targets_arguments() -> &'static [&'static str] {
+    &[
+        "targets",
+        "--streaming",
+        "--keep-going",
+        "--no-cache",
+        "--show-unconfigured-target-hash",
+        "--json-lines",
+        "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$",
+        "--imports",
+        "--package-values-regex=^citadel\\.labels$",
+    ]
 }

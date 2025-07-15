@@ -12,11 +12,11 @@ use std::fmt;
 use std::fmt::Display;
 
 use serde::Serialize;
+use td_util_buck::labels::Labels;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::types::Oncall;
+use td_util_buck::types::TargetLabel;
 
-use crate::buck::labels::Labels;
-use crate::buck::targets::BuckTarget;
-use crate::buck::types::Oncall;
-use crate::buck::types::TargetLabel;
 use crate::diff::ImpactTraceData;
 
 #[derive(Debug, Serialize)]
@@ -73,11 +73,11 @@ pub enum OutputFormat {
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
+    use td_util_buck::types::CellPath;
+    use td_util_buck::types::PackageValues;
+    use td_util_buck::types::TargetHash;
 
     use super::*;
-    use crate::buck::types::CellPath;
-    use crate::buck::types::PackageValues;
-    use crate::buck::types::TargetHash;
     use crate::diff::RootImpactKind;
 
     #[test]

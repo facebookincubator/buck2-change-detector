@@ -13,16 +13,16 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
+use td_util_buck::package_resolver::PackageResolver;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::Package;
+use td_util_buck::types::TargetLabel;
+use td_util_buck::types::TargetPattern;
 use thiserror::Error;
 use tracing::error;
 use tracing::warn;
 
-use crate::buck::package_resolver::PackageResolver;
-use crate::buck::targets::BuckTarget;
-use crate::buck::targets::Targets;
-use crate::buck::types::Package;
-use crate::buck::types::TargetLabel;
-use crate::buck::types::TargetPattern;
 use crate::changes::Changes;
 use crate::diff::ImpactTraceData;
 
@@ -201,12 +201,12 @@ pub fn check_dangling(
 #[cfg(test)]
 mod tests {
     use td_util::prelude::*;
+    use td_util_buck::targets::BuckError;
+    use td_util_buck::targets::TargetsEntry;
+    use td_util_buck::types::CellPath;
+    use td_util_buck::types::TargetName;
 
     use super::*;
-    use crate::buck::targets::BuckError;
-    use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::CellPath;
-    use crate::buck::types::TargetName;
     use crate::sapling::status::Status;
 
     #[test]

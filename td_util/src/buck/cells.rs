@@ -17,11 +17,11 @@ use itertools::Itertools;
 use td_util::prelude::*;
 use thiserror::Error;
 
-use crate::buck::ignore_set::IgnoreSet;
-use crate::buck::types::CellName;
-use crate::buck::types::CellPath;
-use crate::buck::types::CellRelativePath;
-use crate::buck::types::ProjectRelativePath;
+use crate::ignore_set::IgnoreSet;
+use crate::types::CellName;
+use crate::types::CellPath;
+use crate::types::CellRelativePath;
+use crate::types::ProjectRelativePath;
 
 /// The value of `buildfile.name` if omitted.
 const DEFAULT_BUILD_FILES: &[&str] = &["BUCK.v2", "BUCK"];

@@ -11,11 +11,11 @@
 use std::collections::HashSet;
 
 use itertools::Itertools;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::RuleType;
+use td_util_buck::types::TargetLabelKeyRef;
 
-use crate::buck::targets::BuckTarget;
-use crate::buck::targets::Targets;
-use crate::buck::types::RuleType;
-use crate::buck::types::TargetLabelKeyRef;
 use crate::changes::Changes;
 use crate::diff::ImpactTraceData;
 use crate::diff::immediate_target_changes;
@@ -75,11 +75,11 @@ fn merge<'a>(
 #[cfg(test)]
 mod tests {
     use td_util::prelude::*;
+    use td_util_buck::targets::TargetsEntry;
+    use td_util_buck::types::CellPath;
+    use td_util_buck::types::TargetLabel;
 
     use super::*;
-    use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::CellPath;
-    use crate::buck::types::TargetLabel;
     use crate::sapling::status::Status;
 
     #[test]

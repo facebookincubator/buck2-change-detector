@@ -22,6 +22,7 @@ use clap::Parser;
 use td_util::command::display_command;
 use td_util::logging::elapsed;
 use td_util::workflow_error::WorkflowError;
+use td_util_buck::run::targets_arguments;
 
 /// Run `buck2 targets` with all the arguments required for BTD/Citadel.
 #[derive(Parser)]
@@ -45,20 +46,6 @@ pub struct Args {
     /// Arguments passed onwards - typically patterns.
     #[arg(value_name = "ARGS")]
     arguments: Vec<String>,
-}
-
-pub fn targets_arguments() -> &'static [&'static str] {
-    &[
-        "targets",
-        "--streaming",
-        "--keep-going",
-        "--no-cache",
-        "--show-unconfigured-target-hash",
-        "--json-lines",
-        "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$",
-        "--imports",
-        "--package-values-regex=^citadel\\.labels$",
-    ]
 }
 
 pub fn main(args: Args) -> Result<(), WorkflowError> {

@@ -14,23 +14,23 @@ use std::collections::hash_map::Entry;
 use std::mem;
 use std::sync::Arc;
 
+use td_util_buck::config::is_buckconfig_change;
+use td_util_buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
+use td_util_buck::glob::GlobSpec;
+use td_util_buck::labels::Labels;
+use td_util_buck::target_map::TargetMap;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::CellPath;
+use td_util_buck::types::Glob;
+use td_util_buck::types::Package;
+use td_util_buck::types::RuleType;
+use td_util_buck::types::TargetLabel;
+use td_util_buck::types::TargetLabelKeyRef;
+use td_util_buck::types::TargetName;
 use tracing::info;
 use tracing::warn;
 
-use crate::buck::config::is_buckconfig_change;
-use crate::buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
-use crate::buck::glob::GlobSpec;
-use crate::buck::labels::Labels;
-use crate::buck::target_map::TargetMap;
-use crate::buck::targets::BuckTarget;
-use crate::buck::targets::Targets;
-use crate::buck::types::CellPath;
-use crate::buck::types::Glob;
-use crate::buck::types::Package;
-use crate::buck::types::RuleType;
-use crate::buck::types::TargetLabel;
-use crate::buck::types::TargetLabelKeyRef;
-use crate::buck::types::TargetName;
 use crate::changes::Changes;
 
 /// Given the state, which .bzl files have changed, either directly or by transitive dependencies
@@ -649,16 +649,16 @@ mod tests {
 
     use itertools::Itertools;
     use td_util::prelude::*;
+    use td_util_buck::cells::CellInfo;
+    use td_util_buck::labels::Labels;
+    use td_util_buck::targets::BuckImport;
+    use td_util_buck::targets::TargetsEntry;
+    use td_util_buck::types::PackageValues;
+    use td_util_buck::types::ProjectRelativePath;
+    use td_util_buck::types::TargetHash;
+    use td_util_buck::types::TargetPattern;
 
     use super::*;
-    use crate::buck::cells::CellInfo;
-    use crate::buck::labels::Labels;
-    use crate::buck::targets::BuckImport;
-    use crate::buck::targets::TargetsEntry;
-    use crate::buck::types::PackageValues;
-    use crate::buck::types::ProjectRelativePath;
-    use crate::buck::types::TargetHash;
-    use crate::buck::types::TargetPattern;
     use crate::sapling::status::Status;
 
     fn basic_changes() -> Changes {

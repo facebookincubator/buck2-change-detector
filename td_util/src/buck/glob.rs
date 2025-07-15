@@ -15,9 +15,9 @@ use glob::Pattern;
 use itertools::Either;
 use itertools::Itertools;
 
-use crate::buck::types::Glob;
-use crate::buck::types::GlobInclusion;
-use crate::buck::types::ProjectRelativePath;
+use crate::types::Glob;
+use crate::types::GlobInclusion;
+use crate::types::ProjectRelativePath;
 
 pub struct GlobSpec {
     include: GlobSet,

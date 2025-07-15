@@ -13,10 +13,10 @@ use std::collections::HashMap;
 use td_util::no_hash::BuildNoHash;
 use tracing::warn;
 
-use crate::buck::package_resolver::PackageResolver;
-use crate::buck::types::Package;
-use crate::buck::types::TargetLabel;
-use crate::buck::types::TargetPattern;
+use crate::package_resolver::PackageResolver;
+use crate::types::Package;
+use crate::types::TargetLabel;
+use crate::types::TargetPattern;
 
 pub struct TargetMap<T> {
     literal: HashMap<TargetLabel, Vec<T>, BuildNoHash>,

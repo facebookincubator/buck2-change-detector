@@ -16,11 +16,11 @@ use rayon::prelude::*;
 use serde::Serialize;
 use td_util::json;
 use td_util::no_hash::BuildNoHash;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::targets::Targets;
+use td_util_buck::types::TargetLabel;
+use td_util_buck::types::TargetLabelKeyRef;
 
-use crate::buck::targets::BuckTarget;
-use crate::buck::targets::Targets;
-use crate::buck::types::TargetLabel;
-use crate::buck::types::TargetLabelKeyRef;
 use crate::diff::ImpactTraceData;
 use crate::output::Output;
 use crate::output::OutputFormat;
@@ -112,8 +112,9 @@ impl GraphSize {
 
 #[cfg(test)]
 mod tests {
+    use td_util_buck::targets::TargetsEntry;
+
     use super::*;
-    use crate::buck::targets::TargetsEntry;
 
     fn mk_label(x: &str) -> TargetLabel {
         TargetLabel::new(&format!("none//:{x}"))

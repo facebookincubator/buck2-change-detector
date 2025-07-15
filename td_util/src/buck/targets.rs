@@ -16,18 +16,18 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::json;
 
-use crate::buck::labels::Labels;
-use crate::buck::types::CellPath;
-use crate::buck::types::Glob;
-use crate::buck::types::Oncall;
-use crate::buck::types::Package;
-use crate::buck::types::PackageValues;
-use crate::buck::types::RuleType;
-use crate::buck::types::TargetHash;
-use crate::buck::types::TargetLabel;
-use crate::buck::types::TargetLabelKeyRef;
-use crate::buck::types::TargetName;
-use crate::buck::types::TargetPattern;
+use crate::labels::Labels;
+use crate::types::CellPath;
+use crate::types::Glob;
+use crate::types::Oncall;
+use crate::types::Package;
+use crate::types::PackageValues;
+use crate::types::RuleType;
+use crate::types::TargetHash;
+use crate::types::TargetLabel;
+use crate::types::TargetLabelKeyRef;
+use crate::types::TargetName;
+use crate::types::TargetPattern;
 
 /// The output of running `buck2 targets`.
 #[derive(Clone)]
@@ -196,7 +196,6 @@ impl BuckTarget {
         TargetLabelKeyRef::new(&self.package, &self.name)
     }
 
-    #[cfg(test)]
     pub fn testing(name: &str, package: &str, rule_type: &str) -> BuckTarget {
         Self {
             name: TargetName::new(name),

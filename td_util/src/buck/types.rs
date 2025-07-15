@@ -19,8 +19,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::string::InternString;
 
-use crate::buck::cells::CellInfo;
-use crate::buck::labels::Labels;
+use crate::cells::CellInfo;
+use crate::labels::Labels;
 
 /// Example: `fbcode//buck2:buck2`
 #[derive(
@@ -47,8 +47,8 @@ impl TargetLabel {
     }
 
     /// ```
-    /// use btd::buck::types::Package;
-    /// use btd::buck::types::TargetLabel;
+    /// use td_util_buck::types::Package;
+    /// use td_util_buck::types::TargetLabel;
     /// assert_eq!(
     ///     TargetLabel::new("foo//bar/baz:qux").package(),
     ///     Package::new("foo//bar/baz")
@@ -59,8 +59,8 @@ impl TargetLabel {
     }
 
     /// ```
-    /// use btd::buck::types::TargetLabel;
-    /// use btd::buck::types::TargetName;
+    /// use td_util_buck::types::TargetLabel;
+    /// use td_util_buck::types::TargetName;
     /// assert_eq!(
     ///     TargetLabel::new("foo//bar/baz:qux").target_name(),
     ///     TargetName::new("qux")
@@ -76,7 +76,7 @@ impl TargetLabel {
     }
 
     /// ```
-    /// use btd::buck::types::TargetLabel;
+    /// use td_util_buck::types::TargetLabel;
     /// assert!(!TargetLabel::new("foo//bar/baz:qux").is_package_relative());
     /// assert!(TargetLabel::new(":qux").is_package_relative());
     /// ```
@@ -123,7 +123,7 @@ impl TargetPattern {
     }
 
     /// ```
-    /// use btd::buck::types::TargetPattern;
+    /// use td_util_buck::types::TargetPattern;
     /// assert!(!TargetPattern::new("foo//bar/...").is_specific_target());
     /// assert!(!TargetPattern::new("foo//bar/baz:").is_specific_target());
     /// assert!(TargetPattern::new("foo//bar:baz").is_specific_target());
@@ -148,8 +148,8 @@ impl TargetPattern {
     /// These are the patterns that end in the `:` suffix.
     ///
     /// ```
-    /// use btd::buck::types::Package;
-    /// use btd::buck::types::TargetPattern;
+    /// use td_util_buck::types::Package;
+    /// use td_util_buck::types::TargetPattern;
     /// assert_eq!(
     ///     TargetPattern::new("foo//:").as_package_pattern(),
     ///     Some(Package::new("foo//"))
@@ -173,8 +173,8 @@ impl TargetPattern {
     /// These are the patterns that end in the `...` suffix.
     ///
     /// ```
-    /// use btd::buck::types::Package;
-    /// use btd::buck::types::TargetPattern;
+    /// use td_util_buck::types::Package;
+    /// use td_util_buck::types::TargetPattern;
     /// assert_eq!(
     ///     TargetPattern::new("foo//...").as_recursive_pattern(),
     ///     Some(Package::new("foo//"))
@@ -200,8 +200,8 @@ impl TargetPattern {
     }
 
     /// ```
-    /// use btd::buck::types::TargetLabel;
-    /// use btd::buck::types::TargetPattern;
+    /// use td_util_buck::types::TargetLabel;
+    /// use td_util_buck::types::TargetPattern;
     /// assert!(TargetPattern::new("foo//bar/baz:").matches(&TargetLabel::new("foo//bar/baz:qux")));
     /// assert!(
     ///     !TargetPattern::new("foo//bar/baz:").matches(&TargetLabel::new("foo//bar/baz/boo:qux")),
@@ -248,8 +248,8 @@ impl TargetPattern {
     }
 
     /// ```
-    /// use btd::buck::types::Package;
-    /// use btd::buck::types::TargetPattern;
+    /// use td_util_buck::types::Package;
+    /// use td_util_buck::types::TargetPattern;
     /// assert!(TargetPattern::new("foo//bar:").matches_package(&Package::new("foo//bar")));
     /// assert!(!TargetPattern::new("foo//bar:").matches_package(&Package::new("foo//bard")));
     /// assert!(!TargetPattern::new("foo//bard:").matches_package(&Package::new("foo//bar")));
@@ -357,7 +357,7 @@ impl CellPath {
     }
 
     /// ```
-    /// use btd::buck::types::CellPath;
+    /// use td_util_buck::types::CellPath;
     /// assert_eq!(
     ///     CellPath::new("foo//bar.bzl").parent(),
     ///     CellPath::new("foo//")
@@ -392,7 +392,7 @@ impl CellPath {
     }
 
     /// ```
-    /// use btd::buck::types::CellPath;
+    /// use td_util_buck::types::CellPath;
     /// assert_eq!(CellPath::new("foo//bar.bzl").extension(), Some("bzl"));
     /// assert_eq!(CellPath::new("foo//bar.bzl/baz").extension(), None);
     /// assert_eq!(CellPath::new("foo//bar/baz").extension(), None);
@@ -408,8 +408,8 @@ impl CellPath {
     }
 
     /// ```
-    /// use btd::buck::cells::CellInfo;
-    /// use btd::buck::types::CellPath;
+    /// use td_util_buck::cells::CellInfo;
+    /// use td_util_buck::types::CellPath;
     /// let cells = CellInfo::testing();
     /// assert_eq!(
     ///     CellPath::new("foo//bar/source.txt")
@@ -471,7 +471,7 @@ impl CellPath {
     }
 
     /// ```
-    /// use btd::buck::types::CellPath;
+    /// use td_util_buck::types::CellPath;
     /// assert!(!CellPath::new("foo//bar/source.txt").is_package_file());
     /// assert!(CellPath::new("foo//bar/PACKAGE").is_package_file());
     /// assert!(!CellPath::new("foo//bar/PACKAGE.v2").is_package_file());
@@ -486,7 +486,7 @@ impl CellPath {
     }
 
     /// ```
-    /// use btd::buck::types::CellPath;
+    /// use td_util_buck::types::CellPath;
     /// assert!(!CellPath::new("foo//bar/rule.bzl").is_prelude_bzl_file());
     /// assert!(!CellPath::new("prelude//apple/TARGETS.v2").is_prelude_bzl_file());
     /// assert!(CellPath::new("prelude//apple/rule.bzl").is_prelude_bzl_file());
@@ -571,7 +571,7 @@ impl RuleType {
     }
 
     /// ```
-    /// use btd::buck::types::RuleType;
+    /// use td_util_buck::types::RuleType;
     /// assert_eq!(
     ///     RuleType::new("prelude//rules.bzl:genrule").short(),
     ///     "genrule"
@@ -586,8 +586,8 @@ impl RuleType {
     }
 
     /// ```
-    /// use btd::buck::types::CellPath;
-    /// use btd::buck::types::RuleType;
+    /// use td_util_buck::types::CellPath;
+    /// use td_util_buck::types::RuleType;
     /// assert_eq!(
     ///     RuleType::new("prelude//rules.bzl:genrule").file(),
     ///     CellPath::new("prelude//rules.bzl")
@@ -648,7 +648,7 @@ impl ProjectRelativePath {
     }
 
     /// ```
-    /// use btd::buck::types::ProjectRelativePath;
+    /// use td_util_buck::types::ProjectRelativePath;
     /// assert_eq!(
     ///     ProjectRelativePath::new("foo/bar.bzl").extension(),
     ///     Some("bzl")

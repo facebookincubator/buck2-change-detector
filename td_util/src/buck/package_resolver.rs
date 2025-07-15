@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use crate::buck::types::Package;
+use crate::types::Package;
 
 /// Perform the `PACKAGE` file resolution algorithm.
 #[derive(Debug)]

@@ -10,8 +10,9 @@
 
 use std::collections::HashSet;
 
-use crate::buck::targets::BuckTarget;
-use crate::buck::types::TargetLabel;
+use td_util_buck::targets::BuckTarget;
+use td_util_buck::types::TargetLabel;
+
 use crate::diff::ImpactTraceData;
 
 pub fn filter_targets_with_superset<'a>(
@@ -41,8 +42,9 @@ pub fn filter_targets_with_superset<'a>(
 
 #[cfg(test)]
 mod tests {
+    use td_util_buck::targets::BuckTarget;
+
     use super::*;
-    use crate::buck::targets::BuckTarget;
     use crate::diff::ImpactTraceData;
 
     fn create_test_target(name: &str, package: &str) -> BuckTarget {

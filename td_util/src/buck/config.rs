@@ -10,7 +10,7 @@
 
 //! Configuration that we hardcode, because parsing it is too expensive.
 
-use crate::buck::types::CellPath;
+use crate::types::CellPath;
 
 /// Certain bzl files should be excluded from transitive impact tracing.
 /// This list should *only* be extended if we are certain that changes to the file
