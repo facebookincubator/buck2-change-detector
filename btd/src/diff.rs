@@ -395,9 +395,14 @@ pub fn immediate_target_changes<'a>(
                 target,
                 ImpactTraceData {
                     added_labels: if reason == RootImpactKind::Labels {
-                        let old_set: HashSet<_> =
-                            old_target.labels.iter().map(|l| l.as_str()).collect();
+                        let old_set: HashSet<_> = old_target
+                            .package_values
+                            .labels
+                            .iter()
+                            .map(|l| l.as_str())
+                            .collect();
                         target
+                            .package_values
                             .labels
                             .iter()
                             .filter(|l| !old_set.contains(l.as_str()))
@@ -407,9 +412,14 @@ pub fn immediate_target_changes<'a>(
                         vec![]
                     },
                     removed_labels: if reason == RootImpactKind::Labels {
-                        let new_set: HashSet<_> =
-                            target.labels.iter().map(|l| l.as_str()).collect();
+                        let new_set: HashSet<_> = target
+                            .package_values
+                            .labels
+                            .iter()
+                            .map(|l| l.as_str())
+                            .collect();
                         old_target
+                            .package_values
                             .labels
                             .iter()
                             .filter(|l| !new_set.contains(l.as_str()))

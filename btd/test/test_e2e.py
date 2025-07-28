@@ -301,6 +301,7 @@ def check_properties(patch, rdeps):
                 "root_cause_target": "root//inner:baz",
                 "root_cause_reason": "labels",
                 "is_terminal": False,
+                "added_labels": ["ci:package"],
             },
         } in rdeps
     elif patch == "change_package_value":
