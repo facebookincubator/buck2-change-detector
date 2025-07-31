@@ -46,7 +46,8 @@ pub fn is_buckconfig_change(path: &CellPath) -> bool {
         || str.starts_with("fbsource//tools/buckconfigs/")
         || (ext.is_none()
             && (str.starts_with("fbsource//arvr/mode/")
-                || str.starts_with("fbsource//fbcode/mode/")))
+                || str.starts_with("fbsource//fbcode/mode/")
+                || str.starts_with("fbsource//fbobjc/mode/")))
 }
 
 #[cfg(test)]
