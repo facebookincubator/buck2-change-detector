@@ -15,6 +15,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::json::BUFFER_SIZE;
 use crate::zstd::is_zstd;
 
 pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
@@ -27,9 +28,9 @@ pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
 
     if is_zstd(file_path) {
         let encoder = zstd::Encoder::new(file, zstd::DEFAULT_COMPRESSION_LEVEL)?.auto_finish();
-        Ok(Box::new(BufWriter::new(encoder)))
+        Ok(Box::new(BufWriter::with_capacity(BUFFER_SIZE, encoder)))
     } else {
-        Ok(Box::new(BufWriter::new(file)))
+        Ok(Box::new(BufWriter::with_capacity(BUFFER_SIZE, file)))
     }
 }
 

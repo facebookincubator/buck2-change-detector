@@ -28,7 +28,7 @@ use serde::Serialize;
 use crate::zstd::is_zstd;
 
 /// Buffer size for reading files (10MB)
-const BUFFER_SIZE: usize = 10 * 1024 * 1024;
+pub const BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
 // Function definition mostly to get the error types to line up
 fn parse_line<T: for<'a> Deserialize<'a>>(x: Result<String, io::Error>) -> anyhow::Result<T> {
@@ -109,7 +109,7 @@ pub fn write_json_lines<W: Write, T: Serialize>(
     out: W,
     xs: impl IntoIterator<Item = T>,
 ) -> anyhow::Result<()> {
-    let mut writer = BufWriter::new(out);
+    let mut writer = BufWriter::with_capacity(BUFFER_SIZE, out);
     for x in xs.into_iter() {
         serde_json::to_writer(&mut writer, &x)?;
         writer.write_all(b"\n")?;
