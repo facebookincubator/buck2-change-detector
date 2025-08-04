@@ -15,14 +15,22 @@ use std::path::Path;
 
 use anyhow::Context;
 
-pub fn file_writer(file_path: &Path) -> anyhow::Result<impl Write + use<>> {
+use crate::zstd::is_zstd;
+
+pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(file_path)
         .with_context(|| format!("Unable to open file `{}` for writing", file_path.display()))?;
-    Ok(BufWriter::new(file))
+
+    if is_zstd(file_path) {
+        let encoder = zstd::Encoder::new(file, zstd::DEFAULT_COMPRESSION_LEVEL)?.auto_finish();
+        Ok(Box::new(BufWriter::new(encoder)))
+    } else {
+        Ok(Box::new(BufWriter::new(file)))
+    }
 }
 
 #[cfg(test)]
@@ -52,5 +60,26 @@ mod tests {
     #[test]
     pub fn test_write_error() {
         assert!(file_writer(Path::new("/invalid/file/path")).is_err());
+    }
+
+    #[test]
+    pub fn test_zstd_encoding() {
+        let out_dir = TempDir::new().unwrap();
+        let out_path = out_dir.path().join("test_artifact.zst");
+
+        file_writer(&out_path)
+            .unwrap()
+            .write_all(DATA.as_bytes())
+            .unwrap();
+
+        assert!(out_path.exists());
+        let compressed_data = fs::read(&out_path).unwrap();
+        assert!(!compressed_data.is_empty());
+
+        let file = fs::File::open(&out_path).unwrap();
+        let mut decoder = zstd::Decoder::new(file).unwrap();
+        let mut decompressed = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut decompressed).unwrap();
+        assert_eq!(decompressed, DATA);
     }
 }
