@@ -24,6 +24,7 @@ pub mod supertd_events;
 // @oss-disable: pub mod supertd_events_logger;
 pub mod tracing;
 pub mod workflow_error;
+pub mod zstd;
 
 /// Initialize `tracing` and `supertd_events` Scuba client.
 ///

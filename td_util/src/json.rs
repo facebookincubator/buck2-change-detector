@@ -25,6 +25,8 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::zstd::is_zstd;
+
 /// Buffer size for reading files (10MB)
 const BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
@@ -32,13 +34,6 @@ const BUFFER_SIZE: usize = 10 * 1024 * 1024;
 fn parse_line<T: for<'a> Deserialize<'a>>(x: Result<String, io::Error>) -> anyhow::Result<T> {
     let x = x?;
     serde_json::from_str(&x).with_context(|| format!("When parsing: {x}"))
-}
-
-fn is_zstd(filename: &Path) -> bool {
-    match filename.extension() {
-        Some(x) => x == "zst",
-        None => false,
-    }
 }
 
 fn open_file(filename: &Path) -> anyhow::Result<Box<dyn Read + Send>> {
