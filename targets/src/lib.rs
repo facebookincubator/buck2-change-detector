@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
@@ -20,6 +21,8 @@ use std::process::Command;
 use anyhow::anyhow;
 use clap::Parser;
 use td_util::command::display_command;
+use td_util::command::spawn;
+use td_util::file_writer::file_writer;
 use td_util::logging::elapsed;
 use td_util::workflow_error::WorkflowError;
 use td_util_buck::run::targets_arguments;
@@ -58,13 +61,25 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     )
 }
 
+fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
+    let mut command = Command::new(buck);
+    // This is an argument for buck.
+    if let Some(prefix) = isolation_dir {
+        command.args(["--isolation-dir", &prefix]);
+    }
+    command.args(targets_arguments());
+    command.args(arguments);
+    command
+}
+
 /// This function runs the `buck2 targets` command, utilizing various arguments to optimize its behavior for BTD/Citadel.
-/// The output can either be written to stdout or to a specified output file.
+/// The output can either be written to stdout or to a specified output file with automatic compression based on filepath.
 ///
 /// ### Arguments
 ///
 /// * `buck` - The command to run Buck, typically "buck2".
 /// * `output_file` - Optional path to the file where the output will be written. If not provided, the output is written to stdout.
+///   If the file has a .zst extension, output will be automatically compressed.
 /// * `dry_run` - If set to `true`, the command will print the command that would have been executed instead of executing it, without executing it.
 /// * `isolation_dir` - If set, the buck invocation will use this isolation prefix.
 /// * `arguments` - Additional arguments typically provided as patterns to be passed to the `buck2 targets` command.
@@ -75,26 +90,29 @@ pub fn run(
     isolation_dir: Option<String>,
     arguments: &[String],
 ) -> Result<(), WorkflowError> {
-    let mut command = Command::new(buck);
-
-    // This is an argument for buck.
-    if let Some(prefix) = isolation_dir {
-        command.args(["--isolation-dir", &prefix]);
-    }
-
-    command.args(targets_arguments());
-    if let Some(x) = &output_file {
-        command.arg("--output");
-        command.arg(x);
-    }
-    command.args(arguments);
+    let command = build_command(buck, isolation_dir, arguments);
 
     if dry_run {
         println!("{}", display_command(&command));
         return Ok(());
     }
 
-    let status = command.status().map_err(|err| anyhow!(err))?;
+    let (mut child, stdout) = spawn(command)?;
+
+    match output_file {
+        Some(path) => {
+            let mut writer = file_writer(&path)?;
+            std::io::copy(&mut BufReader::new(stdout), &mut writer)
+                .map_err(|err| anyhow!("Failed to copy output to file: {}", err))?;
+        }
+        None => {
+            std::io::copy(&mut BufReader::new(stdout), &mut std::io::stdout())
+                .map_err(|err| anyhow!("Failed to copy output to stdout: {}", err))?;
+        }
+    }
+
+    let status = child.wait().map_err(|err| anyhow!(err))?;
+
     if status.success() {
         td_util::scuba!(
             event: TARGETS_SUCCESS,

@@ -8,10 +8,15 @@
  * above-listed licenses.
  */
 
+use std::process::ChildStdout;
 use std::process::Command;
+use std::process::Stdio;
 use std::time::Instant;
 
+use anyhow::anyhow;
 use tracing::debug;
+
+use crate::workflow_error::WorkflowError;
 
 /// Run a command printing out debugging information.
 pub fn with_command<T>(
@@ -34,4 +39,15 @@ pub fn display_command(command: &Command) -> String {
         res.push(x);
     }
     res.to_string_lossy().into_owned()
+}
+
+/// Spawns a command with stdout piped and returns the child process and stdout handle.
+pub fn spawn(mut command: Command) -> Result<(std::process::Child, ChildStdout), WorkflowError> {
+    command.stdout(Stdio::piped());
+    let mut child = command.spawn().map_err(|err| anyhow!(err))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("Failed to capture stdout"))?;
+    Ok((child, stdout))
 }
