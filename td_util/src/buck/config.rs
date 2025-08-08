@@ -35,19 +35,30 @@ pub fn is_buck_deployment(path: &CellPath) -> bool {
 
 // Touching these files will let btd treat everything as affected.
 pub fn is_buckconfig_change(path: &CellPath) -> bool {
+    // List of important modefile dirs
+    const MODE_DIRECTORIES: &[&str] = &[
+        "fbsource//arvr/mode/",
+        "fbsource//fbandroid/mode/",
+        "fbsource//fbcode/mode/",
+        "fbsource//fbobjc/mode/",
+        "fbsource//xplat/mode/",
+    ];
+
     let ext = path.extension();
     let str = path.as_str();
+
     // Don't treat changes to buck2 tests as buckconfig changes, otherwise we run way too much CI on
     // these
     if str.contains("buck2/tests") {
         return false;
     }
+
     ext == Some("buckconfig")
         || str.starts_with("fbsource//tools/buckconfigs/")
         || (ext.is_none()
-            && (str.starts_with("fbsource//arvr/mode/")
-                || str.starts_with("fbsource//fbcode/mode/")
-                || str.starts_with("fbsource//fbobjc/mode/")))
+            && MODE_DIRECTORIES
+                .iter()
+                .any(|&prefix| str.starts_with(prefix)))
 }
 
 #[cfg(test)]
