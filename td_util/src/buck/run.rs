@@ -173,6 +173,6 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--json-lines",
         "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$",
         "--imports",
-        "--package-values-regex=^citadel\\.labels$",
+        "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
     ]
 }
