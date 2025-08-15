@@ -36,7 +36,6 @@ pub enum TdProject {
     Genai,
     Mobile,
     RL,
-    Waandroid,
     Wacommon,
     Waclient,
     Waios,
