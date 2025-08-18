@@ -63,13 +63,32 @@ impl Labels {
 
     pub fn filter_ci_labels(labels: &Labels) -> Labels {
         // We are filtering for CI specific labels so we can compare them and determine CI label changes
-        Labels(
-            labels
-                .iter()
-                .filter(|l| l.as_str().starts_with("ci:"))
-                .cloned()
-                .collect(),
-        )
+        // Handle special CI labels like "overwrite" and "skip_target"
+        let mut result = Vec::new();
+
+        for label in labels.iter() {
+            let label_str = label.as_str();
+            if let Some(ci_part) = label_str.strip_prefix("ci:") {
+                match ci_part {
+                    "overwrite" => {
+                        // Clear all previously collected CI labels
+                        result.clear();
+                    }
+                    "skip_target" => {
+                        // Return only ci:skip_target immediately
+                        return Labels(
+                            vec![InternString::new("ci:skip_target")].into_boxed_slice(),
+                        );
+                    }
+                    _ => {
+                        // Regular CI label, add it to results
+                        result.push(label.clone());
+                    }
+                }
+            }
+        }
+
+        Labels(result.into_boxed_slice())
     }
 
     pub fn any<F>(&self, predicate: F) -> bool
@@ -389,5 +408,104 @@ mod tests {
             }),
             &["c", "a", "test", "more"],
         )
+    }
+
+    #[test]
+    fn test_filter_ci_labels() {
+        fn test_filter(input: &[&str], expected: &[&str]) {
+            let labels =
+                Labels::from_strings(&input.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+            let filtered = Labels::filter_ci_labels(&labels);
+            let result: Vec<&str> = filtered.iter().map(|x| x.as_str()).collect();
+            assert_eq!(result, expected);
+        }
+
+        // Basic CI label filtering
+        test_filter(
+            &["ci:linux", "regular_label", "ci:opt"],
+            &["ci:linux", "ci:opt"],
+        );
+
+        // No CI labels
+        test_filter(&["regular_label", "another_label"], &[]);
+
+        // Empty labels
+        test_filter(&[], &[]);
+
+        // Only CI labels
+        test_filter(
+            &["ci:linux", "ci:opt", "ci:dev"],
+            &["ci:linux", "ci:opt", "ci:dev"],
+        );
+
+        // Test ci:overwrite clears previous CI labels
+        test_filter(
+            &["ci:linux", "ci:opt", "ci:overwrite", "ci:dev"],
+            &["ci:dev"],
+        );
+
+        // Test ci:overwrite with no labels after
+        test_filter(&["ci:linux", "ci:opt", "ci:overwrite"], &[]);
+
+        // Test ci:overwrite with mixed labels
+        test_filter(
+            &[
+                "ci:linux",
+                "regular_label",
+                "ci:overwrite",
+                "ci:dev",
+                "another_label",
+            ],
+            &["ci:dev"],
+        );
+
+        // Test multiple ci:overwrite
+        test_filter(
+            &[
+                "ci:linux",
+                "ci:overwrite",
+                "ci:opt",
+                "ci:overwrite",
+                "ci:dev",
+            ],
+            &["ci:dev"],
+        );
+
+        // Test ci:skip_target returns only ci:skip_target
+        test_filter(
+            &["ci:linux", "ci:opt", "ci:skip_target"],
+            &["ci:skip_target"],
+        );
+
+        // Test ci:skip_target with labels after (should still return only ci:skip_target)
+        test_filter(
+            &["ci:linux", "ci:skip_target", "ci:opt"],
+            &["ci:skip_target"],
+        );
+
+        // Test ci:skip_target with ci:overwrite (skip_target wins)
+        test_filter(
+            &["ci:linux", "ci:overwrite", "ci:opt", "ci:skip_target"],
+            &["ci:skip_target"],
+        );
+
+        // Test ci:overwrite after ci:skip_target (skip_target still wins)
+        test_filter(
+            &["ci:skip_target", "ci:linux", "ci:overwrite", "ci:opt"],
+            &["ci:skip_target"],
+        );
+
+        // Test special labels mixed with regular labels
+        test_filter(
+            &[
+                "regular1",
+                "ci:linux",
+                "regular2",
+                "ci:overwrite",
+                "regular3",
+                "ci:opt",
+            ],
+            &["ci:opt"],
+        );
     }
 }
