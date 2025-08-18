@@ -357,10 +357,11 @@ pub fn immediate_target_changes<'a>(
                 ImpactTraceData {
                     // We want to add addded and removed labels to trace data so we can flag key differences later on, this only gets included if reason is labels.
                     added_labels: if reason == RootImpactKind::Labels {
+                        let old_ci_labels = Labels::filter_ci_labels(&old_target.labels);
+                        let new_ci_labels = Labels::filter_ci_labels(&target.labels);
                         let old_set: HashSet<_> =
-                            old_target.labels.iter().map(|l| l.as_str()).collect();
-                        target
-                            .labels
+                            old_ci_labels.iter().map(|l| l.as_str()).collect();
+                        new_ci_labels
                             .iter()
                             .filter(|l| !old_set.contains(l.as_str()))
                             .map(|l| Arc::new(l.to_string()))
@@ -369,10 +370,11 @@ pub fn immediate_target_changes<'a>(
                         vec![]
                     },
                     removed_labels: if reason == RootImpactKind::Labels {
+                        let old_ci_labels = Labels::filter_ci_labels(&old_target.labels);
+                        let new_ci_labels = Labels::filter_ci_labels(&target.labels);
                         let new_set: HashSet<_> =
-                            target.labels.iter().map(|l| l.as_str()).collect();
-                        old_target
-                            .labels
+                            new_ci_labels.iter().map(|l| l.as_str()).collect();
+                        old_ci_labels
                             .iter()
                             .filter(|l| !new_set.contains(l.as_str()))
                             .map(|l| Arc::new(l.to_string()))
@@ -395,15 +397,12 @@ pub fn immediate_target_changes<'a>(
                 target,
                 ImpactTraceData {
                     added_labels: if reason == RootImpactKind::Labels {
-                        let old_set: HashSet<_> = old_target
-                            .package_values
-                            .labels
-                            .iter()
-                            .map(|l| l.as_str())
-                            .collect();
-                        target
-                            .package_values
-                            .labels
+                        let old_ci_labels =
+                            Labels::filter_ci_labels(&old_target.package_values.labels);
+                        let new_ci_labels = Labels::filter_ci_labels(&target.package_values.labels);
+                        let old_set: HashSet<_> =
+                            old_ci_labels.iter().map(|l| l.as_str()).collect();
+                        new_ci_labels
                             .iter()
                             .filter(|l| !old_set.contains(l.as_str()))
                             .map(|l| Arc::new(l.to_string()))
@@ -412,15 +411,12 @@ pub fn immediate_target_changes<'a>(
                         vec![]
                     },
                     removed_labels: if reason == RootImpactKind::Labels {
-                        let new_set: HashSet<_> = target
-                            .package_values
-                            .labels
-                            .iter()
-                            .map(|l| l.as_str())
-                            .collect();
-                        old_target
-                            .package_values
-                            .labels
+                        let old_ci_labels =
+                            Labels::filter_ci_labels(&old_target.package_values.labels);
+                        let new_ci_labels = Labels::filter_ci_labels(&target.package_values.labels);
+                        let new_set: HashSet<_> =
+                            new_ci_labels.iter().map(|l| l.as_str()).collect();
+                        old_ci_labels
                             .iter()
                             .filter(|l| !new_set.contains(l.as_str()))
                             .map(|l| Arc::new(l.to_string()))
