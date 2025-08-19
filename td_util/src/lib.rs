@@ -12,7 +12,7 @@
 pub mod cli;
 pub mod command;
 pub mod executor;
-pub mod file_writer;
+pub mod file_io;
 pub mod json;
 pub mod knobs;
 pub mod logging;

@@ -22,7 +22,7 @@ use anyhow::anyhow;
 use clap::Parser;
 use td_util::command::display_command;
 use td_util::command::spawn;
-use td_util::file_writer::file_writer;
+use td_util::file_io::file_writer;
 use td_util::logging::elapsed;
 use td_util::workflow_error::WorkflowError;
 use td_util_buck::run::targets_arguments;
