@@ -49,6 +49,34 @@ pub fn file_reader(file_path: &Path) -> anyhow::Result<Box<dyn Read>> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SerializationFormat {
+    Json,
+    JsonLines,
+    Bincode,
+}
+
+pub fn detect_format_from_path(path: &Path) -> anyhow::Result<SerializationFormat> {
+    let mut check_path = path;
+
+    // Handle .zst extension by checking the file stem
+    if path.extension().and_then(|s| s.to_str()) == Some("zst") {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            check_path = Path::new(stem);
+        }
+    }
+
+    match check_path.extension().and_then(|s| s.to_str()) {
+        Some("json") => Ok(SerializationFormat::Json),
+        Some("jsonl") => Ok(SerializationFormat::JsonLines),
+        Some("bin") => Ok(SerializationFormat::Bincode),
+        _ => Err(anyhow::anyhow!(
+            "Unknown format for path: {}. Supported: .json, .jsonl, .bin (with optional .zst compression)",
+            path.display()
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
