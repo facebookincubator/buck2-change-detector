@@ -161,6 +161,38 @@ impl TargetGraph {
     pub fn get_minimized_target(&self, id: TargetId) -> Option<MinimizedBuckTarget> {
         self.minimized_targets.get(&id).map(|entry| entry.clone())
     }
+
+    // Size analysis methods
+    pub fn rdeps_len(&self) -> usize {
+        self.rdeps.len()
+    }
+
+    pub fn rule_types_len(&self) -> usize {
+        self.rule_type_id_to_string.len()
+    }
+
+    pub fn oncalls_len(&self) -> usize {
+        self.oncall_id_to_string.len()
+    }
+
+    pub fn labels_len(&self) -> usize {
+        self.label_id_to_string.len()
+    }
+
+    pub fn minimized_targets_len(&self) -> usize {
+        self.minimized_targets.len()
+    }
+
+    /// Print a summary of the DashMap sizes for analysis
+    pub fn print_size_analysis(&self) {
+        tracing::info!("TargetGraph DashMap sizes:");
+        tracing::info!("  targets: {}", self.len());
+        tracing::info!("  rdeps: {}", self.rdeps_len());
+        tracing::info!("  rule_types: {}", self.rule_types_len());
+        tracing::info!("  oncalls: {}", self.oncalls_len());
+        tracing::info!("  labels: {}", self.labels_len());
+        tracing::info!("  minimized_targets: {}", self.minimized_targets_len());
+    }
 }
 
 impl Default for TargetGraph {
