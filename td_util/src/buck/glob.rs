@@ -115,4 +115,53 @@ mod tests {
             false,
         );
     }
+
+    #[test]
+    fn test_dot_handling() {
+        // require_literal_leading_dot is true, so this fails
+        // This test is to document the behavior - don't take
+        // it as an endorsement
+        many(
+            &["www/**/*", "www/**/.*"],
+            "www/.llms/rules/mvwa_integrity_config.md",
+            false,
+        );
+        // Globs that cover literally everything in wwww
+        many(
+            &["www/**/*", "www/**/.*/**/*", "www/**/.*", "www/**/.*/**/.*"],
+            "www/.llms/rules/mvwa_integrity_config.md",
+            true,
+        );
+        many(
+            &["www/**/*", "www/**/.*/**/*", "www/**/.*", "www/**/.*/**/.*"],
+            "www/foo/bar/.llms/rules/mvwa_integrity_config.md",
+            true,
+        );
+        many(
+            &["www/**/*", "www/**/.*/**/*", "www/**/.*", "www/**/.*/**/.*"],
+            "www/foo/bar/.llms/rules/.mvwa_integrity_config.md",
+            true,
+        );
+        // Proof that all are needed
+        many(
+            &["www/**/.*/**/*", "www/**/.*", "www/**/.*/**/.*"],
+            "www/foo/bar/llms/rules/mvwa_integrity_config.md",
+            false,
+        );
+        many(
+            &["www/**/*", "www/**/.*", "www/**/.*/**/.*"],
+            "www/foo/bar/.llms/rules/mvwa_integrity_config.md",
+            false,
+        );
+        many(
+            &["www/**/*", "www/**/.*/**/*", "www/**/.*/**/.*"],
+            "www/foo/bar/llms/rules/.mvwa_integrity_config.md",
+            false,
+        );
+        many(
+            &["www/**/*", "www/**/.*/**/*", "www/**/.*"],
+            "www/foo/bar/.llms/rules/.mvwa_integrity_config.md",
+            false,
+        );
+    }
 }
