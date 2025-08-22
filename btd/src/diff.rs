@@ -203,6 +203,9 @@ impl ImpactTraceData {
 #[derive(serde::Serialize, serde::Deserialize, parse_display::Display)]
 #[serde(rename_all = "snake_case")]
 #[display(style = "snake_case")]
+/// When adding a new impact kind, ensure you also update
+/// [`RootImpactKindReason`](https://fburl.com/code/qqk3abaz) in the `www` repository.
+/// After making changes, run `meerkat` to apply the updates.
 pub enum RootImpactKind {
     /// This target is new.
     New,
