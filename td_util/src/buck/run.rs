@@ -21,6 +21,7 @@ use thiserror::Error;
 
 use crate::cells::CellInfo;
 use crate::types::Package;
+use crate::types::ProjectRelativePath;
 use crate::types::TargetPattern;
 
 /// A struct to represent running Buck2 commands.
@@ -152,6 +153,34 @@ impl Buck2 {
 
         with_command(command, |mut command| Ok(command.status()?.exit_ok()?))
     }
+
+    pub fn owners(
+        &mut self,
+        extra_args: &[String],
+        changes: &[ProjectRelativePath],
+    ) -> anyhow::Result<String> {
+        assert!(!changes.is_empty());
+
+        let (_file, at_file) = create_at_file_arg(changes, "\n")?;
+
+        let mut command = self.command();
+        command
+            .arg("uquery")
+            .arg("--json")
+            .arg("owner(%s)")
+            .arg(at_file)
+            .args(extra_args);
+        command.current_dir(self.root()?);
+
+        let res = with_command(command, |mut command| {
+            let res = command.output()?;
+            res.status.exit_ok().with_context(|| {
+                format!("Buck2 stderr: {}", String::from_utf8_lossy(&res.stderr))
+            })?;
+            Ok(res)
+        })?;
+        Ok(String::from_utf8(res.stdout)?)
+    }
 }
 
 pub fn targets_arguments() -> &'static [&'static str] {
@@ -166,4 +195,39 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--imports",
         "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
     ]
+}
+
+#[cfg(test)]
+mod tests {
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_owners_command() {
+        let mut buck = Buck2::new("buck2".to_string(), None);
+        let changes = vec![ProjectRelativePath::new(
+            "fbcode/target_determinator/td_util/src/buck/run.rs",
+        )];
+        let extra_args = vec![];
+
+        let result = buck.owners(&extra_args, &changes);
+
+        match result {
+            Ok(output) => {
+                let expected_output = json!({
+                    "fbcode/target_determinator/td_util/src/buck/run.rs": [
+                        "fbcode//target_determinator/td_util:buck-unittest",
+                        "fbcode//target_determinator/td_util:buck"
+                    ]
+                });
+                let expected_string = serde_json::to_string_pretty(&expected_output).unwrap();
+                assert_eq!(output.trim(), expected_string.trim());
+            }
+            Err(e) => {
+                println!("Command failed: {}", e);
+            }
+        }
+    }
 }
