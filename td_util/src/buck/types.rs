@@ -680,6 +680,12 @@ impl ProjectRelativePath {
     }
 }
 
+impl AsRef<str> for ProjectRelativePath {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 #[derive(Debug)]
 pub struct CellRelativePath(String);
 
