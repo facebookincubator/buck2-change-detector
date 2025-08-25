@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use std::ffi::OsString;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,9 +15,8 @@ use std::process::Command;
 use anyhow::Context as _;
 use audit::audit_cell_arguments;
 use audit::audit_config_arguments;
-use itertools::Itertools;
+use td_util::command::create_at_file_arg;
 use td_util::command::with_command;
-use tempfile::NamedTempFile;
 use thiserror::Error;
 
 use crate::cells::CellInfo;
@@ -143,13 +140,7 @@ impl Buck2 {
     ) -> anyhow::Result<()> {
         assert!(!targets.is_empty());
 
-        let mut file = NamedTempFile::new()?;
-        let target_data = targets.iter().map(|x| x.as_str()).join("\n");
-        file.write_all(target_data.as_bytes())?;
-        file.flush()?;
-        let mut at_file = OsString::new();
-        at_file.push("@");
-        at_file.push(file.path());
+        let (_file, at_file) = create_at_file_arg(targets, "\n")?;
 
         let mut command = self.command();
         command

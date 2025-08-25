@@ -8,12 +8,16 @@
  * above-listed licenses.
  */
 
+use std::ffi::OsString;
+use std::io::Write;
 use std::process::ChildStdout;
 use std::process::Command;
 use std::process::Stdio;
 use std::time::Instant;
 
 use anyhow::anyhow;
+use itertools::Itertools;
+use tempfile::NamedTempFile;
 use tracing::debug;
 
 use crate::workflow_error::WorkflowError;
@@ -50,4 +54,24 @@ pub fn spawn(mut command: Command) -> Result<(std::process::Child, ChildStdout),
         .take()
         .ok_or_else(|| anyhow!("Failed to capture stdout"))?;
     Ok((child, stdout))
+}
+
+/// Creates a temporary file with the given content and returns an OsString
+/// in "@file" format suitable for command line tools that accept file arguments.
+///
+/// This is commonly used with tools like Buck2 that accept target lists via @file syntax.
+pub fn create_at_file_arg<T: AsRef<str>>(
+    items: &[T],
+    separator: &str,
+) -> anyhow::Result<(NamedTempFile, OsString)> {
+    let mut file = NamedTempFile::new()?;
+    let content = items.iter().map(|x| x.as_ref()).join(separator);
+    file.write_all(content.as_bytes())?;
+    file.flush()?;
+
+    let mut at_file = OsString::new();
+    at_file.push("@");
+    at_file.push(file.path());
+
+    Ok((file, at_file))
 }
