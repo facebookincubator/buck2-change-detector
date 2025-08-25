@@ -278,6 +278,12 @@ impl TargetPattern {
     }
 }
 
+impl AsRef<str> for TargetPattern {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl FromStr for TargetPattern {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
