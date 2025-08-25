@@ -637,7 +637,7 @@ impl TargetHash {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Display)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Display, Deserialize, Serialize)]
 pub struct ProjectRelativePath(String);
 
 impl ProjectRelativePath {

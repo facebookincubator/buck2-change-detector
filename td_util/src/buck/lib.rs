@@ -17,6 +17,7 @@ pub mod config;
 pub mod glob;
 pub mod ignore_set;
 pub mod labels;
+pub mod owners;
 pub mod package_resolver;
 pub mod run;
 pub mod target_graph;
