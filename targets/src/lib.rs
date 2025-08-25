@@ -61,7 +61,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     )
 }
 
-fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
+pub fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
     let mut command = Command::new(buck);
     // This is an argument for buck.
     if let Some(prefix) = isolation_dir {
