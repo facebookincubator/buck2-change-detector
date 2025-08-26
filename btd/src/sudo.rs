@@ -18,7 +18,7 @@ use td_util_buck::types::TargetLabelKeyRef;
 
 // Currently, this function doesn't support progagating 'uses_sudo' label for target patterns.
 // We can possibly live with this version until a use case found.
-pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKeyRef> {
+pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKeyRef<'_>> {
     let mut rdeps: HashMap<&TargetLabel, Vec<&BuckTarget>> =
         HashMap::with_capacity(targets.len_targets_upperbound());
     let mut todo: Vec<&BuckTarget> = Vec::new();

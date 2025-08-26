@@ -94,7 +94,7 @@ impl TargetLabel {
 pub struct TargetLabelKey(Package, TargetName);
 
 impl TargetLabelKey {
-    pub fn to_ref(&self) -> TargetLabelKeyRef {
+    pub fn to_ref(&self) -> TargetLabelKeyRef<'_> {
         TargetLabelKeyRef::new(&self.0, &self.1)
     }
 }

@@ -49,7 +49,7 @@ impl Targets {
     }
 
     /// Create a map from target key to target
-    pub fn targets_by_label_key(&self) -> HashMap<TargetLabelKeyRef, &BuckTarget> {
+    pub fn targets_by_label_key(&self) -> HashMap<TargetLabelKeyRef<'_>, &BuckTarget> {
         let mut res = HashMap::with_capacity(self.len_targets_upperbound());
         for x in self.targets() {
             res.insert(x.label_key(), x);
@@ -192,7 +192,7 @@ impl BuckTarget {
         self.package.join(&self.name)
     }
 
-    pub fn label_key(&self) -> TargetLabelKeyRef {
+    pub fn label_key(&self) -> TargetLabelKeyRef<'_> {
         TargetLabelKeyRef::new(&self.package, &self.name)
     }
 
