@@ -106,10 +106,10 @@ pub fn init(fb: fbinit::FacebookInit) -> ScubaClientGuard {
 /// ```
 #[macro_export]
 macro_rules! scuba {
-    ( event: $event:ident $(, $key:ident : $value:expr_2021)* $(,)? ) => {
+    ( event: $event:ident $(, $key:ident : $value:expr)* $(,)? ) => {
         // @oss-disable: $crate::scuba_logger! {event: $event $(, $key : $value)*};
     };
-    ( $($key:ident : $value:expr_2021),* $(,)? ) => {
+    ( $($key:ident : $value:expr),* $(,)? ) => {
         compile_error!("`event` must be the first field in the `scuba!` macro");
     };
 }
