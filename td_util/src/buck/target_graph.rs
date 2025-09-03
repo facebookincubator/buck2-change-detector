@@ -244,6 +244,59 @@ impl TargetGraph {
         package_id_to_path
     );
 
+    impl_collection_storage!(
+        TargetId,
+        GlobPatternId,
+        store_ci_srcs,
+        add_ci_src,
+        get_ci_srcs,
+        ci_srcs_len,
+        iter_ci_srcs,
+        target_id_to_ci_srcs
+    );
+    impl_collection_storage!(
+        TargetId,
+        GlobPatternId,
+        store_ci_srcs_must_match,
+        add_ci_src_must_match,
+        get_ci_srcs_must_match,
+        ci_srcs_must_match_len,
+        iter_ci_srcs_must_match,
+        target_id_to_ci_srcs_must_match
+    );
+
+    impl_collection_storage!(
+        PackageId,
+        String,
+        store_errors,
+        add_error,
+        get_errors,
+        errors_len,
+        iter_packages_with_errors,
+        package_id_to_errors
+    );
+
+    impl_collection_storage!(
+        TargetId,
+        Package,
+        store_ci_deps_package_patterns,
+        add_ci_deps_package_pattern,
+        get_ci_deps_package_patterns,
+        ci_deps_package_patterns_len,
+        iter_ci_deps_package_patterns,
+        target_id_to_ci_deps_package_patterns
+    );
+    impl_collection_storage!(
+        TargetId,
+        Package,
+        store_ci_deps_recursive_patterns,
+        add_ci_deps_recursive_pattern,
+        get_ci_deps_recursive_patterns,
+        ci_deps_recursive_patterns_len,
+        iter_ci_deps_recursive_patterns,
+        target_id_to_ci_deps_recursive_patterns
+    );
+
     // Bidirectional dependencies storage - always maintains both directions
     pub fn add_rdep(&self, target_id: TargetId, dependent_target: TargetId) {
         // Note: We intentionally don't check for duplicate existence for performance reasons.
@@ -385,15 +438,38 @@ impl TargetGraph {
         self.minimized_targets.len()
     }
 
-    /// Print a summary of the DashMap sizes for analysis
+    /// Display analysis of internal data structures
     pub fn print_size_analysis(&self) {
+        // Create a vector of tuples (name, size) for all storage collections
+        let sizes = vec![
+            ("targets", self.targets_len()),
+            ("rdeps", self.rdeps_len()),
+            ("deps", self.deps_len()),
+            ("rule_types", self.rule_types_len()),
+            ("oncalls", self.oncalls_len()),
+            ("labels", self.labels_len()),
+            ("minimized_targets", self.minimized_targets_len()),
+            ("glob_patterns", self.glob_patterns_len()),
+            ("files", self.files_len()),
+            ("file_rdeps", self.file_rdeps_len()),
+            ("packages", self.packages_len()),
+            ("errors", self.errors_len()),
+            ("ci_srcs", self.ci_srcs_len()),
+            ("ci_srcs_must_match", self.ci_srcs_must_match_len()),
+            (
+                "ci_deps_package_patterns",
+                self.ci_deps_package_patterns_len(),
+            ),
+            (
+                "ci_deps_recursive_patterns",
+                self.ci_deps_recursive_patterns_len(),
+            ),
+        ];
+
         tracing::info!("TargetGraph DashMap sizes:");
-        tracing::info!("  targets: {}", self.len());
-        tracing::info!("  rdeps: {}", self.rdeps_len());
-        tracing::info!("  rule_types: {}", self.rule_types_len());
-        tracing::info!("  oncalls: {}", self.oncalls_len());
-        tracing::info!("  labels: {}", self.labels_len());
-        tracing::info!("  minimized_targets: {}", self.minimized_targets_len());
+        for (name, size) in sizes {
+            tracing::info!("  {}: {}", name, size);
+        }
     }
 }
 
