@@ -16,6 +16,60 @@ use fnv::FnvHasher;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::types::Package;
+
+macro_rules! impl_string_storage {
+    ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
+        pub fn $store_method(&self, s: &str) -> $id_type {
+            let id = s.parse().unwrap();
+            self.$map_field.insert(id, s.to_string());
+            id
+        }
+
+        pub fn $get_string_method(&self, id: $id_type) -> Option<String> {
+            self.$map_field.get(&id).map(|v| v.clone())
+        }
+
+        pub fn $len_method(&self) -> usize {
+            self.$map_field.len()
+        }
+
+        pub fn $iter_method(&self) -> impl Iterator<Item = ($id_type, String)> + '_ {
+            self.$map_field
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+        }
+    };
+}
+
+macro_rules! impl_collection_storage {
+    ($key_type:ident, $value_type:ident, $store_method:ident, $add_method:ident, $get_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
+        pub fn $store_method(&self, key: $key_type, values: Vec<$value_type>) {
+            if !values.is_empty() {
+                self.$map_field.insert(key, values);
+            }
+        }
+
+        pub fn $add_method(&self, key: $key_type, value: $value_type) {
+            self.$map_field.entry(key).or_default().push(value);
+        }
+
+        pub fn $get_method(&self, key: $key_type) -> Option<Vec<$value_type>> {
+            self.$map_field.get(&key).map(|v| v.clone())
+        }
+
+        pub fn $len_method(&self) -> usize {
+            self.$map_field.len()
+        }
+
+        pub fn $iter_method(&self) -> impl Iterator<Item = ($key_type, Vec<$value_type>)> + '_ {
+            self.$map_field
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+        }
+    };
+}
+
 macro_rules! define_id_type {
     ($name:ident) => {
         #[derive(
@@ -67,7 +121,6 @@ pub struct MinimizedBuckTarget {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TargetGraph {
-    rdeps: DashMap<TargetId, Vec<TargetId>>,
     // We store BuckTargets as ids as a form of string interning
     // These maps are used to convert Ids back to strings
     target_id_to_label: DashMap<TargetId, String>,
@@ -75,86 +128,137 @@ pub struct TargetGraph {
     oncall_id_to_string: DashMap<OncallId, String>,
     label_id_to_string: DashMap<LabelId, String>,
     minimized_targets: DashMap<TargetId, MinimizedBuckTarget>,
+    glob_pattern_id_to_string: DashMap<GlobPatternId, String>,
+
+    // Bidirectional dependency tracking
+    target_id_to_rdeps: DashMap<TargetId, Vec<TargetId>>,
+    target_id_to_deps: DashMap<TargetId, Vec<TargetId>>,
+
+    // File relationship tracking for BZL imports
+    file_id_to_path: DashMap<FileId, String>,
+    file_id_to_rdeps: DashMap<FileId, Vec<FileId>>,
+
+    // Package error tracking
+    package_id_to_path: DashMap<PackageId, String>,
+    package_id_to_errors: DashMap<PackageId, Vec<String>>,
+
+    // CI pattern storage
+    target_id_to_ci_srcs: DashMap<TargetId, Vec<GlobPatternId>>,
+    target_id_to_ci_srcs_must_match: DashMap<TargetId, Vec<GlobPatternId>>,
+
+    // CI deps patterns storage
+    target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<Package>>,
+    target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<Package>>,
 }
 
 impl TargetGraph {
     pub fn new() -> Self {
         Self {
-            rdeps: DashMap::new(),
             target_id_to_label: DashMap::new(),
             rule_type_id_to_string: DashMap::new(),
             oncall_id_to_string: DashMap::new(),
             label_id_to_string: DashMap::new(),
             minimized_targets: DashMap::new(),
+            glob_pattern_id_to_string: DashMap::new(),
+            target_id_to_rdeps: DashMap::new(),
+            target_id_to_deps: DashMap::new(),
+            file_id_to_path: DashMap::new(),
+            file_id_to_rdeps: DashMap::new(),
+            package_id_to_path: DashMap::new(),
+            package_id_to_errors: DashMap::new(),
+            target_id_to_ci_srcs: DashMap::new(),
+            target_id_to_ci_srcs_must_match: DashMap::new(),
+            target_id_to_ci_deps_package_patterns: DashMap::new(),
+            target_id_to_ci_deps_recursive_patterns: DashMap::new(),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.target_id_to_label.len()
+        self.targets_len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.target_id_to_label.is_empty()
+        self.targets_len() == 0
     }
 
-    pub fn store_target(&self, target_label: &str) -> TargetId {
-        let id = target_label.parse().unwrap();
-        self.target_id_to_label.insert(id, target_label.to_string());
-        id
-    }
+    impl_string_storage!(
+        TargetId,
+        store_target,
+        get_target_label,
+        targets_len,
+        iter_targets,
+        target_id_to_label
+    );
 
-    pub fn store_rule_type(&self, rule_type: &str) -> RuleTypeId {
-        let id = rule_type.parse().unwrap();
-        self.rule_type_id_to_string
-            .insert(id, rule_type.to_string());
-        id
-    }
+    impl_string_storage!(
+        RuleTypeId,
+        store_rule_type,
+        get_rule_type_string,
+        rule_types_len,
+        iter_rule_types,
+        rule_type_id_to_string
+    );
 
-    pub fn store_oncall(&self, oncall: &str) -> OncallId {
-        let id = oncall.parse().unwrap();
-        self.oncall_id_to_string.insert(id, oncall.to_string());
-        id
-    }
+    impl_string_storage!(
+        OncallId,
+        store_oncall,
+        get_oncall_string,
+        oncalls_len,
+        iter_oncalls,
+        oncall_id_to_string
+    );
 
-    pub fn store_label(&self, label: &str) -> LabelId {
-        let id = label.parse().unwrap();
-        self.label_id_to_string.insert(id, label.to_string());
-        id
-    }
+    impl_string_storage!(
+        LabelId,
+        store_label,
+        get_label_string,
+        labels_len,
+        iter_labels,
+        label_id_to_string
+    );
 
-    // Reverse lookup methods, returns string to release dashmap guard.
-    pub fn get_target_label(&self, id: TargetId) -> Option<String> {
-        self.target_id_to_label.get(&id).map(|v| v.clone())
-    }
+    impl_string_storage!(
+        GlobPatternId,
+        store_glob_pattern,
+        get_glob_pattern_string,
+        glob_patterns_len,
+        iter_glob_patterns,
+        glob_pattern_id_to_string
+    );
 
-    pub fn get_rule_type_string(&self, id: RuleTypeId) -> Option<String> {
-        self.rule_type_id_to_string.get(&id).map(|v| v.clone())
-    }
+    impl_string_storage!(
+        FileId,
+        store_file,
+        get_file_path,
+        files_len,
+        iter_files,
+        file_id_to_path
+    );
 
-    pub fn get_oncall_string(&self, id: OncallId) -> Option<String> {
-        self.oncall_id_to_string.get(&id).map(|v| v.clone())
-    }
-
-    pub fn get_label_string(&self, id: LabelId) -> Option<String> {
-        self.label_id_to_string.get(&id).map(|v| v.clone())
-    }
+    impl_string_storage!(
+        PackageId,
+        store_package,
+        get_package_path,
+        packages_len,
+        iter_packages,
+        package_id_to_path
+    );
 
     pub fn add_rdep(&self, target: TargetId, dependent_target: TargetId) {
-        self.rdeps
+        self.target_id_to_rdeps
             .entry(target)
             .or_insert_with(Vec::new)
             .push(dependent_target);
     }
 
     pub fn get_rdeps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
-        self.rdeps.get(&target_id).map(|entry| entry.clone())
+        self.target_id_to_rdeps
+            .get(&target_id)
+            .map(|entry| entry.clone())
     }
 
-    pub fn get_all_targets(&self) -> Vec<TargetId> {
-        self.target_id_to_label
-            .iter()
-            .map(|entry| *entry.key())
-            .collect()
+    pub fn get_all_targets(&self) -> impl Iterator<Item = TargetId> + '_ {
+        self.target_id_to_label.iter().map(|entry| *entry.key())
     }
 
     pub fn store_minimized_target(&self, target_id: TargetId, target: MinimizedBuckTarget) {
@@ -167,19 +271,11 @@ impl TargetGraph {
 
     // Size analysis methods
     pub fn rdeps_len(&self) -> usize {
-        self.rdeps.len()
+        self.target_id_to_rdeps.len()
     }
 
-    pub fn rule_types_len(&self) -> usize {
-        self.rule_type_id_to_string.len()
-    }
-
-    pub fn oncalls_len(&self) -> usize {
-        self.oncall_id_to_string.len()
-    }
-
-    pub fn labels_len(&self) -> usize {
-        self.label_id_to_string.len()
+    pub fn deps_len(&self) -> usize {
+        self.target_id_to_deps.len()
     }
 
     pub fn minimized_targets_len(&self) -> usize {
