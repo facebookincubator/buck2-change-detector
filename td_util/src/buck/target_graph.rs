@@ -54,6 +54,9 @@ define_id_type!(TargetId);
 define_id_type!(RuleTypeId);
 define_id_type!(OncallId);
 define_id_type!(LabelId);
+define_id_type!(GlobPatternId);
+define_id_type!(FileId);
+define_id_type!(PackageId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinimizedBuckTarget {
@@ -380,5 +383,32 @@ mod tests {
 
         let non_existent_target_id: TargetId = "fbcode//non_existent:target".parse().unwrap();
         assert_eq!(graph.get_minimized_target(non_existent_target_id), None);
+    }
+
+    #[test]
+    fn test_new_extended_id_types() {
+        // Test GlobPatternId
+        let pattern1 = "**/*.rs";
+        let pattern2 = "**/*.py";
+        let pattern_id1: GlobPatternId = pattern1.parse().unwrap();
+        let pattern_id2: GlobPatternId = pattern2.parse().unwrap();
+        assert_ne!(pattern_id1, pattern_id2);
+        assert_eq!(pattern1.parse::<GlobPatternId>().unwrap(), pattern_id1);
+
+        // Test FileId
+        let file1 = "src/main.rs";
+        let file2 = "src/lib.rs";
+        let file_id1: FileId = file1.parse().unwrap();
+        let file_id2: FileId = file2.parse().unwrap();
+        assert_ne!(file_id1, file_id2);
+        assert_eq!(file1.parse::<FileId>().unwrap(), file_id1);
+
+        // Test PackageId
+        let package1 = "fbcode//target_determinator";
+        let package2 = "fbcode//target_determinator/btd";
+        let package_id1: PackageId = package1.parse().unwrap();
+        let package_id2: PackageId = package2.parse().unwrap();
+        assert_ne!(package_id1, package_id2);
+        assert_eq!(package1.parse::<PackageId>().unwrap(), package_id1);
     }
 }
