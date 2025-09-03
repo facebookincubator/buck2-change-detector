@@ -244,17 +244,103 @@ impl TargetGraph {
         package_id_to_path
     );
 
-    pub fn add_rdep(&self, target: TargetId, dependent_target: TargetId) {
+    // Bidirectional dependencies storage - always maintains both directions
+    pub fn add_rdep(&self, target_id: TargetId, dependent_target: TargetId) {
+        // Note: We intentionally don't check for duplicate existence for performance reasons.
+        // Store reverse dependency: dependent_target depends on target_id
         self.target_id_to_rdeps
-            .entry(target)
-            .or_insert_with(Vec::new)
+            .entry(target_id)
+            .or_default()
             .push(dependent_target);
+
+        // Also store forward dependency: dependent_target -> target_id
+        self.target_id_to_deps
+            .entry(dependent_target)
+            .or_default()
+            .push(target_id);
+    }
+
+    pub fn remove_rdep(&self, target_id: TargetId, dependent_target: TargetId) {
+        // Remove from reverse dependencies
+        if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&target_id) {
+            rdeps.retain(|&id| id != dependent_target);
+            if rdeps.is_empty() {
+                drop(rdeps);
+                self.target_id_to_rdeps.remove(&target_id);
+            }
+        }
+
+        // Remove from forward dependencies
+        if let Some(mut deps) = self.target_id_to_deps.get_mut(&dependent_target) {
+            deps.retain(|&id| id != target_id);
+            if deps.is_empty() {
+                drop(deps);
+                self.target_id_to_deps.remove(&dependent_target);
+            }
+        }
     }
 
     pub fn get_rdeps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
-        self.target_id_to_rdeps
-            .get(&target_id)
-            .map(|entry| entry.clone())
+        self.target_id_to_rdeps.get(&target_id).map(|v| v.clone())
+    }
+
+    pub fn get_deps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
+        self.target_id_to_deps.get(&target_id).map(|v| v.clone())
+    }
+
+    /// Remove a target and all its associated data from the graph
+    ///
+    /// This includes:
+    /// - Removing the target from all other targets' dependencies
+    /// - Removing all dependencies of this target
+    /// - Removing all CI pattern associations
+    /// - Removing the target from the target map
+    pub fn remove_target(&self, target_id: TargetId) {
+        // Get all targets this target depends on
+        if let Some(deps) = self.get_deps(target_id) {
+            // For each dependency, remove target_id from their rdeps
+            for dep_id in deps {
+                if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) {
+                    rdeps.retain(|&id| id != target_id);
+                    // Remove the entry if empty
+                    if rdeps.is_empty() {
+                        drop(rdeps);
+                        self.target_id_to_rdeps.remove(&dep_id);
+                    }
+                }
+            }
+        }
+
+        // Get all targets that depend on this target
+        if let Some(rdeps) = self.get_rdeps(target_id) {
+            // For each dependent, remove target_id from their deps
+            for rdep_id in rdeps {
+                if let Some(mut deps) = self.target_id_to_deps.get_mut(&rdep_id) {
+                    deps.retain(|&id| id != target_id);
+                    // Remove the entry if empty
+                    if deps.is_empty() {
+                        drop(deps);
+                        self.target_id_to_deps.remove(&rdep_id);
+                    }
+                }
+            }
+        }
+
+        // Clear dependency relationships
+        self.target_id_to_deps.remove(&target_id);
+        self.target_id_to_rdeps.remove(&target_id);
+
+        // Remove CI pattern associations
+        self.target_id_to_ci_srcs.remove(&target_id);
+        self.target_id_to_ci_srcs_must_match.remove(&target_id);
+        self.target_id_to_ci_deps_package_patterns
+            .remove(&target_id);
+        self.target_id_to_ci_deps_recursive_patterns
+            .remove(&target_id);
+
+        // Remove target information
+        self.target_id_to_label.remove(&target_id);
+        self.minimized_targets.remove(&target_id);
     }
 
     pub fn get_all_targets(&self) -> impl Iterator<Item = TargetId> + '_ {
@@ -276,6 +362,23 @@ impl TargetGraph {
 
     pub fn deps_len(&self) -> usize {
         self.target_id_to_deps.len()
+    }
+
+    // File reverse dependencies storage - similar to target rdeps
+    pub fn add_file_rdep(&self, file_id: FileId, dependent_file: FileId) {
+        // Note: We intentionally don't check for duplicate existence for performance reasons.
+        self.file_id_to_rdeps
+            .entry(file_id)
+            .or_default()
+            .push(dependent_file);
+    }
+
+    pub fn get_file_rdeps(&self, file_id: FileId) -> Option<Vec<FileId>> {
+        self.file_id_to_rdeps.get(&file_id).map(|v| v.clone())
+    }
+
+    pub fn file_rdeps_len(&self) -> usize {
+        self.file_id_to_rdeps.len()
     }
 
     pub fn minimized_targets_len(&self) -> usize {
@@ -506,5 +609,84 @@ mod tests {
         let package_id2: PackageId = package2.parse().unwrap();
         assert_ne!(package_id1, package_id2);
         assert_eq!(package1.parse::<PackageId>().unwrap(), package_id1);
+    }
+
+    #[test]
+    fn test_remove_rdep_cleans_empty_entries() {
+        let graph = TargetGraph::new();
+
+        let target1 = "fbcode//a:target1";
+        let target2 = "fbcode//b:target2";
+        let target3 = "fbcode//c:target3";
+
+        let id1 = graph.store_target(target1);
+        let id2 = graph.store_target(target2);
+        let id3 = graph.store_target(target3);
+
+        // Add dependencies: target1 <- target2, target1 <- target3
+        graph.add_rdep(id1, id2);
+        graph.add_rdep(id1, id3);
+
+        // Verify initial state
+        assert_eq!(graph.rdeps_len(), 1);
+        assert_eq!(graph.deps_len(), 2);
+        assert_eq!(graph.get_rdeps(id1).unwrap().len(), 2);
+
+        // Remove one dependency
+        graph.remove_rdep(id1, id2);
+
+        // Should still have entries as id1 still has rdeps
+        assert_eq!(graph.rdeps_len(), 1);
+        assert_eq!(graph.deps_len(), 1);
+        assert_eq!(graph.get_rdeps(id1).unwrap().len(), 1);
+
+        // Remove the last dependency
+        graph.remove_rdep(id1, id3);
+
+        // Should have removed the empty entries
+        assert_eq!(graph.rdeps_len(), 0);
+        assert_eq!(graph.deps_len(), 0);
+        assert!(graph.get_rdeps(id1).is_none());
+    }
+
+    #[test]
+    fn test_remove_target_removes_all_data() {
+        let graph = TargetGraph::new();
+
+        let target1 = "fbcode//a:target1";
+        let target2 = "fbcode//b:target2";
+
+        let id1 = graph.store_target(target1);
+        let id2 = graph.store_target(target2);
+
+        // Add a dependency and some metadata
+        graph.add_rdep(id1, id2);
+
+        let rule_type_id = graph.store_rule_type("cpp_library");
+        let minimized = MinimizedBuckTarget {
+            rule_type: rule_type_id,
+            oncall: None,
+            labels: vec![],
+        };
+        graph.store_minimized_target(id1, minimized);
+
+        // Verify initial state
+        assert_eq!(graph.len(), 2);
+        assert_eq!(graph.rdeps_len(), 1);
+        assert_eq!(graph.deps_len(), 1);
+        assert!(graph.get_minimized_target(id1).is_some());
+
+        // Remove target1
+        graph.remove_target(id1);
+
+        // Should have removed target from label map and minimized targets
+        assert_eq!(graph.len(), 1);
+        assert!(graph.get_minimized_target(id1).is_none());
+
+        // Should have cleaned up empty dependency entries
+        assert_eq!(graph.rdeps_len(), 0);
+        assert_eq!(graph.deps_len(), 0);
+        assert!(graph.get_rdeps(id1).is_none());
+        assert!(graph.get_deps(id2).is_none());
     }
 }
