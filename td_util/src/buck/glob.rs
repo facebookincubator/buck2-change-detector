@@ -24,14 +24,14 @@ pub struct GlobSpec {
     exclude: GlobSet,
 }
 
-struct GlobSet(Vec<Pattern>);
+pub struct GlobSet(Vec<Pattern>);
 
 impl GlobSet {
-    fn new(globs: &[&str]) -> Self {
+    pub fn new(globs: &[&str]) -> Self {
         Self(globs.iter().flat_map(|x| Pattern::new(x)).collect())
     }
 
-    fn matches(&self, path: &ProjectRelativePath) -> bool {
+    pub fn matches(&self, path: &ProjectRelativePath) -> bool {
         let options = MatchOptions {
             require_literal_separator: true,
             require_literal_leading_dot: true,
