@@ -24,25 +24,34 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// Set up tracing so it prints to stderr, and can be used for output.
 /// Most things should use `info` and `debug` level for showing messages.
 pub fn init_tracing() {
+    init_tracing_with_level(LevelFilter::INFO);
+}
+
+/// Set up tracing with a specific default log level.
+pub fn init_tracing_with_level(default_level: LevelFilter) {
     let mut env_filter = EnvFilter::from_default_env();
     if std::env::var_os("RUST_LOG").is_none() {
-        // Enable info log by default
-        env_filter = env_filter.add_directive(LevelFilter::INFO.into());
-        // Debug log for target determinator packages
-        let directives = [
-            "btd=debug",
-            "clients=debug",
-            "ranker=debug",
-            "rerun=debug",
-            "scheduler=debug",
-            "targets=debug",
-            "verifiable=debug",
-            "verifiable_matcher=debug",
-            "verse=debug",
-        ];
-        for directive in directives {
-            env_filter =
-                env_filter.add_directive(directive.parse().expect("bad hardcoded log directive"));
+        // Enable the specified log level by default
+        env_filter = env_filter.add_directive(default_level.into());
+
+        // Only add debug directives if we're not using WARN level
+        if default_level != LevelFilter::WARN {
+            // Debug log for target determinator packages
+            let directives = [
+                "btd=debug",
+                "clients=debug",
+                "ranker=debug",
+                "rerun=debug",
+                "scheduler=debug",
+                "targets=debug",
+                "verifiable=debug",
+                "verifiable_matcher=debug",
+                "verse=debug",
+            ];
+            for directive in directives {
+                env_filter = env_filter
+                    .add_directive(directive.parse().expect("bad hardcoded log directive"));
+            }
         }
     }
 

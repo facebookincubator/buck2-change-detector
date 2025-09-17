@@ -38,3 +38,19 @@ pub fn init(fb: fbinit::FacebookInit) -> supertd_events::ScubaClientGuard {
     tracing::init_tracing();
     supertd_events::init(fb)
 }
+
+/// Initialize `tracing` with a specific log level and `supertd_events` Scuba client.
+///
+/// Returns a guard that flushes the Scuba client when dropped.
+///
+/// # Panics
+///
+/// Panics if environment variable `SUPERTD_SCUBA_LOGFILE` is set and the log
+/// file cannot be opened for writing.
+pub fn init_with_level(
+    fb: fbinit::FacebookInit,
+    level: tracing_subscriber::filter::LevelFilter,
+) -> supertd_events::ScubaClientGuard {
+    tracing::init_tracing_with_level(level);
+    supertd_events::init(fb)
+}
