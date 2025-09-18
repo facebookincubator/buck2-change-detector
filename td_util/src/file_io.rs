@@ -10,9 +10,9 @@
 
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
-use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 
@@ -37,7 +37,7 @@ pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
     }
 }
 
-pub fn file_reader(file_path: &Path) -> anyhow::Result<Box<dyn Read>> {
+pub fn file_reader(file_path: &Path) -> anyhow::Result<Box<dyn BufRead + Send>> {
     let file = File::open(file_path)
         .with_context(|| format!("Unable to open file `{}` for reading", file_path.display()))?;
 
