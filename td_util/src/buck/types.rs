@@ -737,6 +737,27 @@ impl Glob {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PatternType {
+    Package,
+    Recursive,
+}
+
+impl Package {
+    pub fn to_target_pattern(&self, pattern_type: PatternType) -> TargetPattern {
+        let package_path = self.as_str();
+
+        match pattern_type {
+            PatternType::Package => TargetPattern::new(&format!("{}:", package_path)),
+            PatternType::Recursive => {
+                let is_cell_root = package_path.ends_with("//");
+                let recursive_suffix = if is_cell_root { "..." } else { "/..." };
+                TargetPattern::new(&format!("{}{}", package_path, recursive_suffix))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,5 +768,45 @@ mod tests {
         let t = TargetLabel::new(s);
         assert_eq!(t.as_str(), s);
         assert_eq!(t.to_string(), s);
+    }
+
+    #[test]
+    fn test_package_to_target_pattern() {
+        let subdirectory = Package::new("fbcode//foo/bar");
+        assert_eq!(
+            subdirectory
+                .to_target_pattern(PatternType::Package)
+                .as_str(),
+            "fbcode//foo/bar:"
+        );
+        assert_eq!(
+            subdirectory
+                .to_target_pattern(PatternType::Recursive)
+                .as_str(),
+            "fbcode//foo/bar/..."
+        );
+
+        let cell_root = Package::new("fbcode//");
+        assert_eq!(
+            cell_root.to_target_pattern(PatternType::Package).as_str(),
+            "fbcode//:"
+        );
+        assert_eq!(
+            cell_root.to_target_pattern(PatternType::Recursive).as_str(),
+            "fbcode//..."
+        );
+    }
+
+    #[test]
+    fn test_recursive_pattern_roundtrip() {
+        let cell_root_pattern = TargetPattern::new("foo//...");
+        let cell_root_package = cell_root_pattern.as_recursive_pattern().unwrap();
+        let cell_root_converted = cell_root_package.to_target_pattern(PatternType::Recursive);
+        assert_eq!(cell_root_converted.as_str(), "foo//...");
+
+        let subdirectory_pattern = TargetPattern::new("foo//bar/...");
+        let subdirectory_package = subdirectory_pattern.as_recursive_pattern().unwrap();
+        let subdirectory_converted = subdirectory_package.to_target_pattern(PatternType::Recursive);
+        assert_eq!(subdirectory_converted.as_str(), "foo//bar/...");
     }
 }
