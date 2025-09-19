@@ -30,8 +30,14 @@ static INTERNER: Interner<StrData> = Interner::new();
 
 /// An interned string whose contents are stored only once.
 // Eq/PartialEq are OK, because they short-circuit on the hash
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Display)]
+#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub struct InternString(Intern<StrData>);
+
+impl fmt::Debug for InternString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "i{:?}", self.as_str())
+    }
+}
 
 struct InternStringVisitor;
 
