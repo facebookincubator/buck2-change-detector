@@ -17,6 +17,8 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::types::Package;
+use crate::types::PatternType;
+use crate::types::TargetPattern;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -147,8 +149,8 @@ pub struct TargetGraph {
     target_id_to_ci_srcs_must_match: DashMap<TargetId, Vec<GlobPatternId>>,
 
     // CI deps patterns storage
-    target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<Package>>,
-    target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<Package>>,
+    target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<PackageId>>,
+    target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<PackageId>>,
 }
 
 impl TargetGraph {
@@ -278,7 +280,7 @@ impl TargetGraph {
 
     impl_collection_storage!(
         TargetId,
-        Package,
+        PackageId,
         store_ci_deps_package_patterns,
         add_ci_deps_package_pattern,
         get_ci_deps_package_patterns,
@@ -288,7 +290,7 @@ impl TargetGraph {
     );
     impl_collection_storage!(
         TargetId,
-        Package,
+        PackageId,
         store_ci_deps_recursive_patterns,
         add_ci_deps_recursive_pattern,
         get_ci_deps_recursive_patterns,
@@ -470,6 +472,15 @@ impl TargetGraph {
         for (name, size) in sizes {
             tracing::info!("  {}: {}", name, size);
         }
+    }
+
+    pub fn package_id_to_target_pattern(
+        &self,
+        package_id: PackageId,
+        pattern_type: PatternType,
+    ) -> Option<TargetPattern> {
+        self.get_package_path(package_id)
+            .map(|package_path| Package::new(&package_path).to_target_pattern(pattern_type))
     }
 }
 
