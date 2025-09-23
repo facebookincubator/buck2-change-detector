@@ -18,6 +18,7 @@ use audit::audit_config_arguments;
 use td_util::command::create_at_file_arg;
 use td_util::command::with_command;
 use thiserror::Error;
+use tracing::info;
 
 use crate::cells::CellInfo;
 use crate::types::Package;
@@ -171,6 +172,8 @@ impl Buck2 {
             .arg(at_file)
             .args(extra_args);
         command.current_dir(self.root()?);
+
+        info!("Running owners query: {:?}", command);
 
         let res = with_command(command, |mut command| {
             let res = command.output()?;
