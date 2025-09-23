@@ -167,7 +167,7 @@ impl Buck2 {
         command
             .arg("uquery")
             .arg("--json")
-            .arg("owner(%s)")
+            .arg("owner(\"%s\")")
             .arg(at_file)
             .args(extra_args);
         command.current_dir(self.root()?);
@@ -227,6 +227,32 @@ mod tests {
             }
             Err(e) => {
                 println!("Command failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_owners_command_with_equals_in_path() {
+        let mut buck = Buck2::new("buck2".to_string(), None);
+
+        let path_with_equals = "fbcode/test/foo/param=value/test.txt";
+        let files_to_check = vec![ProjectRelativePath::new(path_with_equals)];
+
+        let query_result = buck.owners(&[], &files_to_check);
+
+        match &query_result {
+            Ok(json_output) => {
+                let parsed_json: Result<serde_json::Value, _> = serde_json::from_str(json_output);
+                assert!(parsed_json.is_ok(), "Output should be valid JSON");
+            }
+            Err(error) => {
+                let error_message = format!("{:?}", error);
+                let equals_sign_syntax_error = "expected ')', found =";
+                assert!(
+                    !error_message.contains(equals_sign_syntax_error),
+                    "Command should not fail with equals sign syntax error: {}",
+                    error_message
+                );
             }
         }
     }
