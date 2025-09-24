@@ -12,6 +12,7 @@ use std::hash::Hasher;
 use std::str::FromStr;
 
 use dashmap::DashMap;
+use dashmap::DashSet;
 use fnv::FnvHasher;
 use serde::Deserialize;
 use serde::Serialize;
@@ -151,6 +152,9 @@ pub struct TargetGraph {
     // CI deps patterns storage
     target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<PackageId>>,
     target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<PackageId>>,
+
+    // Targets that have the uses_sudo label
+    targets_with_sudo_label: DashSet<TargetId>,
 }
 
 impl TargetGraph {
@@ -172,6 +176,7 @@ impl TargetGraph {
             target_id_to_ci_srcs_must_match: DashMap::new(),
             target_id_to_ci_deps_package_patterns: DashMap::new(),
             target_id_to_ci_deps_recursive_patterns: DashMap::new(),
+            targets_with_sudo_label: DashSet::new(),
         }
     }
 
@@ -393,6 +398,9 @@ impl TargetGraph {
         self.target_id_to_ci_deps_recursive_patterns
             .remove(&target_id);
 
+        // Remove from sudo label set
+        self.targets_with_sudo_label.remove(&target_id);
+
         // Remove target information
         self.target_id_to_label.remove(&target_id);
         self.minimized_targets.remove(&target_id);
@@ -408,6 +416,22 @@ impl TargetGraph {
 
     pub fn get_minimized_target(&self, id: TargetId) -> Option<MinimizedBuckTarget> {
         self.minimized_targets.get(&id).map(|entry| entry.clone())
+    }
+
+    pub fn mark_target_has_sudo_label(&self, target_id: TargetId) {
+        self.targets_with_sudo_label.insert(target_id);
+    }
+
+    pub fn has_sudo_label(&self, target_id: TargetId) -> bool {
+        self.targets_with_sudo_label.contains(&target_id)
+    }
+
+    pub fn iter_targets_with_sudo_label(&self) -> impl Iterator<Item = TargetId> + '_ {
+        self.targets_with_sudo_label.iter().map(|entry| *entry)
+    }
+
+    pub fn targets_with_sudo_label_len(&self) -> usize {
+        self.targets_with_sudo_label.len()
     }
 
     // Size analysis methods
@@ -465,6 +489,10 @@ impl TargetGraph {
             (
                 "ci_deps_recursive_patterns",
                 self.ci_deps_recursive_patterns_len(),
+            ),
+            (
+                "targets_with_sudo_label",
+                self.targets_with_sudo_label_len(),
             ),
         ];
 
