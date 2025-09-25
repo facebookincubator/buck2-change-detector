@@ -728,6 +728,10 @@ impl Glob {
         Self(pattern.to_owned())
     }
 
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     pub fn unpack(&self) -> (GlobInclusion, &str) {
         let s = self.0.as_str();
         match s.strip_prefix('!') {
