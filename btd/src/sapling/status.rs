@@ -31,6 +31,21 @@ enum StatusParseError {
 }
 
 impl Status<ProjectRelativePath> {
+    /// Creates a new Modified status from a file path string
+    pub fn modified(path: &str) -> Self {
+        Self::Modified(ProjectRelativePath::new(path))
+    }
+
+    /// Creates a new Added status from a file path string
+    pub fn added(path: &str) -> Self {
+        Self::Added(ProjectRelativePath::new(path))
+    }
+
+    /// Creates a new Removed status from a file path string
+    pub fn removed(path: &str) -> Self {
+        Self::Removed(ProjectRelativePath::new(path))
+    }
+
     fn from_str(value: &str) -> anyhow::Result<Self> {
         let mut it = value.chars();
         let typ = it.next();
@@ -130,5 +145,26 @@ R quux.js
         assert!(parse_status("X quux.js").is_err());
         assert!(parse_status("notaline").is_err());
         assert!(parse_status("not a line").is_err());
+    }
+
+    #[test]
+    fn test_status_constructors() {
+        let modified = Status::modified("foo/modified.rs");
+        let modified_parsed = Status::from_str("M foo/modified.rs").unwrap();
+        assert!(matches!(modified, Status::Modified(_)));
+        assert_eq!(modified, modified_parsed);
+        assert_eq!(modified.get().as_str(), "foo/modified.rs");
+
+        let added = Status::added("foo/added.rs");
+        let added_parsed = Status::from_str("A foo/added.rs").unwrap();
+        assert!(matches!(added, Status::Added(_)));
+        assert_eq!(added, added_parsed);
+        assert_eq!(added.get().as_str(), "foo/added.rs");
+
+        let removed = Status::removed("foo/removed.rs");
+        let removed_parsed = Status::from_str("R foo/removed.rs").unwrap();
+        assert!(matches!(removed, Status::Removed(_)));
+        assert_eq!(removed, removed_parsed);
+        assert_eq!(removed.get().as_str(), "foo/removed.rs");
     }
 }
