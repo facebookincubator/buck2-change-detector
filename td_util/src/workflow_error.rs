@@ -57,7 +57,7 @@ impl Termination for WorkflowError {
                 std::process::ExitCode::from(code)
             }
             Self::Other(err) => {
-                eprintln!("Error executing: {}", err);
+                eprintln!("Error executing: {:#}", err);
                 std::process::ExitCode::FAILURE
             }
         }
