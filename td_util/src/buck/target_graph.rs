@@ -132,17 +132,17 @@ pub struct TargetGraph {
     label_id_to_string: DashMap<LabelId, String>,
     minimized_targets: DashMap<TargetId, MinimizedBuckTarget>,
     glob_pattern_id_to_string: DashMap<GlobPatternId, String>,
+    package_id_to_path: DashMap<PackageId, String>,
+    file_id_to_path: DashMap<FileId, String>,
 
     // Bidirectional dependency tracking
     target_id_to_rdeps: DashMap<TargetId, Vec<TargetId>>,
     target_id_to_deps: DashMap<TargetId, Vec<TargetId>>,
 
     // File relationship tracking for BZL imports
-    file_id_to_path: DashMap<FileId, String>,
     file_id_to_rdeps: DashMap<FileId, Vec<FileId>>,
 
     // Package error tracking
-    package_id_to_path: DashMap<PackageId, String>,
     package_id_to_errors: DashMap<PackageId, Vec<String>>,
 
     // CI pattern storage
