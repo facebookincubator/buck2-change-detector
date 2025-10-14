@@ -328,6 +328,15 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         let root_impact_kind = reason.root_cause_reason;
         *reason_counts.entry(root_impact_kind).or_default() += 1;
     }
+
+    let mut immediate_change_reasons: BTreeMap<RootImpactKind, u64> = BTreeMap::new();
+    for (_, reason) in immediate.iter() {
+        let root_impact_kind = reason.root_cause_reason;
+        *immediate_change_reasons
+            .entry(root_impact_kind)
+            .or_default() += 1;
+    }
+
     let input_targets = base.targets().count();
     let diff_targets = diff.targets().count();
     if let Some(stats_file) = args.write_run_stats_to_file {
@@ -342,6 +351,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
             "immediate_changes": immediate_changes,
             "immediate_change_samples": immediate_change_samples,
             "total_changes": total_changes,
+            "immediate_change_reason_counts": immediate_change_reasons,
             "reason_counts": reason_counts,
             "input_targets": input_targets,
             "input_parse_errors": base.errors().count(),
