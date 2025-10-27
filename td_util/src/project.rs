@@ -23,9 +23,21 @@ use std::process::Command;
 
 use clap::ValueEnum;
 use parse_display::Display;
+use serde::Deserialize;
+use serde::Serialize;
 
-#[derive(ValueEnum, Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(serde::Serialize)]
+#[derive(
+    ValueEnum,
+    Debug,
+    Display,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize
+)]
 #[serde(rename_all = "lowercase")]
 #[display(style = "lowercase")]
 pub enum TdProject {
