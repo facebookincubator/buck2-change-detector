@@ -121,8 +121,6 @@ def test_run(patch_name):
     patch = os.path.join(os.getenv("TESTCASES"), patch_name)
     patch_name = Path(patch).stem
 
-    btd_fail = expect_btd_failure(patch_name)
-
     with tempfile.TemporaryDirectory() as working_dir, tempfile.TemporaryDirectory() as output_dir:
         os.chdir(working_dir)
         out_base = Path(output_dir).joinpath("base.jsonl")
@@ -134,8 +132,12 @@ def test_run(patch_name):
         out_btd2 = Path(output_dir).joinpath("btd2.json")
         out_targets = Path(output_dir).joinpath("targets.txt")
         out_rerun = Path(output_dir).joinpath("rerun.txt")
+        out_btd_dangling_errors = Path(output_dir).joinpath("btd_dangling_errors.json")
         btd_args = [
             "--check-dangling",
+            "--check-dangling-universe=root//...",
+            "--write-dangling-errors-to-file",
+            out_btd_dangling_errors,
             "--cells",
             out_cells,
             "--config",
@@ -179,7 +181,6 @@ def test_run(patch_name):
             out_diff,
             "--json",
             output=out_btd1,
-            expect_fail=btd_fail,
         )
         run(
             btd,
@@ -190,7 +191,6 @@ def test_run(patch_name):
             buck,
             "--json",
             output=out_btd2,
-            expect_fail=btd_fail,
         )
         run(
             btd,
@@ -202,11 +202,15 @@ def test_run(patch_name):
             "--print-rerun",
             output=out_rerun,
         )
-        if not btd_fail:
-            # We want to make sure our rerun logic was correct
-            assert read_file(out_btd1) == read_file(out_btd2)
-            # And that we have valid JSON results
-            output = json.loads(read_file(out_btd1))
+        # We want to make sure our rerun logic was correct
+        assert read_file(out_btd1) == read_file(out_btd2)
+        # And that we have valid JSON results
+        output = json.loads(read_file(out_btd1))
+
+        # For delete_inner, check the dangling errors
+        if expect_dangling_check_error(patch_name):
+            assert_dangling_check_errors(out_btd_dangling_errors)
+        else:
             # And that they can build
             with open(out_targets, "w") as file:
                 for x in output:
@@ -347,8 +351,24 @@ def check_properties_rerun(patch, rerun):
         raise AssertionError("No properties known for: " + patch)
 
 
-def expect_btd_failure(patch):
+def expect_dangling_check_error(patch):
     if patch == "delete_inner":
-        return "Target `root//inner:baz` was deleted but is referenced by `root//:bar`"
+        return True
     else:
-        return None
+        return False
+
+
+def assert_dangling_check_errors(out_btd_dangling_errors):
+    assert out_btd_dangling_errors.exists()
+    dangling_errors = json.loads(read_file(out_btd_dangling_errors))
+    target_deleted_error = next(
+        (
+            error["TargetDeleted"]
+            for error in dangling_errors
+            if "TargetDeleted" in error
+        ),
+        None,
+    )
+    assert target_deleted_error is not None
+    assert target_deleted_error["deleted"] == "root//inner:baz"
+    assert target_deleted_error["referenced_by"] == "root//:bar"

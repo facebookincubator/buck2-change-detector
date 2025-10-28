@@ -137,6 +137,9 @@ pub struct Args {
     /// Check for dangling edges introduced in the graph.
     #[arg(long)]
     check_dangling: bool,
+    /// Check for dangling edges from these targets.
+    #[arg(long, value_name = "TARGET_PATTERN", value_delimiter = ',')]
+    check_dangling_universe: Vec<String>,
 
     /// Glean-specific approach to chasing dependencies.
     #[arg(long)]
@@ -149,6 +152,10 @@ pub struct Args {
     /// Print out the patterns to rerun. Patterns will be prefixed with either `+` (added) or `-` (removed).
     #[arg(long)]
     print_rerun: bool,
+
+    /// Write dangling errors to file.
+    #[arg(long)]
+    write_dangling_errors_to_file: Option<PathBuf>,
 
     /// Reports all graph errors on the diff revision.
     #[arg(long)]
@@ -250,20 +257,29 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     // Perform inline error validation when we're not collecting errors
     // for downstream reporting.
     if args.write_errors_to_file.is_none() {
-        let immediate_targets_only = immediate.iter().collect::<Vec<_>>();
         step("error validation");
         check_empty(&check::check_errors(&base, &diff, &changes))?;
-        if args.check_dangling {
-            step("dangling check");
-            check_empty(&check::check_dangling(
-                &base,
-                &diff,
-                &immediate_targets_only,
-                &universe,
-            ))
-            .context("Dangling target check failed")?;
-        }
     }
+
+    let dangling_universe = args
+        .check_dangling_universe
+        .iter()
+        .map(|pattern| TargetPattern::new(pattern))
+        .collect::<Vec<_>>();
+
+    let dangling_errors = if !dangling_universe.is_empty() {
+        // Dangling check within the provided universe
+        step("dangling check");
+        let immediate_changes = immediate.iter().collect::<Vec<_>>();
+        check::check_dangling(&base, &diff, &immediate_changes, &dangling_universe)
+    } else {
+        Vec::new()
+    };
+
+    if let Some(dangling_error_file) = args.write_dangling_errors_to_file {
+        write_errors_to_file(&dangling_errors, dangling_error_file, OutputFormat::Json)?;
+    }
+
     let recursive = if args.glean {
         step("glean changes");
         glean::glean_changes(&base, &diff, &changes, args.depth)

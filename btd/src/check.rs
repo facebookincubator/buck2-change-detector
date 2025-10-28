@@ -186,7 +186,7 @@ pub fn check_dangling(
     for x in diff.targets() {
         for dep in x.deps.iter() {
             // remove so that we only report each target at most once
-            if deleted.remove(dep) {
+            if in_universe(universe, dep) && deleted.remove(dep) {
                 errors.push(ValidationError::TargetDeleted {
                     deleted: dep.clone(),
                     referenced_by: x.label(),
@@ -345,6 +345,20 @@ mod tests {
             1
         );
 
+        // Check that we don't error when deleted dependency is outside the universe.
+        assert_eq!(
+            check_dangling(
+                &Targets::new(vec![
+                    target_entry("aaa", &[]),
+                    target_entry("bbb", &["aaa"]),
+                ]),
+                &Targets::new(vec![target_entry("bbb", &["aaa"])]),
+                &[],
+                &[TargetPattern::new("bar//...")],
+            )
+            .len(),
+            0
+        );
         // Check dangling edges on dep addition.
         let modified_target = target_target("bbb", &["aaa", "ccc"]);
         assert_eq!(
