@@ -12,10 +12,12 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context as _;
+use serde::Deserialize;
+use serde::Serialize;
 use td_util_buck::types::ProjectRelativePath;
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub enum Status<Path> {
     Modified(Path),
     Added(Path),
