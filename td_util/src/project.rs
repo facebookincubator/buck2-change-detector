@@ -50,7 +50,6 @@ pub enum TdProject {
     RL,
     Wacommon,
     Waclient,
-    Waios,
     Waserver,
     Www,
     Xplat,
