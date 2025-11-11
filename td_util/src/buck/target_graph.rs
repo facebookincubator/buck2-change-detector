@@ -21,6 +21,10 @@ use crate::types::Package;
 use crate::types::PatternType;
 use crate::types::TargetPattern;
 
+/// Schema version for TargetGraph serialization format.
+/// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
+pub const SCHEMA_VERSION: u32 = 1;
+
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
         pub fn $store_method(&self, s: &str) -> $id_type {
