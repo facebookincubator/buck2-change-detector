@@ -484,7 +484,7 @@ mod tests {
             deps: Box::new([Package::new("outside//bar").join(&TargetName::new("target0"))]),
             ..BuckTarget::testing("other-with-dangling", "foo//good", "rule")
         });
-        let targets = vec![error0, error1, error2, good0, good1, dangling0, dangling1];
+        let targets = [error0, error1, error2, good0, good1, dangling0, dangling1];
 
         let errs = |xs: &[usize]| Targets::new(xs.map(|i| targets[*i].clone()));
 
