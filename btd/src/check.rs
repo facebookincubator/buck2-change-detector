@@ -202,10 +202,10 @@ pub fn check_dangling(
     let mut errors = Vec::new();
     // Lets check if dangling edges were introduced.
     for (target, _) in immediate_changes.iter() {
-        let base_deps = base_targets_map
+        let (base_deps, base_tests) = base_targets_map
             .get(&target.label_key())
-            .map(|t| t.deps.as_ref())
-            .unwrap_or(&[]);
+            .map(|t| (t.deps.as_ref(), t.tests.as_ref()))
+            .unwrap_or((&[], &[]));
 
         // checks for broken edges in the deps
         check_broken_edges(
@@ -214,6 +214,16 @@ pub fn check_dangling(
             &exists_after,
             universe,
             base_deps,
+            &mut errors,
+        );
+
+        // checks for broken edges in the tests
+        check_broken_edges(
+            target.tests.iter(),
+            target,
+            &exists_after,
+            universe,
+            base_tests,
             &mut errors,
         );
     }
@@ -232,7 +242,13 @@ pub fn check_dangling(
 
     // now lets see if any of those we deleted show up
     for x in diff.targets() {
-        check_deleted_edges(x.deps.iter(), x, universe, &mut deleted, &mut errors);
+        check_deleted_edges(
+            x.deps.iter().chain(x.tests.iter()),
+            x,
+            universe,
+            &mut deleted,
+            &mut errors,
+        );
     }
 
     errors
@@ -326,9 +342,13 @@ mod tests {
         );
     }
 
-    fn target_target(name: &str, deps: &[&str]) -> BuckTarget {
+    fn target_target(name: &str, deps: &[&str], tests: &[&str]) -> BuckTarget {
         BuckTarget {
             deps: deps
+                .iter()
+                .map(|x| Package::new("foo//bar").join(&TargetName::new(x)))
+                .collect(),
+            tests: tests
                 .iter()
                 .map(|x| Package::new("foo//bar").join(&TargetName::new(x)))
                 .collect(),
@@ -336,21 +356,21 @@ mod tests {
         }
     }
 
-    fn target_entry(name: &str, deps: &[&str]) -> TargetsEntry {
-        TargetsEntry::Target(target_target(name, deps))
+    fn target_entry(name: &str, deps: &[&str], tests: &[&str]) -> TargetsEntry {
+        TargetsEntry::Target(target_target(name, deps, tests))
     }
 
     #[rstest]
     // Delete target and its deps - OK
     #[case::delete_target_and_deps(
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa", "ccc"]),
-            target_entry("ccc", &[]),
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa", "ccc"], &[]),
+            target_entry("ccc", &[], &[]),
         ],
         vec![
-            target_entry("bbb", &["ccc"]),
-            target_entry("ccc", &[]),
+            target_entry("bbb", &["ccc"], &[]),
+            target_entry("ccc", &[], &[]),
         ],
         vec![],
         vec![TargetPattern::new("foo//...")],
@@ -358,8 +378,8 @@ mod tests {
     )]
     // Delete target with no deps - OK
     #[case::delete_target_no_deps(
-        vec![target_entry("aaa", &[]), target_entry("bbb", &[])],
-        vec![target_entry("bbb", &[])],
+        vec![target_entry("aaa", &[], &[]), target_entry("bbb", &[], &[])],
+        vec![target_entry("bbb", &[], &[])],
         vec![],
         vec![TargetPattern::new("foo//...")],
         0
@@ -367,10 +387,10 @@ mod tests {
     // Delete target but leave its deps - BAD
     #[case::delete_target_leave_deps(
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa"]),
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa"], &[]),
         ],
-        vec![target_entry("bbb", &["aaa"])],
+        vec![target_entry("bbb", &["aaa"], &[])],
         vec![],
         vec![TargetPattern::new("foo//...")],
         1
@@ -378,10 +398,10 @@ mod tests {
     // Don't error when deleted dependency is outside universe
     #[case::deleted_dep_outside_universe(
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa"]),
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa"], &[]),
         ],
-        vec![target_entry("bbb", &["aaa"])],
+        vec![target_entry("bbb", &["aaa"], &[])],
         vec![],
         vec![TargetPattern::new("bar//...")],
         0
@@ -389,71 +409,168 @@ mod tests {
     // Dangling edges on dep addition - BAD
     #[case::dangling_on_dep_addition(
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa", "ccc"])
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa", "ccc"], &[])
         ],
-        vec![target_target("bbb", &["aaa", "ccc"])],
+        vec![target_target("bbb", &["aaa", "ccc"], &[])],
         vec![TargetPattern::new("foo//...")],
         1
     )]
     // Dangling edges on target addition - BAD
     #[case::dangling_on_target_addition(
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa"]),
-            target_entry("ccc", &["ddd"])
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa"], &[]),
+            target_entry("ccc", &["ddd"], &[])
         ],
-        vec![target_target("ccc", &["ddd"])],
+        vec![target_target("ccc", &["ddd"], &[])],
         vec![TargetPattern::new("foo//...")],
         1
     )]
     // Don't error on pre-existing dangling edges
     #[case::preexisting_dangling_edges(
         vec![
-            target_entry("aaa", &["ccc"]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &["ccc"], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
         vec![
-            target_entry("aaa", &["ccc"]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &["ccc"], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
-        vec![target_target("bbb", &["aaa"])],
+        vec![target_target("bbb", &["aaa"], &[])],
         vec![TargetPattern::new("foo//...")],
         0
     )]
     // Don't error even if we modify target with dangling edge
     #[case::modify_target_with_dangling_edge(
         vec![
-            target_entry("aaa", &["ccc"]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &["ccc"], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
         vec![
-            target_entry("aaa", &["ccc"]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &["ccc"], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
-        vec![target_target("aaa", &["ccc"])],
+        vec![target_target("aaa", &["ccc"], &[])],
         vec![TargetPattern::new("foo//...")],
         0
     )]
     // No error if we fix the missing edge
     #[case::fix_missing_edge(
         vec![
-            target_entry("aaa", &["ccc"]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &["ccc"], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
         vec![
-            target_entry("aaa", &[]),
-            target_entry("bbb", &["aaa"])
+            target_entry("aaa", &[], &[]),
+            target_entry("bbb", &["aaa"], &[])
         ],
-        vec![target_target("aaa", &[])],
+        vec![target_target("aaa", &[], &[])],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // Test dangling tests edge detection - BAD
+    #[case::dangling_test_edge(
+        vec![target_entry("lib", &[], &[])],
+        vec![target_entry("lib", &[], &["lib_test"])],
+        vec![target_target("lib", &[], &["lib_test"])],
+        vec![TargetPattern::new("foo//...")],
+        1
+    )]
+    // No error when test target exists - OK
+    #[case::test_target_exists(
+        vec![
+            target_entry("lib", &[], &[]),
+            target_entry("lib_test", &[], &[])
+        ],
+        vec![
+            target_entry("lib", &[], &["lib_test"]),
+            target_entry("lib_test", &[], &[])
+        ],
+        vec![target_target("lib", &[], &["lib_test"])],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // No error for pre-existing dangling tests edge - OK
+    #[case::preexisting_dangling_test(
+        vec![target_entry("lib", &[], &["lib_test"])],
+        vec![target_entry("lib", &[], &["lib_test"])],
+        vec![target_target("lib", &[], &["lib_test"])],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // Test TargetDeleted for tests edge - BAD
+    #[case::deleted_test_target(
+        vec![
+            target_entry("lib", &[], &["lib_test"]),
+            target_entry("lib_test", &[], &[])
+        ],
+        vec![target_entry("lib", &[], &["lib_test"])],
+        vec![],
+        vec![TargetPattern::new("foo//...")],
+        1
+    )]
+    // No TargetDeleted error when test target deletion is outside universe - OK
+    #[case::deleted_test_outside_universe(
+        vec![
+            target_entry("lib", &[], &["lib_test"]),
+            target_entry("lib_test", &[], &[])
+        ],
+        vec![target_entry("lib", &[], &["lib_test"])],
+        vec![],
+        vec![TargetPattern::new("other//...")],
+        0
+    )]
+    // Adding multiple test edges, some dangling - BAD
+    #[case::multiple_test_edges_some_dangling(
+        vec![
+            target_entry("lib", &[], &[]),
+            target_entry("test1", &[], &[])
+        ],
+        vec![
+            target_entry("lib", &[], &["test1", "test2", "test3"]),
+            target_entry("test1", &[], &[])
+        ],
+        vec![target_target("lib", &[], &["test1", "test2", "test3"])],
+        vec![TargetPattern::new("foo//...")],
+        2
+    )]
+    // Delete target and its tests - OK
+    #[case::delete_target_and_tests(
+        vec![
+            target_entry("lib", &[], &[]),
+            target_entry("bbb", &[], &["lib", "test1"]),
+            target_entry("test1", &[], &[]),
+        ],
+        vec![
+            target_entry("bbb", &[], &["test1"]),
+            target_entry("test1", &[], &[]),
+        ],
+        vec![],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // Mix of deps and tests dangling edges - BAD
+    #[case::deps_and_tests_dangling(
+        vec![target_entry("lib", &[], &[])],
+        vec![target_entry("lib", &["missing_dep"], &["missing_test"])],
+        vec![target_target("lib", &["missing_dep"], &["missing_test"])],
+        vec![TargetPattern::new("foo//...")],
+        2
+    )]
+    // Fix dangling test edge - OK
+    #[case::fix_dangling_test(
+        vec![target_entry("lib", &[], &["lib_test"])],
+        vec![target_entry("lib", &[], &[])],
+        vec![target_target("lib", &[], &[])],
         vec![TargetPattern::new("foo//...")],
         0
     )]
