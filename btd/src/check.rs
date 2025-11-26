@@ -137,6 +137,56 @@ pub fn check_errors(base: &Targets, diff: &Targets, changes: &Changes) -> Vec<Va
     res
 }
 
+fn check_deleted_edges<'a, I>(
+    edges: I,
+    target: &BuckTarget,
+    universe: &[TargetPattern],
+    deleted: &mut HashSet<TargetLabel, BuildNoHash>,
+    errors: &mut Vec<ValidationError>,
+) where
+    I: Iterator<Item = &'a TargetLabel>,
+{
+    for edge in edges {
+        // remove so that we only report each target at most once
+        if in_universe(universe, edge) && deleted.remove(edge) {
+            errors.push(ValidationError::TargetDeleted {
+                deleted: edge.clone(),
+                referenced_by: target.label(),
+            });
+        }
+    }
+}
+
+fn check_broken_edges<'a, I>(
+    edges: I,
+    target: &BuckTarget,
+    exists_after: &HashMap<
+        td_util_buck::types::TargetLabelKeyRef,
+        &BuckTarget,
+        impl std::hash::BuildHasher,
+    >,
+    universe: &[TargetPattern],
+    base_edges: &[TargetLabel],
+    errors: &mut Vec<ValidationError>,
+) where
+    I: Iterator<Item = &'a TargetLabel>,
+{
+    for edge in edges {
+        let key = edge.key();
+        // Only check newly introduced dangling dependencies that are
+        // within our universe.
+        if !exists_after.contains_key(&key.to_ref())
+            && !base_edges.iter().any(|e| e == edge)
+            && in_universe(universe, edge)
+        {
+            errors.push(ValidationError::BrokenEdge {
+                missing: edge.clone(),
+                referenced_by: target.label(),
+            });
+        }
+    }
+}
+
 /// If you remove a target which is referenced by other people, that is bad.
 /// We don't require a complete valid graph, as that's too much to hope for.
 /// If you add a dangling dependency, that's also bad.
@@ -152,22 +202,20 @@ pub fn check_dangling(
     let mut errors = Vec::new();
     // Lets check if dangling edges were introduced.
     for (target, _) in immediate_changes.iter() {
-        for dep in target.deps.iter() {
-            let key = dep.key();
-            // Only check newly introduced dangling dependencies that are
-            // within our universe.
-            if !exists_after.contains_key(&key.to_ref())
-                && base_targets_map
-                    .get(&target.label_key())
-                    .is_none_or(|t| !t.deps.iter().any(|d| d == dep))
-                && in_universe(universe, dep)
-            {
-                errors.push(ValidationError::BrokenEdge {
-                    missing: dep.clone(),
-                    referenced_by: target.label(),
-                });
-            }
-        }
+        let base_deps = base_targets_map
+            .get(&target.label_key())
+            .map(|t| t.deps.as_ref())
+            .unwrap_or(&[]);
+
+        // checks for broken edges in the deps
+        check_broken_edges(
+            target.deps.iter(),
+            target,
+            &exists_after,
+            universe,
+            base_deps,
+            &mut errors,
+        );
     }
 
     let mut deleted = HashSet::with_hasher(BuildNoHash::default());
@@ -184,15 +232,7 @@ pub fn check_dangling(
 
     // now lets see if any of those we deleted show up
     for x in diff.targets() {
-        for dep in x.deps.iter() {
-            // remove so that we only report each target at most once
-            if in_universe(universe, dep) && deleted.remove(dep) {
-                errors.push(ValidationError::TargetDeleted {
-                    deleted: dep.clone(),
-                    referenced_by: x.label(),
-                });
-            }
-        }
+        check_deleted_edges(x.deps.iter(), x, universe, &mut deleted, &mut errors);
     }
 
     errors
