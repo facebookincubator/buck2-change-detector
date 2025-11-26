@@ -194,7 +194,7 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--no-cache",
         "--show-unconfigured-target-hash",
         "--json-lines",
-        "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$",
+        "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$|^tests$",
         "--imports",
         "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
     ]

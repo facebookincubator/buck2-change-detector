@@ -181,6 +181,9 @@ pub struct BuckTarget {
     /// Used as additional triggers
     #[serde(default, skip_serializing_if = "is_empty_slice")]
     pub ci_deps: Box<[TargetPattern]>,
+    /// It's test dependencies (buck.tests attribute)
+    #[serde(default, rename = "buck.tests", skip_serializing_if = "is_empty_slice")]
+    pub tests: Box<[TargetLabel]>,
 }
 
 fn is_empty_slice<T>(x: &[T]) -> bool {
@@ -210,6 +213,7 @@ impl BuckTarget {
             ci_srcs: Box::new([]),
             ci_srcs_must_match: Box::new([]),
             ci_deps: Box::new([]),
+            tests: Box::new([]),
         }
     }
 }
@@ -276,6 +280,7 @@ mod tests {
                     "buck.target_hash": "43ce1a7a56f10225413a2991febb853a",
                     "buck.package": "fbcode//me",
                     "buck.package_values": {"citadel.labels": ["ci:@fbcode//mode/opt"]},
+                    "buck.tests": ["fbcode//me:test_target1", "fbcode//me:test_target2"],
                     "name": "test",
                 },
                 {
@@ -315,6 +320,10 @@ mod tests {
                 inputs: Box::new([CellPath::new("fbcode//me/file.bzl")]),
                 hash: TargetHash::new("43ce1a7a56f10225413a2991febb853a"),
                 package_values: PackageValues::new(&["ci:@fbcode//mode/opt"]),
+                tests: Box::new([
+                    TargetLabel::new("fbcode//me:test_target1"),
+                    TargetLabel::new("fbcode//me:test_target2"),
+                ]),
                 ..BuckTarget::testing("test", "fbcode//me", "prelude//rules.bzl:python_library")
             }),
             TargetsEntry::Target(BuckTarget {
