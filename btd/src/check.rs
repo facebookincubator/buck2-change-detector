@@ -240,6 +240,7 @@ pub fn check_dangling(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use td_util::prelude::*;
     use td_util_buck::targets::BuckError;
     use td_util_buck::targets::TargetsEntry;
@@ -325,171 +326,158 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_dangling() {
-        // There are four interesting cases - we delete something and its deps (OK),
-        // we delete something and it had no deps (OK), or we delete something and leave its deps (BAD),
-        // or we add a dep that doesn't exist (BAD)
-        fn target_target(name: &str, deps: &[&str]) -> BuckTarget {
-            BuckTarget {
-                deps: deps
-                    .iter()
-                    .map(|x| Package::new("foo//bar").join(&TargetName::new(x)))
-                    .collect(),
-                ..BuckTarget::testing(name, "foo//bar", "prelude//rules.bzl:cxx_library")
-            }
+    fn target_target(name: &str, deps: &[&str]) -> BuckTarget {
+        BuckTarget {
+            deps: deps
+                .iter()
+                .map(|x| Package::new("foo//bar").join(&TargetName::new(x)))
+                .collect(),
+            ..BuckTarget::testing(name, "foo//bar", "prelude//rules.bzl:cxx_library")
         }
+    }
 
-        fn target_entry(name: &str, deps: &[&str]) -> TargetsEntry {
-            TargetsEntry::Target(target_target(name, deps))
-        }
+    fn target_entry(name: &str, deps: &[&str]) -> TargetsEntry {
+        TargetsEntry::Target(target_target(name, deps))
+    }
+
+    #[rstest]
+    // Delete target and its deps - OK
+    #[case::delete_target_and_deps(
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa", "ccc"]),
+            target_entry("ccc", &[]),
+        ],
+        vec![
+            target_entry("bbb", &["ccc"]),
+            target_entry("ccc", &[]),
+        ],
+        vec![],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // Delete target with no deps - OK
+    #[case::delete_target_no_deps(
+        vec![target_entry("aaa", &[]), target_entry("bbb", &[])],
+        vec![target_entry("bbb", &[])],
+        vec![],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // Delete target but leave its deps - BAD
+    #[case::delete_target_leave_deps(
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa"]),
+        ],
+        vec![target_entry("bbb", &["aaa"])],
+        vec![],
+        vec![TargetPattern::new("foo//...")],
+        1
+    )]
+    // Don't error when deleted dependency is outside universe
+    #[case::deleted_dep_outside_universe(
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa"]),
+        ],
+        vec![target_entry("bbb", &["aaa"])],
+        vec![],
+        vec![TargetPattern::new("bar//...")],
+        0
+    )]
+    // Dangling edges on dep addition - BAD
+    #[case::dangling_on_dep_addition(
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa", "ccc"])
+        ],
+        vec![target_target("bbb", &["aaa", "ccc"])],
+        vec![TargetPattern::new("foo//...")],
+        1
+    )]
+    // Dangling edges on target addition - BAD
+    #[case::dangling_on_target_addition(
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa"]),
+            target_entry("ccc", &["ddd"])
+        ],
+        vec![target_target("ccc", &["ddd"])],
+        vec![TargetPattern::new("foo//...")],
+        1
+    )]
+    // Don't error on pre-existing dangling edges
+    #[case::preexisting_dangling_edges(
+        vec![
+            target_entry("aaa", &["ccc"]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![
+            target_entry("aaa", &["ccc"]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![target_target("bbb", &["aaa"])],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // Don't error even if we modify target with dangling edge
+    #[case::modify_target_with_dangling_edge(
+        vec![
+            target_entry("aaa", &["ccc"]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![
+            target_entry("aaa", &["ccc"]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![target_target("aaa", &["ccc"])],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    // No error if we fix the missing edge
+    #[case::fix_missing_edge(
+        vec![
+            target_entry("aaa", &["ccc"]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![
+            target_entry("aaa", &[]),
+            target_entry("bbb", &["aaa"])
+        ],
+        vec![target_target("aaa", &[])],
+        vec![TargetPattern::new("foo//...")],
+        0
+    )]
+    fn test_check_dangling(
+        #[case] base_entries: Vec<TargetsEntry>,
+        #[case] diff_entries: Vec<TargetsEntry>,
+        #[case] modified_targets: Vec<BuckTarget>,
+        #[case] universe: Vec<TargetPattern>,
+        #[case] expected_error_count: usize,
+    ) {
+        let immediate_changes: Vec<_> = modified_targets
+            .iter()
+            .map(|t| (t, ImpactTraceData::testing()))
+            .collect();
 
         assert_eq!(
             check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa", "ccc"]),
-                    target_entry("ccc", &[]),
-                ]),
-                &Targets::new(vec![
-                    target_entry("bbb", &["ccc"]),
-                    target_entry("ccc", &[]),
-                ]),
-                &[],
-                &[TargetPattern::new("foo//...")],
+                &Targets::new(base_entries),
+                &Targets::new(diff_entries),
+                &immediate_changes,
+                &universe,
             )
             .len(),
-            0
-        );
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![target_entry("aaa", &[]), target_entry("bbb", &[])]),
-                &Targets::new(vec![target_entry("bbb", &[])]),
-                &[],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            0
-        );
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa"]),
-                ]),
-                &Targets::new(vec![target_entry("bbb", &["aaa"])]),
-                &[],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            1
-        );
-
-        // Check that we don't error when deleted dependency is outside the universe.
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa"]),
-                ]),
-                &Targets::new(vec![target_entry("bbb", &["aaa"])]),
-                &[],
-                &[TargetPattern::new("bar//...")],
-            )
-            .len(),
-            0
-        );
-        // Check dangling edges on dep addition.
-        let modified_target = target_target("bbb", &["aaa", "ccc"]);
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa", "ccc"])
-                ]),
-                &[(&modified_target, ImpactTraceData::testing())],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            1
-        );
-        // And on target addition.
-        let modified_target = target_target("ccc", &["ddd"]);
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa"]),
-                    target_entry("ccc", &["ddd"])
-                ]),
-                &[(&modified_target, ImpactTraceData::testing())],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            1
-        );
-
-        // but don't error on pre-existing dangling edges.
-        let modified_target = target_target("bbb", &["aaa"]);
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &["ccc"]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &Targets::new(vec![
-                    target_entry("aaa", &["ccc"]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &[(&modified_target, ImpactTraceData::testing())],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            0
-        );
-        // Even if we modify the target with the dangling edge.
-        let modified_target = target_target("aaa", &["ccc"]);
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &["ccc"]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &Targets::new(vec![
-                    target_entry("aaa", &["ccc"]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &[(&modified_target, ImpactTraceData::testing())],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            0
-        );
-        // And no error if we fix the missing edge.
-        let modified_target = target_target("aaa", &[]);
-        assert_eq!(
-            check_dangling(
-                &Targets::new(vec![
-                    target_entry("aaa", &["ccc"]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &Targets::new(vec![
-                    target_entry("aaa", &[]),
-                    target_entry("bbb", &["aaa"])
-                ]),
-                &[(&modified_target, ImpactTraceData::testing())],
-                &[TargetPattern::new("foo//...")],
-            )
-            .len(),
-            0
+            expected_error_count
         );
     }
 

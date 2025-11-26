@@ -28,3 +28,6 @@ audit = {path = "../audit"}
 td_util = {path = "../td_util"}
 td_util_buck = {path = "../td_util/src/buck"}
 targets = {path = "../targets"}
+
+[dev-dependencies]
+rstest = "0.26.1"
