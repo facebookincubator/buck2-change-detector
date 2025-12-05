@@ -233,6 +233,23 @@ pub enum RootImpactKind {
     SelectAll,
 }
 
+impl RootImpactKind {
+    /// Returns whether this root impact kind should propagate recursively to reverse dependencies.
+    pub const fn is_recursive(self) -> bool {
+        match self {
+            Self::Labels | Self::PackageValues | Self::UniversalFile | Self::SelectAll => false,
+            Self::New
+            | Self::Package
+            | Self::Hash
+            | Self::Inputs
+            | Self::CiSrcs
+            | Self::Rule
+            | Self::Remove
+            | Self::ManualForRerun => true,
+        }
+    }
+}
+
 pub fn immediate_target_changes<'a>(
     base: &'a Targets,
     diff: &'a Targets,
