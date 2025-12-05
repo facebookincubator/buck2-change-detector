@@ -153,6 +153,9 @@ pub struct TargetGraph {
     // Package error tracking
     package_id_to_errors: DashMap<PackageId, Vec<String>>,
 
+    // Package to targets mapping
+    package_id_to_targets: DashMap<PackageId, Vec<TargetId>>,
+
     // CI pattern storage
     target_id_to_ci_srcs: DashMap<TargetId, Vec<GlobPatternId>>,
     target_id_to_ci_srcs_must_match: DashMap<TargetId, Vec<GlobPatternId>>,
@@ -180,6 +183,7 @@ impl TargetGraph {
             file_id_to_rdeps: DashMap::new(),
             package_id_to_path: DashMap::new(),
             package_id_to_errors: DashMap::new(),
+            package_id_to_targets: DashMap::new(),
             ci_deps_pattern_id_to_string: DashMap::new(),
             target_id_to_ci_srcs: DashMap::new(),
             target_id_to_ci_srcs_must_match: DashMap::new(),
@@ -528,6 +532,19 @@ impl TargetGraph {
     ) -> Option<TargetPattern> {
         self.get_ci_deps_pattern_string(pattern_id)
             .map(|pattern_string| Package::new(&pattern_string).to_target_pattern(pattern_type))
+    }
+
+    pub fn add_target_to_package(&self, package_id: PackageId, target_id: TargetId) {
+        self.package_id_to_targets
+            .entry(package_id)
+            .or_default()
+            .push(target_id);
+    }
+
+    pub fn get_targets_in_package(&self, package_id: PackageId) -> Option<Vec<TargetId>> {
+        self.package_id_to_targets
+            .get(&package_id)
+            .map(|v| v.clone())
     }
 }
 
@@ -889,5 +906,34 @@ mod tests {
         assert_eq!(graph.deps_len(), 0);
         assert!(graph.get_rdeps(id1).is_none());
         assert!(graph.get_deps(id2).is_none());
+    }
+
+    #[test]
+    fn test_package_to_targets_mapping() {
+        let graph = TargetGraph::new();
+
+        let target1 = "fbcode//foo:target1";
+        let target2 = "fbcode//foo:target2";
+        let target3 = "fbcode//bar:target3";
+
+        let id1 = graph.store_target(target1);
+        let id2 = graph.store_target(target2);
+        let id3 = graph.store_target(target3);
+
+        let package_foo = graph.store_package("fbcode//foo");
+        let package_bar = graph.store_package("fbcode//bar");
+
+        graph.add_target_to_package(package_foo, id1);
+        graph.add_target_to_package(package_foo, id2);
+        graph.add_target_to_package(package_bar, id3);
+
+        let targets_in_foo = graph.get_targets_in_package(package_foo);
+        assert_eq!(targets_in_foo, Some(vec![id1, id2]));
+
+        let targets_in_bar = graph.get_targets_in_package(package_bar);
+        assert_eq!(targets_in_bar, Some(vec![id3]));
+
+        let empty_package = graph.store_package("fbcode//empty");
+        assert_eq!(graph.get_targets_in_package(empty_package), None);
     }
 }
