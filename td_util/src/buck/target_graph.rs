@@ -373,7 +373,6 @@ impl TargetGraph {
     /// Remove a target and all its associated data from the graph
     ///
     /// This includes:
-    /// - Removing the target from all other targets' dependencies
     /// - Removing all dependencies of this target
     /// - Removing all CI pattern associations
     /// - Removing the target from the target map
@@ -393,24 +392,8 @@ impl TargetGraph {
             }
         }
 
-        // Get all targets that depend on this target
-        if let Some(rdeps) = self.get_rdeps(target_id) {
-            // For each dependent, remove target_id from their deps
-            for rdep_id in rdeps {
-                if let Some(mut deps) = self.target_id_to_deps.get_mut(&rdep_id) {
-                    deps.retain(|&id| id != target_id);
-                    // Remove the entry if empty
-                    if deps.is_empty() {
-                        drop(deps);
-                        self.target_id_to_deps.remove(&rdep_id);
-                    }
-                }
-            }
-        }
-
         // Clear dependency relationships
         self.target_id_to_deps.remove(&target_id);
-        self.target_id_to_rdeps.remove(&target_id);
 
         // Remove CI pattern associations
         self.target_id_to_ci_srcs.remove(&target_id);
@@ -876,7 +859,8 @@ mod tests {
         let id1 = graph.store_target(target1);
         let id2 = graph.store_target(target2);
 
-        // Add a dependency and some metadata
+        // Add a dependency: target2 depends on target1
+        // This creates: id1 -> rdeps: [id2], id2 -> deps: [id1]
         graph.add_rdep(id1, id2);
 
         let rule_type_id = graph.store_rule_type("cpp_library");
@@ -890,8 +874,8 @@ mod tests {
 
         // Verify initial state
         assert_eq!(graph.len(), 2);
-        assert_eq!(graph.rdeps_len(), 1);
-        assert_eq!(graph.deps_len(), 1);
+        assert_eq!(graph.rdeps_len(), 1); // id1 has rdeps
+        assert_eq!(graph.deps_len(), 1); // id2 has deps
         assert!(graph.get_minimized_target(id1).is_some());
 
         // Remove target1
@@ -901,11 +885,13 @@ mod tests {
         assert_eq!(graph.len(), 1);
         assert!(graph.get_minimized_target(id1).is_none());
 
-        // Should have cleaned up empty dependency entries
-        assert_eq!(graph.rdeps_len(), 0);
-        assert_eq!(graph.deps_len(), 0);
-        assert!(graph.get_rdeps(id1).is_none());
-        assert!(graph.get_deps(id2).is_none());
+        // - id1's rdeps entry is NOT removed (still exists pointing to id2)
+        // - id2's deps entry is NOT cleaned (still points to removed id1)
+        // - Only id1's own deps are removed
+        assert_eq!(graph.rdeps_len(), 1); // id1's rdeps entry still exists
+        assert_eq!(graph.deps_len(), 1); // id2's deps entry still exists
+        assert_eq!(graph.get_rdeps(id1).unwrap(), vec![id2]); // Still points to id2
+        assert_eq!(graph.get_deps(id2).unwrap(), vec![id1]); // Still points to removed id1
     }
 
     #[test]
