@@ -24,3 +24,7 @@ fbinit = { workspace = true }
 
 td_util = { path = "../.." }
 audit = { path = "../../../audit" }
+
+[dev-dependencies]
+rstest = "0.18"
+tempfile = "3.1.0"

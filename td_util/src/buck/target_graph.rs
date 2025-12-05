@@ -22,6 +22,8 @@ use crate::types::PatternType;
 use crate::types::TargetHash;
 use crate::types::TargetPattern;
 
+pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
+
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -370,45 +372,68 @@ impl TargetGraph {
         self.target_id_to_deps.get(&target_id).map(|v| v.clone())
     }
 
-    /// Remove a target and all its associated data from the graph
-    ///
-    /// This includes:
-    /// - Removing all dependencies of this target
-    /// - Removing all CI pattern associations
-    /// - Removing the target from the target map
-    pub fn remove_target(&self, target_id: TargetId) {
-        // Get all targets this target depends on
-        if let Some(deps) = self.get_deps(target_id) {
-            // For each dependency, remove target_id from their rdeps
-            for dep_id in deps {
-                if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) {
-                    rdeps.retain(|&id| id != target_id);
-                    // Remove the entry if empty
-                    if rdeps.is_empty() {
-                        drop(rdeps);
-                        self.target_id_to_rdeps.remove(&dep_id);
-                    }
-                }
+    fn remove_from_rdeps(&self, dep_id: TargetId, target_to_remove: TargetId) {
+        if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) {
+            rdeps.retain(|&id| id != target_to_remove);
+            if rdeps.is_empty() {
+                drop(rdeps);
+                self.target_id_to_rdeps.remove(&dep_id);
             }
         }
+    }
 
-        // Clear dependency relationships
+    fn remove_from_deps(&self, target_id: TargetId, dep_to_remove: TargetId) {
+        if let Some(mut deps) = self.target_id_to_deps.get_mut(&target_id) {
+            deps.retain(|&id| id != dep_to_remove);
+            if deps.is_empty() {
+                drop(deps);
+                self.target_id_to_deps.remove(&target_id);
+            }
+        }
+    }
+
+    pub fn remove_target(&self, target_id: TargetId) {
+        if self.is_ci_hint_target(target_id) {
+            self.remove_ci_hint_target(target_id);
+        } else {
+            self.remove_regular_target(target_id);
+        }
+
         self.target_id_to_deps.remove(&target_id);
-
-        // Remove CI pattern associations
         self.target_id_to_ci_srcs.remove(&target_id);
         self.target_id_to_ci_srcs_must_match.remove(&target_id);
         self.target_id_to_ci_deps_package_patterns
             .remove(&target_id);
         self.target_id_to_ci_deps_recursive_patterns
             .remove(&target_id);
-
-        // Remove from sudo label set
         self.targets_with_sudo_label.remove(&target_id);
-
-        // Remove target information
         self.target_id_to_label.remove(&target_id);
         self.minimized_targets.remove(&target_id);
+    }
+
+    fn remove_ci_hint_target(&self, target_id: TargetId) {
+        if let Some(rdeps) = self.get_rdeps(target_id) {
+            for dest_id in rdeps {
+                self.remove_from_deps(dest_id, target_id);
+            }
+        }
+        self.target_id_to_rdeps.remove(&target_id);
+
+        if let Some(deps) = self.get_deps(target_id) {
+            for dep_id in deps {
+                self.remove_from_rdeps(dep_id, target_id);
+            }
+        }
+    }
+
+    fn remove_regular_target(&self, target_id: TargetId) {
+        if let Some(deps) = self.get_deps(target_id) {
+            for dep_id in deps {
+                if !self.is_ci_hint_target(dep_id) {
+                    self.remove_from_rdeps(dep_id, target_id);
+                }
+            }
+        }
     }
 
     pub fn get_all_targets(&self) -> impl Iterator<Item = TargetId> + '_ {
@@ -421,6 +446,12 @@ impl TargetGraph {
 
     pub fn get_minimized_target(&self, id: TargetId) -> Option<MinimizedBuckTarget> {
         self.minimized_targets.get(&id).map(|entry| entry.clone())
+    }
+
+    pub fn is_ci_hint_target(&self, target_id: TargetId) -> bool {
+        self.get_minimized_target(target_id)
+            .and_then(|minimized| self.get_rule_type_string(minimized.rule_type))
+            .is_some_and(|rule_type| rule_type == CI_HINT_RULE_TYPE)
     }
 
     pub fn mark_target_has_sudo_label(&self, target_id: TargetId) {
@@ -539,6 +570,8 @@ impl Default for TargetGraph {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -921,5 +954,66 @@ mod tests {
 
         let empty_package = graph.store_package("fbcode//empty");
         assert_eq!(graph.get_targets_in_package(empty_package), None);
+    }
+
+    fn store_target_with_rule_type(graph: &TargetGraph, label: &str, rule_type: &str) -> TargetId {
+        let target_id = graph.store_target(label);
+        let rule_type_id = graph.store_rule_type(rule_type);
+        graph.store_minimized_target(
+            target_id,
+            MinimizedBuckTarget {
+                rule_type: rule_type_id,
+                oncall: None,
+                labels: vec![],
+                target_hash: TargetHash::new("test_hash"),
+            },
+        );
+        target_id
+    }
+
+    fn setup_ci_hint_edge(graph: &TargetGraph) -> (TargetId, TargetId) {
+        let ci_hint_id =
+            store_target_with_rule_type(graph, "fbcode//foo:ci_hint@my_test", CI_HINT_RULE_TYPE);
+        let dest_id = store_target_with_rule_type(graph, "fbcode//foo:my_test", "python_test");
+        graph.add_rdep(ci_hint_id, dest_id);
+        (ci_hint_id, dest_id)
+    }
+
+    #[test]
+    fn remove_ci_hint_target_cleans_reversed_edges() {
+        let graph = TargetGraph::new();
+        let (ci_hint_id, dest_id) = setup_ci_hint_edge(&graph);
+
+        graph.remove_target(ci_hint_id);
+
+        assert!(graph.get_rdeps(ci_hint_id).is_none());
+        assert!(graph.get_deps(dest_id).is_none());
+    }
+
+    #[test]
+    fn remove_regular_target_preserves_ci_hint_edges() {
+        let graph = TargetGraph::new();
+        let (ci_hint_id, dest_id) = setup_ci_hint_edge(&graph);
+
+        graph.remove_target(dest_id);
+
+        assert_eq!(graph.get_rdeps(ci_hint_id).unwrap(), vec![dest_id]);
+        assert!(graph.get_deps(dest_id).is_none());
+    }
+
+    #[rstest]
+    #[case::ci_hint_target(CI_HINT_RULE_TYPE, true)]
+    #[case::regular_target("python_test", false)]
+    fn is_ci_hint_based_on_rule_type(#[case] rule_type: &str, #[case] expected: bool) {
+        let graph = TargetGraph::new();
+        let target_id = store_target_with_rule_type(&graph, "fbcode//foo:target", rule_type);
+        assert_eq!(graph.is_ci_hint_target(target_id), expected);
+    }
+
+    #[test]
+    fn is_ci_hint_returns_false_for_unknown_target() {
+        let graph = TargetGraph::new();
+        let unknown_id = graph.store_target("fbcode//foo:unknown");
+        assert!(!graph.is_ci_hint_target(unknown_id));
     }
 }
