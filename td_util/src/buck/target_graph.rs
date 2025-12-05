@@ -19,6 +19,7 @@ use serde::Serialize;
 
 use crate::types::Package;
 use crate::types::PatternType;
+use crate::types::TargetHash;
 use crate::types::TargetPattern;
 
 /// Schema version for TargetGraph serialization format.
@@ -125,6 +126,7 @@ pub struct MinimizedBuckTarget {
     pub rule_type: RuleTypeId,
     pub oncall: Option<OncallId>,
     pub labels: Vec<LabelId>,
+    pub target_hash: TargetHash,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -738,6 +740,7 @@ mod tests {
             rule_type: rule_type_id,
             oncall: Some(oncall_id),
             labels: vec![label_id1, label_id2],
+            target_hash: TargetHash::new("abc123def456"),
         };
 
         graph.store_minimized_target(target_id, minimized.clone());
@@ -746,6 +749,28 @@ mod tests {
 
         let non_existent_target_id: TargetId = "fbcode//non_existent:target".parse().unwrap();
         assert_eq!(graph.get_minimized_target(non_existent_target_id), None);
+    }
+
+    #[test]
+    fn test_target_hash_in_minimized_target() {
+        let graph = TargetGraph::new();
+
+        let target_label = "fbcode//test:target";
+        let target_id = graph.store_target(target_label);
+        let rule_type_id = graph.store_rule_type("cpp_library");
+        let target_hash = "5700a84a628259e252ef6952d6af6079";
+
+        let minimized = MinimizedBuckTarget {
+            rule_type: rule_type_id,
+            oncall: None,
+            labels: vec![],
+            target_hash: TargetHash::new(target_hash),
+        };
+
+        graph.store_minimized_target(target_id, minimized);
+        let retrieved = graph.get_minimized_target(target_id).unwrap();
+
+        assert_eq!(retrieved.target_hash, TargetHash::new(target_hash));
     }
 
     #[test]
@@ -842,6 +867,7 @@ mod tests {
             rule_type: rule_type_id,
             oncall: None,
             labels: vec![],
+            target_hash: TargetHash::new("test_hash_123"),
         };
         graph.store_minimized_target(id1, minimized);
 
