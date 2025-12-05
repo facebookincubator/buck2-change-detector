@@ -118,6 +118,7 @@ define_id_type!(LabelId);
 define_id_type!(GlobPatternId);
 define_id_type!(FileId);
 define_id_type!(PackageId);
+define_id_type!(CiDepsPatternId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinimizedBuckTarget {
@@ -138,6 +139,7 @@ pub struct TargetGraph {
     glob_pattern_id_to_string: DashMap<GlobPatternId, String>,
     package_id_to_path: DashMap<PackageId, String>,
     file_id_to_path: DashMap<FileId, String>,
+    ci_deps_pattern_id_to_string: DashMap<CiDepsPatternId, String>,
 
     // Bidirectional dependency tracking
     target_id_to_rdeps: DashMap<TargetId, Vec<TargetId>>,
@@ -154,8 +156,8 @@ pub struct TargetGraph {
     target_id_to_ci_srcs_must_match: DashMap<TargetId, Vec<GlobPatternId>>,
 
     // CI deps patterns storage
-    target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<PackageId>>,
-    target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<PackageId>>,
+    target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<CiDepsPatternId>>,
+    target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<CiDepsPatternId>>,
 
     // Targets that have the uses_sudo label
     targets_with_sudo_label: DashSet<TargetId>,
@@ -176,6 +178,7 @@ impl TargetGraph {
             file_id_to_rdeps: DashMap::new(),
             package_id_to_path: DashMap::new(),
             package_id_to_errors: DashMap::new(),
+            ci_deps_pattern_id_to_string: DashMap::new(),
             target_id_to_ci_srcs: DashMap::new(),
             target_id_to_ci_srcs_must_match: DashMap::new(),
             target_id_to_ci_deps_package_patterns: DashMap::new(),
@@ -255,6 +258,15 @@ impl TargetGraph {
         package_id_to_path
     );
 
+    impl_string_storage!(
+        CiDepsPatternId,
+        store_ci_deps_pattern,
+        get_ci_deps_pattern_string,
+        ci_deps_patterns_len,
+        iter_ci_deps_patterns,
+        ci_deps_pattern_id_to_string
+    );
+
     impl_collection_storage!(
         TargetId,
         GlobPatternId,
@@ -289,7 +301,7 @@ impl TargetGraph {
 
     impl_collection_storage!(
         TargetId,
-        PackageId,
+        CiDepsPatternId,
         store_ci_deps_package_patterns,
         add_ci_deps_package_pattern,
         get_ci_deps_package_patterns,
@@ -299,7 +311,7 @@ impl TargetGraph {
     );
     impl_collection_storage!(
         TargetId,
-        PackageId,
+        CiDepsPatternId,
         store_ci_deps_recursive_patterns,
         add_ci_deps_recursive_pattern,
         get_ci_deps_recursive_patterns,
@@ -483,6 +495,7 @@ impl TargetGraph {
             ("files", self.files_len()),
             ("file_rdeps", self.file_rdeps_len()),
             ("packages", self.packages_len()),
+            ("ci_deps_patterns", self.ci_deps_patterns_len()),
             ("errors", self.errors_len()),
             ("ci_srcs", self.ci_srcs_len()),
             ("ci_srcs_must_match", self.ci_srcs_must_match_len()),
@@ -506,13 +519,13 @@ impl TargetGraph {
         }
     }
 
-    pub fn package_id_to_target_pattern(
+    pub fn ci_deps_pattern_id_to_target_pattern(
         &self,
-        package_id: PackageId,
+        pattern_id: CiDepsPatternId,
         pattern_type: PatternType,
     ) -> Option<TargetPattern> {
-        self.get_package_path(package_id)
-            .map(|package_path| Package::new(&package_path).to_target_pattern(pattern_type))
+        self.get_ci_deps_pattern_string(pattern_id)
+            .map(|pattern_string| Package::new(&pattern_string).to_target_pattern(pattern_type))
     }
 }
 
@@ -679,6 +692,38 @@ mod tests {
     }
 
     #[test]
+    fn test_ci_deps_pattern_storage_and_retrieval() {
+        let graph = TargetGraph::new();
+        let target_label = "fbcode//test:target";
+        let target_id = graph.store_target(target_label);
+
+        let package_pattern = "fbcode//services/api";
+        let recursive_pattern = "fbcode//core";
+
+        let pattern_id1 = graph.store_ci_deps_pattern(package_pattern);
+        let pattern_id2 = graph.store_ci_deps_pattern(recursive_pattern);
+
+        assert_ne!(pattern_id1, pattern_id2);
+        assert_eq!(
+            graph.get_ci_deps_pattern_string(pattern_id1),
+            Some(package_pattern.to_string())
+        );
+        assert_eq!(
+            graph.get_ci_deps_pattern_string(pattern_id2),
+            Some(recursive_pattern.to_string())
+        );
+
+        graph.store_ci_deps_package_patterns(target_id, vec![pattern_id1]);
+        graph.store_ci_deps_recursive_patterns(target_id, vec![pattern_id2]);
+
+        let retrieved_package_patterns = graph.get_ci_deps_package_patterns(target_id);
+        let retrieved_recursive_patterns = graph.get_ci_deps_recursive_patterns(target_id);
+
+        assert_eq!(retrieved_package_patterns, Some(vec![pattern_id1]));
+        assert_eq!(retrieved_recursive_patterns, Some(vec![pattern_id2]));
+    }
+
+    #[test]
     fn test_minimized_target() {
         let graph = TargetGraph::new();
 
@@ -728,6 +773,17 @@ mod tests {
         let package_id2: PackageId = package2.parse().unwrap();
         assert_ne!(package_id1, package_id2);
         assert_eq!(package1.parse::<PackageId>().unwrap(), package_id1);
+
+        // Test CiDepsPatternId
+        let ci_pattern1 = "fbcode//services";
+        let ci_pattern2 = "fbcode//tools";
+        let ci_pattern_id1: CiDepsPatternId = ci_pattern1.parse().unwrap();
+        let ci_pattern_id2: CiDepsPatternId = ci_pattern2.parse().unwrap();
+        assert_ne!(ci_pattern_id1, ci_pattern_id2);
+        assert_eq!(
+            ci_pattern1.parse::<CiDepsPatternId>().unwrap(),
+            ci_pattern_id1
+        );
     }
 
     #[test]
