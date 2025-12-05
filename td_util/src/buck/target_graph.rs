@@ -26,7 +26,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
