@@ -26,7 +26,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -196,11 +196,11 @@ impl TargetGraph {
     }
 
     pub fn len(&self) -> usize {
-        self.targets_len()
+        self.minimized_targets_len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.targets_len() == 0
+        self.minimized_targets_len() == 0
     }
 
     impl_string_storage!(
@@ -407,7 +407,6 @@ impl TargetGraph {
         self.target_id_to_ci_deps_recursive_patterns
             .remove(&target_id);
         self.targets_with_sudo_label.remove(&target_id);
-        self.target_id_to_label.remove(&target_id);
         self.minimized_targets.remove(&target_id);
     }
 
@@ -599,7 +598,7 @@ mod tests {
         let id2 = graph.store_target(target2);
 
         assert_ne!(id1, id2);
-        assert_eq!(graph.len(), 2);
+        assert_eq!(graph.targets_len(), 2);
 
         let id1_again = graph.store_target(target1);
         assert_eq!(id1, id1_again);
@@ -648,7 +647,7 @@ mod tests {
         let restored_graph: TargetGraph =
             serde_json::from_str(&json).expect("Failed to deserialize");
 
-        assert_eq!(restored_graph.len(), 3);
+        assert_eq!(restored_graph.targets_len(), 3);
 
         let restored_rdeps1 = restored_graph.get_rdeps(id1).unwrap();
         assert_eq!(restored_rdeps1.len(), 2);
@@ -906,7 +905,7 @@ mod tests {
         graph.store_minimized_target(id1, minimized);
 
         // Verify initial state
-        assert_eq!(graph.len(), 2);
+        assert_eq!(graph.len(), 1); // Only id1 has minimized data
         assert_eq!(graph.rdeps_len(), 1); // id1 has rdeps
         assert_eq!(graph.deps_len(), 1); // id2 has deps
         assert!(graph.get_minimized_target(id1).is_some());
@@ -914,8 +913,9 @@ mod tests {
         // Remove target1
         graph.remove_target(id1);
 
-        // Should have removed target from label map and minimized targets
-        assert_eq!(graph.len(), 1);
+        // len() uses minimized_targets_len, so removing minimized data decrements it
+        // target_id_to_label is NOT removed (needed for removed target detection)
+        assert_eq!(graph.len(), 0);
         assert!(graph.get_minimized_target(id1).is_none());
 
         // - id1's rdeps entry is NOT removed (still exists pointing to id2)
