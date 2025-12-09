@@ -35,6 +35,8 @@ enum Args {
     #[cfg(fbcode_build)]
     GraphCompressor(graph_compressor::Args),
     #[cfg(fbcode_build)]
+    MetadataFetcher(metadata_fetcher::Args),
+    #[cfg(fbcode_build)]
     VerifiableMatcher(verifiable_matcher::Args),
     #[cfg(fbcode_build)]
     Ranker(ranker::Args),
@@ -91,6 +93,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Citadel(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
         Args::GraphCompressor(args) => graph_compressor::main(args),
+        #[cfg(fbcode_build)]
+        Args::MetadataFetcher(args) => metadata_fetcher::main(args).await,
         #[cfg(fbcode_build)]
         Args::VerifiableMatcher(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
