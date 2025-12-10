@@ -19,6 +19,7 @@ pub use tracing;
 #[derive(Debug)]
 #[allow(non_camel_case_types)]
 pub enum Event {
+    RUST_ORCHESTRATOR_START,
     BTD_SUCCESS,
     GRAPH_COMPRESSOR_SUCCESS,
     INVALID_TRIGGER,
