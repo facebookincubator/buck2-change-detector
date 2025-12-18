@@ -10,7 +10,6 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::marker::PhantomData;
 use std::ops::Deref;
 
 use serde::Deserialize;
@@ -19,6 +18,9 @@ use serde::de::Error;
 use serde::de::MapAccess;
 use serde::de::Visitor;
 use td_util::string::InternString;
+
+use crate::select::Select;
+use crate::select::Visit;
 
 /// A set of labels
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
@@ -118,112 +120,6 @@ impl Serialize for Labels {
 /// A label is really a list of possible alternative labels in different universes (because of select).
 /// The difference to Labels is that concat merges strings rather than Vec
 struct Label<'a>(Vec<Cow<'a, str>>);
-
-struct SelectEntries<T>(Vec<T>);
-
-enum Select<T> {
-    Selector(Vec<T>),
-    Concat(Vec<T>),
-}
-
-struct Visit<T>(PhantomData<T>);
-
-impl<T> Visit<T> {
-    fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<'de, T> Visitor<'de> for Visit<SelectEntries<T>>
-where
-    T: Deserialize<'de>,
-{
-    type Value = SelectEntries<T>;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("the entries map of a select-defined block")
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        // We have the entries {key1: value1, ...}
-        // We return the values, concattenated
-        let mut res = match map.size_hint() {
-            None => Vec::new(),
-            Some(size) => Vec::with_capacity(size),
-        };
-        while let Some((_, x)) = map.next_entry::<&str, T>()? {
-            res.push(x);
-        }
-        Ok(SelectEntries(res))
-    }
-}
-
-impl<'de, T> Deserialize<'de> for SelectEntries<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_map(Visit::<Self>::new())
-    }
-}
-
-impl<'de, T> Select<T>
-where
-    T: Deserialize<'de>,
-{
-    fn visit_map<A>(mut map: A) -> Result<Self, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        // We expect one of:
-        //   {"__type":"selector", "entries": {key1: value1, ...}}
-        //   {"__type":"concat", "items": [value1, ..]}
-
-        let check = |b, msg| {
-            if b {
-                Ok(())
-            } else {
-                Err(A::Error::custom(msg))
-            }
-        };
-        check(
-            map.next_key::<&str>()? == Some("__type"),
-            "expecting a select with a `__type` key",
-        )?;
-        let res = match map.next_value::<&str>()? {
-            "selector" => {
-                check(
-                    map.next_key::<&str>()? == Some("entries"),
-                    "expected an entries key",
-                )?;
-                let res = map.next_value::<SelectEntries<T>>()?;
-                Select::Selector(res.0)
-            }
-            "concat" => {
-                check(
-                    map.next_key::<&str>()? == Some("items"),
-                    "expected an items key",
-                )?;
-                let res = map.next_value::<Vec<T>>()?;
-                Select::Concat(res)
-            }
-            typ => {
-                return Err(A::Error::custom(format!(
-                    "expecting a `__type` of selector or concat, got `{}`",
-                    typ
-                )));
-            }
-        };
-        check(map.next_key::<&str>()?.is_none(), "expected no more keys")?;
-        Ok(res)
-    }
-}
 
 impl<'de> Visitor<'de> for Visit<Label<'de>> {
     type Value = Label<'de>;

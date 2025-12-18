@@ -20,6 +20,7 @@ pub mod labels;
 pub mod owners;
 pub mod package_resolver;
 pub mod run;
+pub mod select;
 pub mod target_graph;
 pub mod target_map;
 pub mod targets;
