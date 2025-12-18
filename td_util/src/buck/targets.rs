@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::json;
 
+use crate::deserializers::deserialize_tests;
 use crate::labels::Labels;
 use crate::types::CellPath;
 use crate::types::Glob;
@@ -181,8 +182,12 @@ pub struct BuckTarget {
     /// Used as additional triggers
     #[serde(default, skip_serializing_if = "is_empty_slice")]
     pub ci_deps: Box<[TargetPattern]>,
-    /// It's test dependencies (buck.tests attribute)
-    #[serde(default, rename = "buck.tests", skip_serializing_if = "is_empty_slice")]
+    /// It's test dependencies (tests attribute)
+    #[serde(
+        default,
+        deserialize_with = "deserialize_tests",
+        skip_serializing_if = "is_empty_slice"
+    )]
     pub tests: Box<[TargetLabel]>,
 }
 
@@ -280,7 +285,7 @@ mod tests {
                     "buck.target_hash": "43ce1a7a56f10225413a2991febb853a",
                     "buck.package": "fbcode//me",
                     "buck.package_values": {"citadel.labels": ["ci:@fbcode//mode/opt"]},
-                    "buck.tests": ["fbcode//me:test_target1", "fbcode//me:test_target2"],
+                    "tests": ["fbcode//me:test_target1", "fbcode//me:test_target2"],
                     "name": "test",
                 },
                 {
@@ -370,5 +375,56 @@ mod tests {
 
         let res = Targets::from_file(file.path()).unwrap();
         assert_eq!(res.0.len(), 1);
+    }
+
+    #[test]
+    fn test_buck_tests_with_nested_select() {
+        // Test nested select statements - the deserializer should flatten all levels
+        let value = serde_json::json!(
+            [
+                {
+                    "buck.type": "prelude//rules.bzl:cxx_library",
+                    "buck.deps": [],
+                    "buck.inputs": [],
+                    "buck.target_hash": "56f10225413a2991febb853a43ce1a7a",
+                    "buck.package": "fbcode//nested",
+                    "tests": {
+                        "__type": "selector",
+                        "entries": {
+                            "DEFAULT": {
+                                "__type": "selector",
+                                "entries": {
+                                    "DEFAULT": ["fbcode//nested:inner_default"],
+                                    "config//mode:debug": ["fbcode//nested:inner_debug"]
+                                }
+                            },
+                            "config//os:linux": ["fbcode//nested:outer_linux"]
+                        }
+                    },
+                    "name": "nested_lib",
+                },
+            ]
+        );
+        let file = write_buck_input(value);
+
+        let res = Targets::from_file(file.path()).unwrap();
+        let target = res.targets().next().unwrap();
+        // All nested branches should be flattened
+        assert_eq!(target.tests.len(), 3);
+        assert!(
+            target
+                .tests
+                .contains(&TargetLabel::new("fbcode//nested:inner_default"))
+        );
+        assert!(
+            target
+                .tests
+                .contains(&TargetLabel::new("fbcode//nested:inner_debug"))
+        );
+        assert!(
+            target
+                .tests
+                .contains(&TargetLabel::new("fbcode//nested:outer_linux"))
+        );
     }
 }
