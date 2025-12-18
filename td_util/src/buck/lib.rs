@@ -14,6 +14,7 @@
 use td_util::supertd_events;
 pub mod cells;
 pub mod config;
+pub mod flattened_select;
 pub mod glob;
 pub mod ignore_set;
 pub mod labels;
