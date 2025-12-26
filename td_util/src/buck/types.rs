@@ -747,6 +747,16 @@ pub enum PatternType {
     Recursive,
 }
 
+impl PatternType {
+    /// Merge two pattern types: Recursive wins (superset of Package)
+    pub fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Recursive, _) | (_, Self::Recursive) => Self::Recursive,
+            (Self::Package, Self::Package) => Self::Package,
+        }
+    }
+}
+
 impl Package {
     pub fn to_target_pattern(&self, pattern_type: PatternType) -> TargetPattern {
         let package_path = self.as_str();
