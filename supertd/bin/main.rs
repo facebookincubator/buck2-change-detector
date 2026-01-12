@@ -71,7 +71,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
     let args = match get_args() {
         Ok(args) => args,
         Err(err) => {
-            eprintln!("{}", err.context("Error parsing arguments"));
+            eprintln!("{:?}", err.context("Error parsing arguments"));
             return ExitCode::FAILURE;
         }
     };
