@@ -121,7 +121,10 @@ def test_run(patch_name):
     patch = os.path.join(os.getenv("TESTCASES"), patch_name)
     patch_name = Path(patch).stem
 
-    with tempfile.TemporaryDirectory() as working_dir, tempfile.TemporaryDirectory() as output_dir:
+    with (
+        tempfile.TemporaryDirectory() as working_dir,
+        tempfile.TemporaryDirectory() as output_dir,
+    ):
         os.chdir(working_dir)
         out_base = Path(output_dir).joinpath("base.jsonl")
         out_diff = Path(output_dir).joinpath("diff.jsonl")
