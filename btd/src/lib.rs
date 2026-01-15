@@ -173,6 +173,10 @@ pub struct Args {
     /// be filtered to only include targets that are in this file.
     #[arg(long)]
     targets_superset: Option<PathBuf>,
+
+    /// Write the impacted targets to the specified file - supports .jsonl and .bin formats with optional .zst compression
+    #[arg(long, value_name = "FILE")]
+    output: Option<PathBuf>,
 }
 
 /// Rather than waiting to deallocate all our big JSON objects, we just forget them with `ManuallyDrop`.
