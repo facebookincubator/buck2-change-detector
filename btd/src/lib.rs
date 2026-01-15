@@ -30,9 +30,11 @@ pub mod sudo;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs::File;
+use std::io::Write;
 use std::io::stdout;
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -41,6 +43,7 @@ use anyhow::anyhow;
 use btd_run_stats::BTDRunStats;
 use clap::Parser;
 use serde::Serialize;
+use td_util::file_io::file_writer;
 use td_util::json;
 use td_util::logging::elapsed;
 use td_util::logging::step;
@@ -315,7 +318,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         let mut graph = GraphSize::new(&base, &diff);
         graph.print_recursive_changes(&recursive, &sudos, output_format, None)?;
     } else {
-        print_recursive_changes(&recursive, &sudos, output_format, |_, x| x);
+        print_recursive_changes(&recursive, &sudos, output_format, None, |_, x| x)?;
     }
     // We aggregate errors for post-commit validation so downstream systems
     // can log existing issues.
@@ -523,8 +526,9 @@ fn print_recursive_changes<'a, T: Serialize + 'a>(
     changes: &[Vec<(&'a BuckTarget, ImpactTraceData)>],
     sudos: &HashSet<TargetLabelKeyRef>,
     output: OutputFormat,
+    output_path: Option<&Path>,
     mut augment: impl FnMut(&'a BuckTarget, Output<'a>) -> T,
-) {
+) -> anyhow::Result<()> {
     if output == OutputFormat::Text {
         for (depth, xs) in changes.iter().enumerate() {
             println!("Level {}", depth);
@@ -544,13 +548,17 @@ fn print_recursive_changes<'a, T: Serialize + 'a>(
                 augment(x, Output::from_target(x, depth as u64, uses_sudo, reason))
             });
 
-        let out = stdout().lock();
+        let writer: Box<dyn Write> = match output_path {
+            Some(path) => file_writer(path)?,
+            None => Box::new(stdout().lock()),
+        };
         if output == OutputFormat::Json {
-            json::write_json_per_line(out, items).unwrap();
+            json::write_json_per_line(writer, items)?;
         } else {
-            json::write_json_lines(out, items).unwrap();
+            json::write_json_lines(writer, items)?;
         }
     }
+    Ok(())
 }
 
 fn write_errors_to_file(
