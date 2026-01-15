@@ -10,10 +10,13 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::io::Write;
 use std::io::stdout;
+use std::path::Path;
 
 use rayon::prelude::*;
 use serde::Serialize;
+use td_util::file_io::file_writer;
 use td_util::json;
 use td_util::no_hash::BuildNoHash;
 use td_util_buck::targets::BuckTarget;
@@ -84,7 +87,8 @@ impl GraphSize {
         changes: &[Vec<(&BuckTarget, ImpactTraceData)>],
         sudos: &HashSet<TargetLabelKeyRef>,
         output: OutputFormat,
-    ) {
+        output_path: Option<&Path>,
+    ) -> anyhow::Result<()> {
         let items = changes
             .iter()
             .enumerate()
@@ -101,20 +105,30 @@ impl GraphSize {
             })
             .collect::<Vec<_>>();
 
-        let out = stdout().lock();
+        let writer: Box<dyn Write> = match output_path {
+            Some(path) => file_writer(path)?,
+            None => Box::new(stdout().lock()),
+        };
         if output == OutputFormat::Json {
-            json::write_json_per_line(out, items).unwrap();
+            json::write_json_per_line(writer, items)?;
         } else {
-            json::write_json_lines(out, items).unwrap();
+            json::write_json_lines(writer, items)?;
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::BufRead;
+    use std::io::BufReader;
+
+    use td_util::file_io::file_reader;
     use td_util_buck::targets::TargetsEntry;
+    use tempfile::TempDir;
 
     use super::*;
+    use crate::diff::ImpactTraceData;
 
     fn mk_label(x: &str) -> TargetLabel {
         TargetLabel::new(&format!("none//:{x}"))
@@ -172,5 +186,94 @@ mod tests {
         assert_eq!(targets_size.get(&mk_label("a")), 3);
         assert_eq!(targets_size.get(&mk_label("b")), 3); // b -> a -> c
         assert_eq!(targets_size.get(&mk_label("c")), 1);
+    }
+
+    fn create_test_graph() -> (Targets, Targets) {
+        let graph = [("a", vec!["b"]), ("b", vec![])];
+        let targets = Targets::new(
+            graph
+                .iter()
+                .map(|(name, deps)| {
+                    TargetsEntry::Target(BuckTarget {
+                        deps: deps.iter().map(|x| mk_label(x)).collect(),
+                        ..BuckTarget::testing(name, "none//", "rule_type")
+                    })
+                })
+                .collect(),
+        );
+        (targets.clone(), targets)
+    }
+
+    fn create_test_changes(targets: &Targets) -> Vec<Vec<(&BuckTarget, ImpactTraceData)>> {
+        let target_a = targets.targets().find(|t| t.name.as_str() == "a").unwrap();
+        vec![vec![(target_a, ImpactTraceData::testing())]]
+    }
+
+    #[test]
+    fn test_print_recursive_changes_to_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.jsonl");
+
+        let (base, diff) = create_test_graph();
+        let mut graph_size = GraphSize::new(&base, &diff);
+        let changes = create_test_changes(&diff);
+        let sudos = HashSet::new();
+
+        let result = graph_size.print_recursive_changes(
+            &changes,
+            &sudos,
+            OutputFormat::JsonLines,
+            Some(output_path.as_path()),
+        );
+
+        assert!(result.is_ok());
+        assert!(output_path.exists());
+
+        // Verify the file contains valid JSON lines
+        let reader = file_reader(&output_path).unwrap();
+        let lines: Vec<String> = BufReader::new(reader).lines().map(|l| l.unwrap()).collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"target\":\"none//:a\""));
+    }
+
+    #[test]
+    fn test_print_recursive_changes_to_compressed_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.jsonl.zst");
+
+        let (base, diff) = create_test_graph();
+        let mut graph_size = GraphSize::new(&base, &diff);
+        let changes = create_test_changes(&diff);
+        let sudos = HashSet::new();
+
+        let result = graph_size.print_recursive_changes(
+            &changes,
+            &sudos,
+            OutputFormat::JsonLines,
+            Some(output_path.as_path()),
+        );
+
+        assert!(result.is_ok());
+        assert!(output_path.exists());
+
+        // Verify the file can be read back (file_reader handles decompression)
+        let reader = file_reader(&output_path).unwrap();
+        let lines: Vec<String> = BufReader::new(reader).lines().map(|l| l.unwrap()).collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"target\":\"none//:a\""));
+    }
+
+    #[test]
+    fn test_print_recursive_changes_with_none_output_path() {
+        // When output_path is None, it should write to stdout (we just verify no error)
+        let (base, diff) = create_test_graph();
+        let mut graph_size = GraphSize::new(&base, &diff);
+        let changes = create_test_changes(&diff);
+        let sudos = HashSet::new();
+
+        let result =
+            graph_size.print_recursive_changes(&changes, &sudos, OutputFormat::JsonLines, None);
+
+        assert!(result.is_ok());
     }
 }

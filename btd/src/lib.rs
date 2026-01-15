@@ -313,7 +313,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     step("printing changes");
     if args.graph_size {
         let mut graph = GraphSize::new(&base, &diff);
-        graph.print_recursive_changes(&recursive, &sudos, output_format);
+        graph.print_recursive_changes(&recursive, &sudos, output_format, None)?;
     } else {
         print_recursive_changes(&recursive, &sudos, output_format, |_, x| x);
     }
