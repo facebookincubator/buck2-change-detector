@@ -375,3 +375,189 @@ def assert_dangling_check_errors(out_btd_dangling_errors):
     assert target_deleted_error is not None
     assert target_deleted_error["deleted"] == "root//inner:baz"
     assert target_deleted_error["referenced_by"] == "root//:bar"
+
+
+def test_output_flag():
+    """Test that the --output flag writes to a file instead of stdout."""
+    audit = os.getenv("AUDIT")
+    btd = os.getenv("BTD")
+    buck = os.getenv("BUCK")
+    base = os.getenv("BASE")
+    targets = os.getenv("TARGETS")
+    patch = os.path.join(os.getenv("TESTCASES"), "file.patch")
+
+    with (
+        tempfile.TemporaryDirectory() as working_dir,
+        tempfile.TemporaryDirectory() as output_dir,
+    ):
+        os.chdir(working_dir)
+        out_base = Path(output_dir).joinpath("base.jsonl")
+        out_diff = Path(output_dir).joinpath("diff.jsonl")
+        out_cells = Path(output_dir).joinpath("cells.json")
+        out_config = Path(output_dir).joinpath("config.json")
+        out_changes = Path(output_dir).joinpath("changes.txt")
+        out_btd = Path(output_dir).joinpath("btd_output.jsonl")
+        out_btd_dangling_errors = Path(output_dir).joinpath("btd_dangling_errors.json")
+        btd_args = [
+            "--check-dangling",
+            "--check-dangling-universe=root//...",
+            "--write-dangling-errors-to-file",
+            out_btd_dangling_errors,
+            "--cells",
+            out_cells,
+            "--config",
+            out_config,
+            "--changes",
+            out_changes,
+            "--base",
+            out_base,
+        ]
+
+        run("hg", "init")
+        apply(base, None)
+        run("hg", "add")
+        run("hg", "commit", "--message=wibble")
+        run(
+            targets,
+            "--buck",
+            buck,
+            "--output",
+            out_base,
+            "root//...",
+            log_output=out_base,
+        )
+        apply(base, patch)
+        run(audit, "cell", "--buck", buck, output=out_cells)
+        run(audit, "config", "--buck", buck, output=out_config)
+        run(
+            targets,
+            "--buck",
+            buck,
+            "--output",
+            out_diff,
+            "root//...",
+            log_output=out_diff,
+        )
+        run("hg", "status", "-amr", "--root-relative", output=out_changes)
+
+        # Test --output flag: btd writes directly to file instead of stdout
+        run(
+            btd,
+            *btd_args,
+            "--diff",
+            out_diff,
+            "--json",
+            "--output",
+            str(out_btd),
+        )
+
+        # Verify the output file was created and has content
+        assert out_btd.exists(), f"Output file {out_btd} was created"
+        content = read_file(out_btd)
+        assert len(content) > 0, "Output file is not empty"
+
+        # Verify it's valid JSON
+        output = json.loads(content)
+        assert isinstance(output, list), "Output should be a JSON array"
+        assert len(output) == 2, "Expected 2 targets for file.patch"
+
+        rmtree_with_retry(working_dir)
+
+
+def read_compressed_file(path):
+    result = subprocess.run(
+        ["zstd", "-d", "-c", str(path)],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+    )
+    return result.stdout
+
+
+def test_compressed_output_flag():
+    """Test that the --output flag with a .zst extension writes compressed output."""
+    audit = os.getenv("AUDIT")
+    btd = os.getenv("BTD")
+    buck = os.getenv("BUCK")
+    base = os.getenv("BASE")
+    targets = os.getenv("TARGETS")
+    patch = os.path.join(os.getenv("TESTCASES"), "file.patch")
+
+    with (
+        tempfile.TemporaryDirectory() as working_dir,
+        tempfile.TemporaryDirectory() as output_dir,
+    ):
+        os.chdir(working_dir)
+        out_base = Path(output_dir).joinpath("base.jsonl")
+        out_diff = Path(output_dir).joinpath("diff.jsonl")
+        out_cells = Path(output_dir).joinpath("cells.json")
+        out_config = Path(output_dir).joinpath("config.json")
+        out_changes = Path(output_dir).joinpath("changes.txt")
+        out_btd = Path(output_dir).joinpath("btd_output.jsonl.zst")
+        out_btd_dangling_errors = Path(output_dir).joinpath("btd_dangling_errors.json")
+        btd_args = [
+            "--check-dangling",
+            "--check-dangling-universe=root//...",
+            "--write-dangling-errors-to-file",
+            out_btd_dangling_errors,
+            "--cells",
+            out_cells,
+            "--config",
+            out_config,
+            "--changes",
+            out_changes,
+            "--base",
+            out_base,
+        ]
+
+        run("hg", "init")
+        apply(base, None)
+        run("hg", "add")
+        run("hg", "commit", "--message=wibble")
+        run(
+            targets,
+            "--buck",
+            buck,
+            "--output",
+            out_base,
+            "root//...",
+            log_output=out_base,
+        )
+        apply(base, patch)
+        run(audit, "cell", "--buck", buck, output=out_cells)
+        run(audit, "config", "--buck", buck, output=out_config)
+        run(
+            targets,
+            "--buck",
+            buck,
+            "--output",
+            out_diff,
+            "root//...",
+            log_output=out_diff,
+        )
+        run("hg", "status", "-amr", "--root-relative", output=out_changes)
+
+        # Test --output flag with .zst: btd writes compressed output to file
+        run(
+            btd,
+            *btd_args,
+            "--diff",
+            out_diff,
+            "--json",
+            "--output",
+            str(out_btd),
+        )
+
+        # Verify the compressed output file was created
+        assert out_btd.exists(), f"Compressed output file {out_btd} was created"
+
+        # Verify it's a valid zstd compressed file by decompressing
+        content = read_compressed_file(out_btd)
+        assert len(content) > 0, "Decompressed content is not empty"
+
+        # Verify the decompressed content is valid JSON
+        output = json.loads(content)
+        assert isinstance(output, list), "Output should be a JSON array"
+        assert len(output) == 2, "Expected 2 targets for file.patch"
+
+        rmtree_with_retry(working_dir)

@@ -190,6 +190,13 @@ fn leak_targets(targets: Targets) -> impl Deref<Target = Targets> {
 
 pub fn main(args: Args) -> Result<(), WorkflowError> {
     let output_format = OutputFormat::from_args(&args);
+
+    // Text mode prints directly to stdout and ignores the --output file,
+    // so error early to avoid user confusion about missing output.
+    if output_format == OutputFormat::Text && args.output.is_some() {
+        return Err(anyhow::anyhow!(OutputError::TextModeWithOutput).into());
+    }
+
     let mut buck2 = Buck2::new(args.buck.clone(), args.isolation_dir);
 
     // All the arguments we should pass on to Buck, when we call it using sensible arguments
@@ -316,9 +323,15 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     step("printing changes");
     if args.graph_size {
         let mut graph = GraphSize::new(&base, &diff);
-        graph.print_recursive_changes(&recursive, &sudos, output_format, None)?;
+        graph.print_recursive_changes(&recursive, &sudos, output_format, args.output.as_deref())?;
     } else {
-        print_recursive_changes(&recursive, &sudos, output_format, None, |_, x| x)?;
+        print_recursive_changes(
+            &recursive,
+            &sudos,
+            output_format,
+            args.output.as_deref(),
+            |_, x| x,
+        )?;
     }
     // We aggregate errors for post-commit validation so downstream systems
     // can log existing issues.
@@ -494,6 +507,12 @@ enum UniverseError {
 }
 
 #[derive(Debug, Error)]
+enum OutputError {
+    #[error("Cannot use --output with text mode output format, text mode always writes to stdout")]
+    TextModeWithOutput,
+}
+
+#[derive(Debug, Error)]
 enum Check {
     #[error("Introduced {0} new errors")]
     NewErrors(usize),
@@ -602,4 +621,37 @@ fn write_run_stats_to_file(
         )?
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[test]
+    fn test_text_mode_with_output_returns_error() {
+        // Text mode with --output should return an error since text mode
+        // writes directly to stdout and ignores the output file.
+        let args = Args::parse_from([
+            "btd",
+            "--changes",
+            "/tmp/changes",
+            "--base",
+            "/tmp/base",
+            "--output",
+            "/tmp/output",
+            // No --json or --json-lines, so this is text mode
+        ]);
+
+        let result = main(args);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Cannot use --output with text mode"),
+            "Expected error about text mode with output, got: {}",
+            err
+        );
+    }
 }
