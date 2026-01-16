@@ -89,6 +89,18 @@ pub fn read_file_lines_par_iter<T: for<'a> Deserialize<'a> + Send>(
     Ok(rdr.lines().par_bridge().map(parse_line::<T>))
 }
 
+/// Read JSON lines from a reader. The order of entries is not guaranteed.
+/// Use this when you want explicit control over file opening (e.g., with file_io::file_reader).
+pub fn read_reader_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
+    reader: impl BufRead + Send,
+) -> anyhow::Result<Vec<T>> {
+    reader
+        .lines()
+        .par_bridge()
+        .map(parse_line::<T>)
+        .collect::<anyhow::Result<Vec<T>>>()
+}
+
 /// Read a file that consists of many JSON blobs, one per line.
 pub fn read_file_lines<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
     fn f<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
