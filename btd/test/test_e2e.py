@@ -17,9 +17,69 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+
+@dataclass
+class EnvConfig:
+    audit: str
+    btd: str
+    buck: str
+    base: str
+    targets: str
+    testcases: str
+
+    @classmethod
+    def from_env(cls) -> "EnvConfig":
+        return cls(
+            audit=os.getenv("AUDIT", ""),
+            btd=os.getenv("BTD", ""),
+            buck=os.getenv("BUCK", ""),
+            base=os.getenv("BASE", ""),
+            targets=os.getenv("TARGETS", ""),
+            testcases=os.getenv("TESTCASES", ""),
+        )
+
+
+@dataclass
+class OutputPaths:
+    base: Path
+    diff: Path
+    cells: Path
+    config: Path
+    changes: Path
+    btd_dangling_errors: Path
+
+    @classmethod
+    def create(cls, output_dir: Path) -> "OutputPaths":
+        return cls(
+            base=output_dir / "base.jsonl",
+            diff=output_dir / "diff.jsonl",
+            cells=output_dir / "cells.json",
+            config=output_dir / "config.json",
+            changes=output_dir / "changes.txt",
+            btd_dangling_errors=output_dir / "btd_dangling_errors.json",
+        )
+
+    def btd_args(self) -> list:
+        return [
+            "--check-dangling",
+            "--check-dangling-universe=root//...",
+            "--write-dangling-errors-to-file",
+            self.btd_dangling_errors,
+            "--cells",
+            self.cells,
+            "--config",
+            self.config,
+            "--changes",
+            self.changes,
+            "--base",
+            self.base,
+        ]
 
 
 def run(*args, output=None, log_output=None, expect_fail=None):
@@ -104,6 +164,55 @@ def apply(base, patch):
     run("hg", "uncommit")
 
 
+@contextmanager
+def test_environment():
+    """Context manager that sets up temp directories and cleans up after."""
+    with (
+        tempfile.TemporaryDirectory() as working_dir,
+        tempfile.TemporaryDirectory() as output_dir,
+    ):
+        os.chdir(working_dir)
+        paths = OutputPaths.create(Path(output_dir))
+        try:
+            yield Path(output_dir), paths
+        finally:
+            rmtree_with_retry(working_dir)
+
+
+def setup_base_repo(env: EnvConfig, paths: OutputPaths):
+    """Initialize hg repo and create base commit with targets."""
+    run("hg", "init")
+    apply(env.base, None)
+    run("hg", "add")
+    run("hg", "commit", "--message=wibble")
+    run(
+        env.targets,
+        "--buck",
+        env.buck,
+        "--output",
+        paths.base,
+        "root//...",
+        log_output=paths.base,
+    )
+
+
+def apply_patch_and_collect(env: EnvConfig, paths: OutputPaths, patch: str):
+    """Apply a patch and collect cell/config/diff/changes info."""
+    apply(env.base, patch)
+    run(env.audit, "cell", "--buck", env.buck, output=paths.cells)
+    run(env.audit, "config", "--buck", env.buck, output=paths.config)
+    run(
+        env.targets,
+        "--buck",
+        env.buck,
+        "--output",
+        paths.diff,
+        "root//...",
+        log_output=paths.diff,
+    )
+    run("hg", "status", "-amr", "--root-relative", output=paths.changes)
+
+
 def get_patches():
     patches = glob.glob(os.getenv("TESTCASES") + "/*.patch")
     assert patches != []
@@ -113,95 +222,45 @@ def get_patches():
 
 @pytest.mark.parametrize("patch_name", get_patches())
 def test_run(patch_name):
-    audit = os.getenv("AUDIT")
-    btd = os.getenv("BTD")
-    buck = os.getenv("BUCK")
-    base = os.getenv("BASE")
-    targets = os.getenv("TARGETS")
-    patch = os.path.join(os.getenv("TESTCASES"), patch_name)
+    env = EnvConfig.from_env()
+    patch = os.path.join(env.testcases, patch_name)
     patch_name = Path(patch).stem
 
-    with (
-        tempfile.TemporaryDirectory() as working_dir,
-        tempfile.TemporaryDirectory() as output_dir,
-    ):
-        os.chdir(working_dir)
-        out_base = Path(output_dir).joinpath("base.jsonl")
-        out_diff = Path(output_dir).joinpath("diff.jsonl")
-        out_cells = Path(output_dir).joinpath("cells.json")
-        out_config = Path(output_dir).joinpath("config.json")
-        out_changes = Path(output_dir).joinpath("changes.txt")
-        out_btd1 = Path(output_dir).joinpath("btd1.json")
-        out_btd2 = Path(output_dir).joinpath("btd2.json")
-        out_targets = Path(output_dir).joinpath("targets.txt")
-        out_rerun = Path(output_dir).joinpath("rerun.txt")
-        out_btd_dangling_errors = Path(output_dir).joinpath("btd_dangling_errors.json")
-        btd_args = [
-            "--check-dangling",
-            "--check-dangling-universe=root//...",
-            "--write-dangling-errors-to-file",
-            out_btd_dangling_errors,
-            "--cells",
-            out_cells,
-            "--config",
-            out_config,
-            "--changes",
-            out_changes,
-            "--base",
-            out_base,
-        ]
+    with test_environment() as (output_dir, paths):
+        out_btd1 = output_dir / "btd1.json"
+        out_btd2 = output_dir / "btd2.json"
+        out_targets = output_dir / "targets.txt"
+        out_rerun = output_dir / "rerun.txt"
 
-        run("hg", "init")
-        apply(base, None)
-        run("hg", "add")
-        run("hg", "commit", "--message=wibble")
+        setup_base_repo(env, paths)
+        apply_patch_and_collect(env, paths, patch)
+
+        btd_args = paths.btd_args()
         run(
-            targets,
-            "--buck",
-            buck,
-            "--output",
-            out_base,
-            "root//...",
-            log_output=out_base,
-        )
-        apply(base, patch)
-        run(audit, "cell", "--buck", buck, output=out_cells)
-        run(audit, "config", "--buck", buck, output=out_config)
-        run(
-            targets,
-            "--buck",
-            buck,
-            "--output",
-            out_diff,
-            "root//...",
-            log_output=out_diff,
-        )
-        run("hg", "status", "-amr", "--root-relative", output=out_changes)
-        run(
-            btd,
+            env.btd,
             *btd_args,
             "--diff",
-            out_diff,
+            paths.diff,
             "--json",
             output=out_btd1,
         )
         run(
-            btd,
+            env.btd,
             *btd_args,
             "--universe",
             "root//...",
             "--buck",
-            buck,
+            env.buck,
             "--json",
             output=out_btd2,
         )
         run(
-            btd,
+            env.btd,
             *btd_args,
             "--universe",
             "root//...",
             "--buck",
-            buck,
+            env.buck,
             "--print-rerun",
             output=out_rerun,
         )
@@ -212,19 +271,17 @@ def test_run(patch_name):
 
         # For delete_inner, check the dangling errors
         if expect_dangling_check_error(patch_name):
-            assert_dangling_check_errors(out_btd_dangling_errors)
+            assert_dangling_check_errors(paths.btd_dangling_errors)
         else:
             # And that they can build
             with open(out_targets, "w") as file:
                 for x in output:
                     file.write(x["target"] + "\n")
-            run(buck, "build", "@" + str(out_targets))
+            run(env.buck, "build", "@" + str(out_targets))
             # Check custom properties
             check_properties(patch_name, output)
         rerun = read_file(out_rerun)
         check_properties_rerun(patch_name, rerun)
-
-        rmtree_with_retry(working_dir)
 
 
 def check_properties(patch, rdeps):
@@ -329,36 +386,29 @@ def check_properties(patch, rdeps):
         raise AssertionError("No properties known for: " + patch)
 
 
+EXPECTED_RERUN = {
+    "nothing": "",
+    "file": "",
+    "rename_inner": "+ root//inner\n",
+    "buckconfig": "* everything\n",
+    "cfg_modifiers": "+ root//inner\n",
+    "delete_inner": "- root//inner\n",
+    "new_buck": "+ root//\n+ root//new\n",
+    "new_outside_universe": "",
+    "new_ignored": "",
+    "change_package_label": "+ root//inner\n",
+    "change_package_value": "+ root//inner\n",
+}
+
+
 def check_properties_rerun(patch, rerun):
-    if patch == "nothing":
-        assert rerun == ""
-    elif patch == "file":
-        assert rerun == ""
-    elif patch == "rename_inner":
-        assert rerun == "+ root//inner\n"
-    elif patch == "buckconfig":
-        assert rerun == "* everything\n"
-    elif patch == "cfg_modifiers":
-        assert rerun == "+ root//inner\n"
-    elif patch == "delete_inner":
-        assert rerun == "- root//inner\n"
-    elif patch == "new_buck":
-        assert rerun == "+ root//\n+ root//new\n"
-    elif patch == "new_outside_universe" or patch == "new_ignored":
-        assert rerun == ""
-    elif patch == "change_package_label":
-        assert rerun == "+ root//inner\n"
-    elif patch == "change_package_value":
-        assert rerun == "+ root//inner\n"
-    else:
+    if patch not in EXPECTED_RERUN:
         raise AssertionError("No properties known for: " + patch)
+    assert rerun == EXPECTED_RERUN[patch]
 
 
 def expect_dangling_check_error(patch):
-    if patch == "delete_inner":
-        return True
-    else:
-        return False
+    return patch == "delete_inner"
 
 
 def assert_dangling_check_errors(out_btd_dangling_errors):
@@ -379,89 +429,35 @@ def assert_dangling_check_errors(out_btd_dangling_errors):
 
 def test_output_flag():
     """Test that the --output flag writes to a file instead of stdout."""
-    audit = os.getenv("AUDIT")
-    btd = os.getenv("BTD")
-    buck = os.getenv("BUCK")
-    base = os.getenv("BASE")
-    targets = os.getenv("TARGETS")
-    patch = os.path.join(os.getenv("TESTCASES"), "file.patch")
+    env = EnvConfig.from_env()
+    patch = os.path.join(env.testcases, "file.patch")
 
-    with (
-        tempfile.TemporaryDirectory() as working_dir,
-        tempfile.TemporaryDirectory() as output_dir,
-    ):
-        os.chdir(working_dir)
-        out_base = Path(output_dir).joinpath("base.jsonl")
-        out_diff = Path(output_dir).joinpath("diff.jsonl")
-        out_cells = Path(output_dir).joinpath("cells.json")
-        out_config = Path(output_dir).joinpath("config.json")
-        out_changes = Path(output_dir).joinpath("changes.txt")
-        out_btd = Path(output_dir).joinpath("btd_output.jsonl")
-        out_btd_dangling_errors = Path(output_dir).joinpath("btd_dangling_errors.json")
-        btd_args = [
-            "--check-dangling",
-            "--check-dangling-universe=root//...",
-            "--write-dangling-errors-to-file",
-            out_btd_dangling_errors,
-            "--cells",
-            out_cells,
-            "--config",
-            out_config,
-            "--changes",
-            out_changes,
-            "--base",
-            out_base,
-        ]
+    with test_environment() as (output_dir, paths):
+        out_btd = output_dir / "btd_output.jsonl"
 
-        run("hg", "init")
-        apply(base, None)
-        run("hg", "add")
-        run("hg", "commit", "--message=wibble")
-        run(
-            targets,
-            "--buck",
-            buck,
-            "--output",
-            out_base,
-            "root//...",
-            log_output=out_base,
-        )
-        apply(base, patch)
-        run(audit, "cell", "--buck", buck, output=out_cells)
-        run(audit, "config", "--buck", buck, output=out_config)
-        run(
-            targets,
-            "--buck",
-            buck,
-            "--output",
-            out_diff,
-            "root//...",
-            log_output=out_diff,
-        )
-        run("hg", "status", "-amr", "--root-relative", output=out_changes)
+        setup_base_repo(env, paths)
+        apply_patch_and_collect(env, paths, patch)
 
         # Test --output flag: btd writes directly to file instead of stdout
         run(
-            btd,
-            *btd_args,
+            env.btd,
+            *paths.btd_args(),
             "--diff",
-            out_diff,
+            paths.diff,
             "--json",
             "--output",
             str(out_btd),
         )
 
         # Verify the output file was created and has content
-        assert out_btd.exists(), f"Output file {out_btd} was created"
+        assert out_btd.exists(), f"Output file {out_btd} was not created"
         content = read_file(out_btd)
-        assert len(content) > 0, "Output file is not empty"
+        assert len(content) > 0, "Output file is empty"
 
         # Verify it's valid JSON
         output = json.loads(content)
         assert isinstance(output, list), "Output should be a JSON array"
         assert len(output) == 2, "Expected 2 targets for file.patch"
-
-        rmtree_with_retry(working_dir)
 
 
 def read_compressed_file(path):
@@ -476,88 +472,34 @@ def read_compressed_file(path):
 
 def test_compressed_output_flag():
     """Test that the --output flag with a .zst extension writes compressed output."""
-    audit = os.getenv("AUDIT")
-    btd = os.getenv("BTD")
-    buck = os.getenv("BUCK")
-    base = os.getenv("BASE")
-    targets = os.getenv("TARGETS")
-    patch = os.path.join(os.getenv("TESTCASES"), "file.patch")
+    env = EnvConfig.from_env()
+    patch = os.path.join(env.testcases, "file.patch")
 
-    with (
-        tempfile.TemporaryDirectory() as working_dir,
-        tempfile.TemporaryDirectory() as output_dir,
-    ):
-        os.chdir(working_dir)
-        out_base = Path(output_dir).joinpath("base.jsonl")
-        out_diff = Path(output_dir).joinpath("diff.jsonl")
-        out_cells = Path(output_dir).joinpath("cells.json")
-        out_config = Path(output_dir).joinpath("config.json")
-        out_changes = Path(output_dir).joinpath("changes.txt")
-        out_btd = Path(output_dir).joinpath("btd_output.jsonl.zst")
-        out_btd_dangling_errors = Path(output_dir).joinpath("btd_dangling_errors.json")
-        btd_args = [
-            "--check-dangling",
-            "--check-dangling-universe=root//...",
-            "--write-dangling-errors-to-file",
-            out_btd_dangling_errors,
-            "--cells",
-            out_cells,
-            "--config",
-            out_config,
-            "--changes",
-            out_changes,
-            "--base",
-            out_base,
-        ]
+    with test_environment() as (output_dir, paths):
+        out_btd = output_dir / "btd_output.jsonl.zst"
 
-        run("hg", "init")
-        apply(base, None)
-        run("hg", "add")
-        run("hg", "commit", "--message=wibble")
-        run(
-            targets,
-            "--buck",
-            buck,
-            "--output",
-            out_base,
-            "root//...",
-            log_output=out_base,
-        )
-        apply(base, patch)
-        run(audit, "cell", "--buck", buck, output=out_cells)
-        run(audit, "config", "--buck", buck, output=out_config)
-        run(
-            targets,
-            "--buck",
-            buck,
-            "--output",
-            out_diff,
-            "root//...",
-            log_output=out_diff,
-        )
-        run("hg", "status", "-amr", "--root-relative", output=out_changes)
+        setup_base_repo(env, paths)
+        apply_patch_and_collect(env, paths, patch)
 
         # Test --output flag with .zst: btd writes compressed output to file
         run(
-            btd,
-            *btd_args,
+            env.btd,
+            *paths.btd_args(),
             "--diff",
-            out_diff,
+            paths.diff,
             "--json",
             "--output",
             str(out_btd),
         )
 
         # Verify the compressed output file was created
-        assert out_btd.exists(), f"Compressed output file {out_btd} was created"
+        assert out_btd.exists(), f"Compressed output file {out_btd} was not created"
 
         # Verify it's a valid zstd compressed file by decompressing
         content = read_compressed_file(out_btd)
-        assert len(content) > 0, "Decompressed content is not empty"
+        assert len(content) > 0, "Decompressed content is empty"
 
         # Verify the decompressed content is valid JSON
         output = json.loads(content)
         assert isinstance(output, list), "Output should be a JSON array"
         assert len(output) == 2, "Expected 2 targets for file.patch"
-
-        rmtree_with_retry(working_dir)
