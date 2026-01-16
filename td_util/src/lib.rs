@@ -9,6 +9,7 @@
  */
 
 #![forbid(unsafe_code)]
+pub mod btd_graph_cache;
 pub mod cli;
 pub mod command;
 pub mod executor;
