@@ -21,6 +21,7 @@ use thiserror::Error;
 use tracing::info;
 
 use crate::cells::CellInfo;
+use crate::types::CellPath;
 use crate::types::Package;
 use crate::types::ProjectRelativePath;
 use crate::types::TargetPattern;
@@ -132,6 +133,14 @@ impl Buck2 {
             }
         }
         Ok(false)
+    }
+
+    /// Does a directory exist for recursive queries. Doesn't actually invoke Buck2, but does look at the file system.
+    pub fn does_directory_exist(&mut self, cells: &CellInfo, x: &Package) -> anyhow::Result<bool> {
+        let root = self.root()?;
+        let cell_path = CellPath::new(x.as_str());
+        let resolved = cells.resolve(&cell_path)?;
+        Ok(root.join(resolved.as_str()).is_dir())
     }
 
     pub fn targets(
