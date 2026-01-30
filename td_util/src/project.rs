@@ -60,7 +60,7 @@ pub enum TdProject {
 
 impl TdProject {
     pub fn is_mobile(&self) -> bool {
-        matches!(self, Self::Fbandroid | Self::Fbobjc)
+        matches!(self, Self::Fbandroid | Self::Fbobjc | Self::Mobile)
     }
 }
 
