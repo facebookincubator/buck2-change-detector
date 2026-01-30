@@ -36,12 +36,14 @@ use serde::Serialize;
     Eq,
     Hash,
     Serialize,
-    Deserialize
+    Deserialize,
+    Default
 )]
 #[serde(rename_all = "lowercase")]
 #[display(style = "lowercase")]
 pub enum TdProject {
     Configerator,
+    #[default]
     Fbcode,
     Fbandroid,
     Fbobjc,
