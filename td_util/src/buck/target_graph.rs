@@ -30,9 +30,15 @@ pub const SCHEMA_VERSION: u32 = 3;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
+        // NOTE: We use entry().or_insert_with() instead of insert() for performance.
+        // This is safe because the ID is a hash of the string (see define_id_type! macro),
+        // so the same string always produces the same ID. Since we're storing the string
+        // as the value, inserting once vs. overwriting produces identical results.
+        // This optimization avoids redundant String allocations and write locks when
+        // the same key is stored multiple times (common during graph construction).
         pub fn $store_method(&self, s: &str) -> $id_type {
             let id = s.parse().unwrap();
-            self.$map_field.insert(id, s.to_string());
+            self.$map_field.entry(id).or_insert_with(|| s.to_string());
             id
         }
 
