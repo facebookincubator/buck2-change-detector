@@ -98,7 +98,9 @@ mod linux {
         compile_error!("duplicate `event` field in `scuba!` macro");
     };
     ( @SET_FIELD ( $builder:ident, data, $value:expr ) ) => {{
+        #[allow(unused_imports)]
         use $crate::supertd_events::serde_json::json;
+
         match $crate::supertd_events::serde_json::to_string(&$value) {
             Ok(json) => {
                 $builder.set_data(json);
