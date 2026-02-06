@@ -19,6 +19,7 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::json::BUFFER_SIZE;
+use crate::zstd::has_zstd_magic;
 use crate::zstd::is_zstd;
 
 pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
@@ -41,7 +42,7 @@ pub fn file_reader(file_path: &Path) -> anyhow::Result<Box<dyn BufRead + Send>> 
     let file = File::open(file_path)
         .with_context(|| format!("Unable to open file `{}` for reading", file_path.display()))?;
 
-    if is_zstd(file_path) {
+    if is_zstd(file_path) || has_zstd_magic(file_path) {
         let decoder = zstd::Decoder::new(file)?;
         Ok(Box::new(BufReader::with_capacity(BUFFER_SIZE, decoder)))
     } else {

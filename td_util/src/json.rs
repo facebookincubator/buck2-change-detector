@@ -25,6 +25,7 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::zstd::has_zstd_magic;
 use crate::zstd::is_zstd;
 
 /// Buffer size for reading files (10MB)
@@ -38,7 +39,7 @@ fn parse_line<T: for<'a> Deserialize<'a>>(x: Result<String, io::Error>) -> anyho
 
 fn open_file(filename: &Path) -> anyhow::Result<Box<dyn Read + Send>> {
     let file = File::open(filename)?;
-    if is_zstd(filename) {
+    if is_zstd(filename) || has_zstd_magic(filename) {
         Ok(Box::new(zstd::Decoder::new(file)?))
     } else {
         Ok(Box::new(file))
