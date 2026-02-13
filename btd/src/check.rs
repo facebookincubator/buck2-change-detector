@@ -20,7 +20,6 @@ use td_util_buck::types::Package;
 use td_util_buck::types::TargetLabel;
 use td_util_buck::types::TargetPattern;
 use thiserror::Error;
-use tracing::error;
 use tracing::warn;
 
 use crate::changes::Changes;
