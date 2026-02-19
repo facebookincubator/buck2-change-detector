@@ -61,7 +61,9 @@ macro_rules! impl_string_storage {
 macro_rules! impl_collection_storage {
     ($key_type:ident, $value_type:ident, $store_method:ident, $add_method:ident, $get_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
         pub fn $store_method(&self, key: $key_type, values: Vec<$value_type>) {
-            if !values.is_empty() {
+            if values.is_empty() {
+                self.$map_field.remove(&key);
+            } else {
                 self.$map_field.insert(key, values);
             }
         }
@@ -471,6 +473,10 @@ impl TargetGraph {
 
     pub fn mark_target_has_sudo_label(&self, target_id: TargetId) {
         self.targets_with_sudo_label.insert(target_id);
+    }
+
+    pub fn unmark_target_has_sudo_label(&self, target_id: TargetId) {
+        self.targets_with_sudo_label.remove(&target_id);
     }
 
     pub fn has_sudo_label(&self, target_id: TargetId) -> bool {
