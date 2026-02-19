@@ -612,6 +612,17 @@ impl TargetGraph {
         self.affected_to_ci_hints.get(&target_id).map(|v| v.clone())
     }
 
+    pub fn get_all_dependents(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
+        let mut result = self.get_rdeps(target_id).unwrap_or_default();
+        result.extend(self.get_ci_hint_affected(target_id).unwrap_or_default());
+
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+
     pub fn ci_hint_to_affected_len(&self) -> usize {
         self.ci_hint_to_affected.len()
     }
@@ -1193,6 +1204,44 @@ mod tests {
             restored.get_affecting_ci_hints(f.target1).unwrap(),
             vec![f.ci_hint]
         );
+    }
+
+    #[rstest]
+    #[case::both_rdeps_and_ci_hint(true, true, 2)]
+    #[case::rdeps_only(true, false, 1)]
+    #[case::ci_hint_only(false, true, 1)]
+    #[case::neither(false, false, 0)]
+    fn get_all_dependents_merges_sources(
+        #[case] add_rdep_edge: bool,
+        #[case] add_ci_hint: bool,
+        #[case] expected_count: usize,
+    ) {
+        let graph = TargetGraph::new();
+        let target = graph.store_target("fbcode//foo:target");
+        let regular_dep = graph.store_target("fbcode//foo:regular");
+        let ci_affected = graph.store_target("fbcode//foo:ci_affected");
+
+        if add_rdep_edge {
+            graph.add_rdep(target, regular_dep);
+        }
+        if add_ci_hint {
+            graph.add_ci_hint_edge(target, ci_affected);
+        }
+
+        let result = graph.get_all_dependents(target);
+
+        if expected_count == 0 {
+            assert!(result.is_none());
+        } else {
+            let all = result.unwrap();
+            assert_eq!(all.len(), expected_count);
+            if add_rdep_edge {
+                assert!(all.contains(&regular_dep));
+            }
+            if add_ci_hint {
+                assert!(all.contains(&ci_affected));
+            }
+        }
     }
 
     #[test]
