@@ -174,6 +174,12 @@ pub struct TargetGraph {
 
     // Targets that have the uses_sudo label
     targets_with_sudo_label: DashSet<TargetId>,
+
+    // CI hint edge storage (separate from regular deps/rdeps)
+    // ci_hint → targets it affects (when ci_hint changes, these targets are impacted)
+    ci_hint_to_affected: DashMap<TargetId, Vec<TargetId>>,
+    // target → CI hints that affect it (reverse lookup for cleanup)
+    affected_to_ci_hints: DashMap<TargetId, Vec<TargetId>>,
 }
 
 impl TargetGraph {
@@ -198,6 +204,8 @@ impl TargetGraph {
             target_id_to_ci_deps_package_patterns: DashMap::new(),
             target_id_to_ci_deps_recursive_patterns: DashMap::new(),
             targets_with_sudo_label: DashSet::new(),
+            ci_hint_to_affected: DashMap::new(),
+            affected_to_ci_hints: DashMap::new(),
         }
     }
 
@@ -536,6 +544,8 @@ impl TargetGraph {
                 "targets_with_sudo_label",
                 self.targets_with_sudo_label_len(),
             ),
+            ("ci_hint_to_affected", self.ci_hint_to_affected_len()),
+            ("affected_to_ci_hints", self.affected_to_ci_hints_len()),
         ];
 
         tracing::info!("TargetGraph DashMap sizes:");
@@ -564,6 +574,50 @@ impl TargetGraph {
         self.package_id_to_targets
             .get(&package_id)
             .map(|v| v.clone())
+    }
+
+    pub fn add_ci_hint_edge(&self, ci_hint_id: TargetId, affected_target: TargetId) {
+        self.ci_hint_to_affected
+            .entry(ci_hint_id)
+            .or_default()
+            .push(affected_target);
+        self.affected_to_ci_hints
+            .entry(affected_target)
+            .or_default()
+            .push(ci_hint_id);
+    }
+
+    pub fn remove_ci_hint_edge(&self, ci_hint_id: TargetId, affected_target: TargetId) {
+        if let Some(mut affected) = self.ci_hint_to_affected.get_mut(&ci_hint_id) {
+            affected.retain(|&id| id != affected_target);
+            if affected.is_empty() {
+                drop(affected);
+                self.ci_hint_to_affected.remove(&ci_hint_id);
+            }
+        }
+        if let Some(mut ci_hints) = self.affected_to_ci_hints.get_mut(&affected_target) {
+            ci_hints.retain(|&id| id != ci_hint_id);
+            if ci_hints.is_empty() {
+                drop(ci_hints);
+                self.affected_to_ci_hints.remove(&affected_target);
+            }
+        }
+    }
+
+    pub fn get_ci_hint_affected(&self, ci_hint_id: TargetId) -> Option<Vec<TargetId>> {
+        self.ci_hint_to_affected.get(&ci_hint_id).map(|v| v.clone())
+    }
+
+    pub fn get_affecting_ci_hints(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
+        self.affected_to_ci_hints.get(&target_id).map(|v| v.clone())
+    }
+
+    pub fn ci_hint_to_affected_len(&self) -> usize {
+        self.ci_hint_to_affected.len()
+    }
+
+    pub fn affected_to_ci_hints_len(&self) -> usize {
+        self.affected_to_ci_hints.len()
     }
 }
 
@@ -1021,5 +1075,132 @@ mod tests {
         let graph = TargetGraph::new();
         let unknown_id = graph.store_target("fbcode//foo:unknown");
         assert!(!graph.is_ci_hint_target(unknown_id));
+    }
+
+    struct CiHintFixture {
+        graph: TargetGraph,
+        ci_hint: TargetId,
+        target1: TargetId,
+        target2: TargetId,
+    }
+
+    fn ci_hint_fixture() -> CiHintFixture {
+        let graph = TargetGraph::new();
+        let ci_hint = graph.store_target("fbcode//foo:ci_hint@my_test");
+        let target1 = graph.store_target("fbcode//foo:target1");
+        let target2 = graph.store_target("fbcode//foo:target2");
+        CiHintFixture {
+            graph,
+            ci_hint,
+            target1,
+            target2,
+        }
+    }
+
+    #[test]
+    fn ci_hint_edge_add_creates_bidirectional_mapping() {
+        let f = ci_hint_fixture();
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target1);
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target2);
+
+        let affected = f.graph.get_ci_hint_affected(f.ci_hint).unwrap();
+        assert_eq!(affected.len(), 2);
+        assert!(affected.contains(&f.target1));
+        assert!(affected.contains(&f.target2));
+
+        assert_eq!(
+            f.graph.get_affecting_ci_hints(f.target1).unwrap(),
+            vec![f.ci_hint]
+        );
+        assert_eq!(
+            f.graph.get_affecting_ci_hints(f.target2).unwrap(),
+            vec![f.ci_hint]
+        );
+    }
+
+    #[test]
+    fn ci_hint_edge_does_not_pollute_rdeps_or_deps() {
+        let f = ci_hint_fixture();
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target1);
+
+        assert!(f.graph.get_rdeps(f.ci_hint).is_none());
+        assert!(f.graph.get_rdeps(f.target1).is_none());
+        assert!(f.graph.get_deps(f.ci_hint).is_none());
+        assert!(f.graph.get_deps(f.target1).is_none());
+    }
+
+    #[rstest]
+    #[case::partial_remove(1, true)]
+    #[case::full_remove(2, false)]
+    fn ci_hint_edge_remove_cleans_both_directions(
+        #[case] removals: usize,
+        #[case] ci_hint_has_remaining_edges: bool,
+    ) {
+        let f = ci_hint_fixture();
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target1);
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target2);
+
+        f.graph.remove_ci_hint_edge(f.ci_hint, f.target1);
+        if removals == 2 {
+            f.graph.remove_ci_hint_edge(f.ci_hint, f.target2);
+        }
+
+        assert!(f.graph.get_affecting_ci_hints(f.target1).is_none());
+
+        if ci_hint_has_remaining_edges {
+            assert_eq!(
+                f.graph.get_ci_hint_affected(f.ci_hint).unwrap(),
+                vec![f.target2]
+            );
+            assert_eq!(
+                f.graph.get_affecting_ci_hints(f.target2).unwrap(),
+                vec![f.ci_hint]
+            );
+        } else {
+            assert!(f.graph.get_ci_hint_affected(f.ci_hint).is_none());
+            assert_eq!(f.graph.ci_hint_to_affected_len(), 0);
+            assert_eq!(f.graph.affected_to_ci_hints_len(), 0);
+        }
+    }
+
+    #[test]
+    fn ci_hint_edge_multiple_ci_hints_affect_same_target() {
+        let f = ci_hint_fixture();
+        let ci_hint2 = f.graph.store_target("fbcode//foo:ci_hint@test2");
+
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target1);
+        f.graph.add_ci_hint_edge(ci_hint2, f.target1);
+
+        let ci_hints = f.graph.get_affecting_ci_hints(f.target1).unwrap();
+        assert_eq!(ci_hints.len(), 2);
+        assert!(ci_hints.contains(&f.ci_hint));
+        assert!(ci_hints.contains(&ci_hint2));
+    }
+
+    #[test]
+    fn ci_hint_edge_serialization_round_trip() {
+        let f = ci_hint_fixture();
+        f.graph.add_ci_hint_edge(f.ci_hint, f.target1);
+
+        let json = serde_json::to_string(&f.graph).unwrap();
+        let restored: TargetGraph = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            restored.get_ci_hint_affected(f.ci_hint).unwrap(),
+            vec![f.target1]
+        );
+        assert_eq!(
+            restored.get_affecting_ci_hints(f.target1).unwrap(),
+            vec![f.ci_hint]
+        );
+    }
+
+    #[test]
+    fn ci_hint_edge_get_returns_none_for_unknown() {
+        let graph = TargetGraph::new();
+        let unknown = graph.store_target("fbcode//foo:unknown");
+
+        assert!(graph.get_ci_hint_affected(unknown).is_none());
+        assert!(graph.get_affecting_ci_hints(unknown).is_none());
     }
 }
