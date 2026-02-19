@@ -26,7 +26,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -396,16 +396,6 @@ impl TargetGraph {
         }
     }
 
-    fn remove_from_deps(&self, target_id: TargetId, dep_to_remove: TargetId) {
-        if let Some(mut deps) = self.target_id_to_deps.get_mut(&target_id) {
-            deps.retain(|&id| id != dep_to_remove);
-            if deps.is_empty() {
-                drop(deps);
-                self.target_id_to_deps.remove(&target_id);
-            }
-        }
-    }
-
     pub fn remove_target(&self, target_id: TargetId) {
         if self.is_ci_hint_target(target_id) {
             self.remove_ci_hint_target(target_id);
@@ -425,13 +415,21 @@ impl TargetGraph {
     }
 
     fn remove_ci_hint_target(&self, target_id: TargetId) {
-        if let Some(rdeps) = self.get_rdeps(target_id) {
-            for dest_id in rdeps {
-                self.remove_from_deps(dest_id, target_id);
+        // Clean up CI hint edges from dedicated maps
+        if let Some(affected) = self.get_ci_hint_affected(target_id) {
+            for affected_target in affected {
+                if let Some(mut ci_hints) = self.affected_to_ci_hints.get_mut(&affected_target) {
+                    ci_hints.retain(|&id| id != target_id);
+                    if ci_hints.is_empty() {
+                        drop(ci_hints);
+                        self.affected_to_ci_hints.remove(&affected_target);
+                    }
+                }
             }
         }
-        self.target_id_to_rdeps.remove(&target_id);
+        self.ci_hint_to_affected.remove(&target_id);
 
+        // Clean up any regular dep edges (from ci_deps concrete labels)
         if let Some(deps) = self.get_deps(target_id) {
             for dep_id in deps {
                 self.remove_from_rdeps(dep_id, target_id);
@@ -440,13 +438,17 @@ impl TargetGraph {
     }
 
     fn remove_regular_target(&self, target_id: TargetId) {
+        // Clean downward: remove ourselves from our deps' rdep lists
         if let Some(deps) = self.get_deps(target_id) {
             for dep_id in deps {
-                if !self.is_ci_hint_target(dep_id) {
-                    self.remove_from_rdeps(dep_id, target_id);
-                }
+                self.remove_from_rdeps(dep_id, target_id);
             }
         }
+
+        // Leave CI hint edges intact: if a CI hint H affects this target,
+        // ci_hint_to_affected[H] still contains target_id (dangling).
+        // This matches the pattern for regular rdeps — upward references
+        // to removed targets are preserved for detection.
     }
 
     pub fn get_all_targets(&self) -> impl Iterator<Item = TargetId> + '_ {
@@ -1046,19 +1048,19 @@ mod tests {
         let ci_hint_id =
             store_target_with_rule_type(graph, "fbcode//foo:ci_hint@my_test", CI_HINT_RULE_TYPE);
         let dest_id = store_target_with_rule_type(graph, "fbcode//foo:my_test", "python_test");
-        graph.add_rdep(ci_hint_id, dest_id);
+        graph.add_ci_hint_edge(ci_hint_id, dest_id);
         (ci_hint_id, dest_id)
     }
 
     #[test]
-    fn remove_ci_hint_target_cleans_reversed_edges() {
+    fn remove_ci_hint_target_cleans_ci_hint_edges() {
         let graph = TargetGraph::new();
         let (ci_hint_id, dest_id) = setup_ci_hint_edge(&graph);
 
         graph.remove_target(ci_hint_id);
 
-        assert!(graph.get_rdeps(ci_hint_id).is_none());
-        assert!(graph.get_deps(dest_id).is_none());
+        assert!(graph.get_ci_hint_affected(ci_hint_id).is_none());
+        assert!(graph.get_affecting_ci_hints(dest_id).is_none());
     }
 
     #[test]
@@ -1068,8 +1070,15 @@ mod tests {
 
         graph.remove_target(dest_id);
 
-        assert_eq!(graph.get_rdeps(ci_hint_id).unwrap(), vec![dest_id]);
-        assert!(graph.get_deps(dest_id).is_none());
+        // CI hint edge is left dangling — same pattern as regular rdeps
+        assert_eq!(
+            graph.get_ci_hint_affected(ci_hint_id).unwrap(),
+            vec![dest_id]
+        );
+        assert_eq!(
+            graph.get_affecting_ci_hints(dest_id).unwrap(),
+            vec![ci_hint_id]
+        );
     }
 
     #[rstest]
