@@ -44,6 +44,7 @@ pub enum Event {
     MOBILE_SIZING_FAILURE,
     DEPRECATED_ARG_USED,
     BTD_GRAPH_CACHE_LOOKUP,
+    VERSE_LOG_PREDICATE,
 }
 
 #[derive(Debug)]
