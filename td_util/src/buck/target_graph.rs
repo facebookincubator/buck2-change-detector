@@ -26,7 +26,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -469,8 +469,21 @@ impl TargetGraph {
 
     pub fn is_ci_hint_target(&self, target_id: TargetId) -> bool {
         self.get_minimized_target(target_id)
-            .and_then(|minimized| self.get_rule_type_string(minimized.rule_type))
-            .is_some_and(|rule_type| rule_type == CI_HINT_RULE_TYPE)
+            .and_then(|minimized| self.get_rule_type_short(minimized.rule_type))
+            .is_some_and(|short| short == CI_HINT_RULE_TYPE)
+    }
+
+    pub fn get_rule_type_short(&self, rule_type_id: RuleTypeId) -> Option<String> {
+        self.get_rule_type_string(rule_type_id).map(|full| {
+            full.rsplit_once(':')
+                .map_or(full.as_str(), |(_, short)| short)
+                .to_string()
+        })
+    }
+
+    pub fn get_rule_type_file(&self, rule_type_id: RuleTypeId) -> Option<String> {
+        self.get_rule_type_string(rule_type_id)
+            .and_then(|full| full.rsplit_once(':').map(|(file, _)| file.to_string()))
     }
 
     pub fn mark_target_has_sudo_label(&self, target_id: TargetId) {
@@ -1295,6 +1308,39 @@ mod tests {
 
         assert!(graph.get_ci_hint_affected(unknown).is_none());
         assert!(graph.get_affecting_ci_hints(unknown).is_none());
+    }
+
+    #[test]
+    fn get_rule_type_file_extracts_bzl_path() {
+        let graph = TargetGraph::new();
+        let rule_id = graph.store_rule_type("prelude//rules.bzl:python_library");
+        assert_eq!(
+            graph.get_rule_type_file(rule_id),
+            Some("prelude//rules.bzl".to_string())
+        );
+    }
+
+    #[test]
+    fn get_rule_type_file_returns_none_without_colon() {
+        let graph = TargetGraph::new();
+        let rule_id = graph.store_rule_type("python_library");
+        assert!(graph.get_rule_type_file(rule_id).is_none());
+    }
+
+    #[test]
+    fn is_ci_hint_works_with_full_rule_type() {
+        let graph = TargetGraph::new();
+        let target_id =
+            store_target_with_rule_type(&graph, "fbcode//foo:target", "some//path.bzl:ci_hint");
+        assert!(graph.is_ci_hint_target(target_id));
+    }
+
+    #[test]
+    fn is_ci_hint_works_with_short_rule_type() {
+        let graph = TargetGraph::new();
+        let target_id =
+            store_target_with_rule_type(&graph, "fbcode//foo:target", CI_HINT_RULE_TYPE);
+        assert!(graph.is_ci_hint_target(target_id));
     }
 
     struct FileDepGraphBuilder {

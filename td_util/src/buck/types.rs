@@ -576,6 +576,10 @@ impl RuleType {
         Self(TargetLabel::new(rule))
     }
 
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
     /// ```
     /// use td_util_buck::types::RuleType;
     /// assert_eq!(
