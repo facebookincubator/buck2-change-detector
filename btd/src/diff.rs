@@ -248,6 +248,20 @@ impl RootImpactKind {
             | Self::ManualForRerun => true,
         }
     }
+
+    /// Higher value wins when multiple reasons apply to the same target.
+    pub const fn priority(self) -> u8 {
+        match self {
+            Self::New | Self::Remove | Self::ManualForRerun => 7,
+            Self::Inputs => 6,
+            Self::Labels => 5,
+            Self::Hash => 4,
+            Self::CiSrcs => 3,
+            Self::Package => 2,
+            Self::Rule => 1,
+            Self::PackageValues | Self::UniversalFile | Self::SelectAll => 0,
+        }
+    }
 }
 
 pub fn immediate_target_changes<'a>(
