@@ -157,8 +157,9 @@ pub struct TargetGraph {
     target_id_to_rdeps: DashMap<TargetId, Vec<TargetId>>,
     target_id_to_deps: DashMap<TargetId, Vec<TargetId>>,
 
-    // File relationship tracking for BZL imports
+    // Bidirectional file relationship tracking for BZL imports
     file_id_to_rdeps: DashMap<FileId, Vec<FileId>>,
+    file_id_to_deps: DashMap<FileId, Vec<FileId>>,
 
     // Package error tracking
     package_id_to_errors: DashMap<PackageId, Vec<String>>,
@@ -197,6 +198,7 @@ impl TargetGraph {
             target_id_to_deps: DashMap::new(),
             file_id_to_path: DashMap::new(),
             file_id_to_rdeps: DashMap::new(),
+            file_id_to_deps: DashMap::new(),
             package_id_to_path: DashMap::new(),
             package_id_to_errors: DashMap::new(),
             package_id_to_targets: DashMap::new(),
@@ -500,21 +502,47 @@ impl TargetGraph {
         self.target_id_to_deps.len()
     }
 
-    // File reverse dependencies storage - similar to target rdeps
-    pub fn add_file_rdep(&self, file_id: FileId, dependent_file: FileId) {
-        // Note: We intentionally don't check for duplicate existence for performance reasons.
+    // Bidirectional file import tracking for BZL imports
+    pub fn add_file_import(&self, imported: FileId, importer: FileId) {
         self.file_id_to_rdeps
-            .entry(file_id)
+            .entry(imported)
             .or_default()
-            .push(dependent_file);
+            .push(importer);
+
+        self.file_id_to_deps
+            .entry(importer)
+            .or_default()
+            .push(imported);
     }
 
     pub fn get_file_rdeps(&self, file_id: FileId) -> Option<Vec<FileId>> {
         self.file_id_to_rdeps.get(&file_id).map(|v| v.clone())
     }
 
+    pub fn get_file_deps(&self, file_id: FileId) -> Option<Vec<FileId>> {
+        self.file_id_to_deps.get(&file_id).map(|v| v.clone())
+    }
+
+    pub fn clear_file_deps(&self, importer: FileId) {
+        if let Some((_, deps)) = self.file_id_to_deps.remove(&importer) {
+            for dep in deps {
+                if let Some(mut rdeps) = self.file_id_to_rdeps.get_mut(&dep) {
+                    rdeps.retain(|&id| id != importer);
+                    if rdeps.is_empty() {
+                        drop(rdeps);
+                        self.file_id_to_rdeps.remove(&dep);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn file_rdeps_len(&self) -> usize {
         self.file_id_to_rdeps.len()
+    }
+
+    pub fn file_deps_len(&self) -> usize {
+        self.file_id_to_deps.len()
     }
 
     pub fn minimized_targets_len(&self) -> usize {
@@ -535,6 +563,7 @@ impl TargetGraph {
             ("glob_patterns", self.glob_patterns_len()),
             ("files", self.files_len()),
             ("file_rdeps", self.file_rdeps_len()),
+            ("file_deps", self.file_deps_len()),
             ("packages", self.packages_len()),
             ("ci_deps_patterns", self.ci_deps_patterns_len()),
             ("errors", self.errors_len()),
@@ -1266,5 +1295,115 @@ mod tests {
 
         assert!(graph.get_ci_hint_affected(unknown).is_none());
         assert!(graph.get_affecting_ci_hints(unknown).is_none());
+    }
+
+    struct FileDepGraphBuilder {
+        graph: TargetGraph,
+    }
+
+    impl FileDepGraphBuilder {
+        fn new() -> Self {
+            Self {
+                graph: TargetGraph::new(),
+            }
+        }
+
+        fn add_import(self, importer: &str, imported: &str) -> Self {
+            let importer_id = self.graph.store_file(importer);
+            let imported_id = self.graph.store_file(imported);
+            self.graph.add_file_import(imported_id, importer_id);
+            self
+        }
+
+        fn build(self) -> TargetGraph {
+            self.graph
+        }
+    }
+
+    #[test]
+    fn add_file_import_maintains_forward_and_reverse_maps() {
+        let graph = FileDepGraphBuilder::new()
+            .add_import("fbcode//pkg/TARGETS", "fbcode//defs.bzl")
+            .add_import("fbcode//pkg/TARGETS", "fbcode//utils.bzl")
+            .build();
+
+        let targets_file = graph.store_file("fbcode//pkg/TARGETS");
+        let defs_bzl = graph.store_file("fbcode//defs.bzl");
+        let utils_bzl = graph.store_file("fbcode//utils.bzl");
+
+        assert_eq!(graph.get_file_rdeps(defs_bzl).unwrap(), vec![targets_file]);
+        assert_eq!(graph.get_file_rdeps(utils_bzl).unwrap(), vec![targets_file]);
+
+        let deps = graph.get_file_deps(targets_file).unwrap();
+        assert_eq!(deps.len(), 2);
+        assert!(deps.contains(&defs_bzl));
+        assert!(deps.contains(&utils_bzl));
+    }
+
+    #[test]
+    fn get_file_deps_returns_none_for_file_with_no_imports() {
+        let graph = TargetGraph::new();
+        let file = graph.store_file("fbcode//standalone.bzl");
+        assert!(graph.get_file_deps(file).is_none());
+    }
+
+    #[rstest]
+    #[case::cleans_all_entries(
+        &[("fbcode//pkg/TARGETS", "fbcode//defs.bzl"), ("fbcode//pkg/TARGETS", "fbcode//utils.bzl")],
+        "fbcode//pkg/TARGETS",
+        &[("fbcode//pkg/TARGETS", None), ("fbcode//defs.bzl", None), ("fbcode//utils.bzl", None)],
+    )]
+    #[case::noop_for_unknown_file(
+        &[("fbcode//pkg/TARGETS", "fbcode//defs.bzl")],
+        "fbcode//unknown.bzl",
+        &[("fbcode//defs.bzl", Some(vec!["fbcode//pkg/TARGETS"])), ("fbcode//pkg/TARGETS", None)],
+    )]
+    #[case::only_removes_specified_dependent(
+        &[("fbcode//a/TARGETS", "fbcode//defs.bzl"), ("fbcode//b/TARGETS", "fbcode//defs.bzl")],
+        "fbcode//a/TARGETS",
+        &[("fbcode//defs.bzl", Some(vec!["fbcode//b/TARGETS"]))],
+    )]
+    #[test]
+    fn clear_file_deps_cases(
+        #[case] imports: &[(&str, &str)],
+        #[case] remove_target: &str,
+        #[case] expected_rdeps: &[(&str, Option<Vec<&str>>)],
+    ) {
+        let mut builder = FileDepGraphBuilder::new();
+        for (importer, imported) in imports {
+            builder = builder.add_import(importer, imported);
+        }
+        let graph = builder.build();
+
+        let remove_id = graph.store_file(remove_target);
+        graph.clear_file_deps(remove_id);
+
+        assert!(
+            graph.get_file_deps(remove_id).is_none(),
+            "cleared file should have no deps"
+        );
+
+        for (file, expected) in expected_rdeps {
+            let file_id = graph.store_file(file);
+            match expected {
+                None => {
+                    assert!(
+                        graph.get_file_rdeps(file_id).is_none(),
+                        "{} should have no rdeps after removal",
+                        file
+                    );
+                }
+                Some(expected_rdep_files) => {
+                    let rdeps = graph
+                        .get_file_rdeps(file_id)
+                        .unwrap_or_else(|| panic!("{} should have rdeps", file));
+                    let expected_ids: Vec<FileId> = expected_rdep_files
+                        .iter()
+                        .map(|f| graph.store_file(f))
+                        .collect();
+                    assert_eq!(rdeps, expected_ids, "rdeps mismatch for {}", file);
+                }
+            }
+        }
     }
 }
