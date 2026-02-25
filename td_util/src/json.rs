@@ -51,22 +51,25 @@ fn open_file(filename: &Path) -> anyhow::Result<Box<dyn Read + Send>> {
 pub fn read_file_lines_parallel_ordered<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
-    let file = open_file(filename)?;
-    // 10MB buffer
-    let rdr = BufReader::with_capacity(BUFFER_SIZE, file);
-    let chunk_size = 5000;
-    let mut results = Vec::new();
+    let inner = || -> anyhow::Result<Vec<T>> {
+        let file = open_file(filename)?;
+        // 10MB buffer
+        let rdr = BufReader::with_capacity(BUFFER_SIZE, file);
+        let chunk_size = 5000;
+        let mut results = Vec::new();
 
-    for lines_chunk in &rdr.lines().chunks(chunk_size) {
-        let lines_vec: Vec<_> = lines_chunk.collect();
-        let chunk_results = lines_vec
-            .into_par_iter()
-            .map(parse_line)
-            .collect::<Result<Vec<_>, _>>()?;
-        results.extend(chunk_results);
-    }
+        for lines_chunk in &rdr.lines().chunks(chunk_size) {
+            let lines_vec: Vec<_> = lines_chunk.collect();
+            let chunk_results = lines_vec
+                .into_par_iter()
+                .map(parse_line)
+                .collect::<Result<Vec<_>, _>>()?;
+            results.extend(chunk_results);
+        }
 
-    Ok(results)
+        Ok(results)
+    };
+    inner().with_context(|| format!("When reading file `{}`", filename.display()))
 }
 
 /// Read a file that consists of many JSON blobs, one per line.
@@ -75,7 +78,10 @@ pub fn read_file_lines_parallel_ordered<T: for<'a> Deserialize<'a> + Send>(
 pub fn read_file_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
     filename: &Path,
 ) -> anyhow::Result<Vec<T>> {
-    read_file_lines_par_iter(filename)?.collect::<anyhow::Result<Vec<T>>>()
+    let inner = || -> anyhow::Result<Vec<T>> {
+        read_file_lines_par_iter(filename)?.collect::<anyhow::Result<Vec<T>>>()
+    };
+    inner().with_context(|| format!("When reading file `{}`", filename.display()))
 }
 
 /// Returns an unordered parallel iterator over the parsed lines.
