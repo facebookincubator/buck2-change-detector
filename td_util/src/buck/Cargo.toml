@@ -8,22 +8,22 @@ path = "lib.rs"
 
 [dependencies]
 anyhow = "1.0"
+audit = { path = "../../../audit" }
 dashmap = { version = "5.5", features = ["serde"] }
+fbinit = { workspace = true }
 fnv = "1.0"
 glob = "0.3.0"
 globset = "0.4.10"
 itertools = "0.14.0"
 parse-display = "0.8.2"
+rayon = "1.6.1"
 regex = "1.5.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.66"
+td_util = { path = "../.." }
 tempfile = "3.1.0"
 thiserror = "1.0.36"
 tracing = "0.1.22"
-fbinit = { workspace = true }
-
-td_util = { path = "../.." }
-audit = { path = "../../../audit" }
 
 [dev-dependencies]
 rstest = "0.18"

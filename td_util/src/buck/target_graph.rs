@@ -8,12 +8,14 @@
  * above-listed licenses.
  */
 
+use std::collections::HashSet;
 use std::hash::Hasher;
 use std::str::FromStr;
 
 use dashmap::DashMap;
 use dashmap::DashSet;
 use fnv::FnvHasher;
+use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -453,6 +455,71 @@ impl TargetGraph {
         // ci_hint_to_affected[H] still contains target_id (dangling).
         // This matches the pattern for regular rdeps — upward references
         // to removed targets are preserved for detection.
+    }
+
+    pub fn remove_targets_batch(&self, targets_to_remove: &HashSet<TargetId>) {
+        if targets_to_remove.is_empty() {
+            return;
+        }
+
+        self.clean_ci_hint_edges_for_removed_targets(targets_to_remove);
+        self.clean_rdeps_for_removed_targets(targets_to_remove);
+        self.clean_per_target_data(targets_to_remove);
+    }
+
+    fn clean_ci_hint_edges_for_removed_targets(&self, targets_to_remove: &HashSet<TargetId>) {
+        for &target_id in targets_to_remove {
+            if !self.is_ci_hint_target(target_id) {
+                continue;
+            }
+
+            for affected_target in self.get_ci_hint_affected(target_id).unwrap_or_default() {
+                let Some(mut ci_hints) = self.affected_to_ci_hints.get_mut(&affected_target) else {
+                    continue;
+                };
+                ci_hints.retain(|id| !targets_to_remove.contains(id));
+                if ci_hints.is_empty() {
+                    drop(ci_hints);
+                    self.affected_to_ci_hints.remove(&affected_target);
+                }
+            }
+
+            self.ci_hint_to_affected.remove(&target_id);
+        }
+    }
+
+    fn clean_rdeps_for_removed_targets(&self, targets_to_remove: &HashSet<TargetId>) {
+        let unique_deps: Vec<TargetId> = targets_to_remove
+            .iter()
+            .flat_map(|&tid| self.get_deps(tid).unwrap_or_default())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        unique_deps.par_iter().for_each(|&dep_id| {
+            let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) else {
+                return;
+            };
+            rdeps.retain(|id| !targets_to_remove.contains(id));
+            if rdeps.is_empty() {
+                drop(rdeps);
+                self.target_id_to_rdeps.remove(&dep_id);
+            }
+        });
+    }
+
+    fn clean_per_target_data(&self, targets_to_remove: &HashSet<TargetId>) {
+        for &target_id in targets_to_remove {
+            self.target_id_to_deps.remove(&target_id);
+            self.target_id_to_ci_srcs.remove(&target_id);
+            self.target_id_to_ci_srcs_must_match.remove(&target_id);
+            self.target_id_to_ci_deps_package_patterns
+                .remove(&target_id);
+            self.target_id_to_ci_deps_recursive_patterns
+                .remove(&target_id);
+            self.targets_with_sudo_label.remove(&target_id);
+            self.minimized_targets.remove(&target_id);
+        }
     }
 
     pub fn get_all_targets(&self) -> impl Iterator<Item = TargetId> + '_ {
@@ -1451,5 +1518,100 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn store_minimized_stub(graph: &TargetGraph, target_id: TargetId) {
+        let rule_type_id = graph.store_rule_type("cpp_library");
+        graph.store_minimized_target(
+            target_id,
+            MinimizedBuckTarget {
+                rule_type: rule_type_id,
+                oncall: None,
+                labels: vec![],
+                target_hash: TargetHash::new("hash"),
+            },
+        );
+    }
+
+    #[test]
+    fn batch_remove_cleans_rdeps_same_as_individual_removal() {
+        let graph = TargetGraph::new();
+
+        let shared_dep = graph.store_target("fbcode//lib:shared");
+        let target_a = graph.store_target("fbcode//a:target_a");
+        let target_b = graph.store_target("fbcode//b:target_b");
+        let survivor = graph.store_target("fbcode//c:survivor");
+
+        graph.add_rdep(shared_dep, target_a);
+        graph.add_rdep(shared_dep, target_b);
+        graph.add_rdep(shared_dep, survivor);
+
+        for &id in &[target_a, target_b, shared_dep, survivor] {
+            store_minimized_stub(&graph, id);
+        }
+
+        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        graph.remove_targets_batch(&to_remove);
+
+        assert_eq!(graph.get_rdeps(shared_dep).unwrap(), vec![survivor]);
+        assert!(graph.get_minimized_target(target_a).is_none());
+        assert!(graph.get_minimized_target(target_b).is_none());
+        assert!(graph.get_deps(target_a).is_none());
+        assert!(graph.get_deps(target_b).is_none());
+        assert!(graph.get_minimized_target(shared_dep).is_some());
+        assert!(graph.get_minimized_target(survivor).is_some());
+    }
+
+    #[test]
+    fn batch_remove_handles_ci_hint_targets() {
+        let graph = TargetGraph::new();
+
+        let ci_hint_id =
+            store_target_with_rule_type(&graph, "fbcode//foo:ci_hint@test", CI_HINT_RULE_TYPE);
+        let dest_id = store_target_with_rule_type(&graph, "fbcode//foo:test", "python_test");
+        graph.add_ci_hint_edge(ci_hint_id, dest_id);
+
+        let to_remove: HashSet<TargetId> = [ci_hint_id].into_iter().collect();
+        graph.remove_targets_batch(&to_remove);
+
+        assert!(graph.get_ci_hint_affected(ci_hint_id).is_none());
+        assert!(graph.get_affecting_ci_hints(dest_id).is_none());
+        assert!(graph.get_minimized_target(ci_hint_id).is_none());
+    }
+
+    #[test]
+    fn batch_remove_cleans_dep_rdeps_for_targets_with_different_deps() {
+        let graph = TargetGraph::new();
+
+        let dep_x = graph.store_target("fbcode//lib:dep_x");
+        let dep_y = graph.store_target("fbcode//lib:dep_y");
+        let target_a = graph.store_target("fbcode//a:target_a");
+        let target_b = graph.store_target("fbcode//b:target_b");
+
+        graph.add_rdep(dep_x, target_a);
+        graph.add_rdep(dep_y, target_b);
+
+        for &id in &[dep_x, dep_y, target_a, target_b] {
+            store_minimized_stub(&graph, id);
+        }
+
+        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        graph.remove_targets_batch(&to_remove);
+
+        assert!(graph.get_rdeps(dep_x).is_none());
+        assert!(graph.get_rdeps(dep_y).is_none());
+    }
+
+    #[test]
+    fn batch_remove_empty_set_is_noop() {
+        let graph = TargetGraph::new();
+
+        let target = graph.store_target("fbcode//a:target");
+        store_minimized_stub(&graph, target);
+
+        let to_remove: HashSet<TargetId> = HashSet::new();
+        graph.remove_targets_batch(&to_remove);
+
+        assert!(graph.get_minimized_target(target).is_some());
     }
 }
