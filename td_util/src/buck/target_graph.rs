@@ -409,6 +409,7 @@ impl TargetGraph {
             self.remove_regular_target(target_id);
         }
 
+        self.remove_target_from_package(target_id);
         self.target_id_to_deps.remove(&target_id);
         self.target_id_to_ci_srcs.remove(&target_id);
         self.target_id_to_ci_srcs_must_match.remove(&target_id);
@@ -418,6 +419,22 @@ impl TargetGraph {
             .remove(&target_id);
         self.targets_with_sudo_label.remove(&target_id);
         self.minimized_targets.remove(&target_id);
+    }
+
+    fn remove_target_from_package(&self, target_id: TargetId) {
+        for mut entry in self.package_id_to_targets.iter_mut() {
+            let targets = entry.value_mut();
+            let Some(pos) = targets.iter().position(|&id| id == target_id) else {
+                continue;
+            };
+            targets.swap_remove(pos);
+            if targets.is_empty() {
+                let package_id = *entry.key();
+                drop(entry);
+                self.package_id_to_targets.remove(&package_id);
+            }
+            return;
+        }
     }
 
     fn remove_ci_hint_target(&self, target_id: TargetId) {
@@ -464,6 +481,7 @@ impl TargetGraph {
 
         self.clean_ci_hint_edges_for_removed_targets(targets_to_remove);
         self.clean_rdeps_for_removed_targets(targets_to_remove);
+        self.clean_package_targets_for_removed_targets(targets_to_remove);
         self.clean_per_target_data(targets_to_remove);
     }
 
@@ -505,6 +523,13 @@ impl TargetGraph {
                 drop(rdeps);
                 self.target_id_to_rdeps.remove(&dep_id);
             }
+        });
+    }
+
+    fn clean_package_targets_for_removed_targets(&self, targets_to_remove: &HashSet<TargetId>) {
+        self.package_id_to_targets.retain(|_, targets| {
+            targets.retain(|id| !targets_to_remove.contains(id));
+            !targets.is_empty()
         });
     }
 
@@ -1613,5 +1638,76 @@ mod tests {
         graph.remove_targets_batch(&to_remove);
 
         assert!(graph.get_minimized_target(target).is_some());
+    }
+
+    #[test]
+    fn batch_remove_cleans_package_id_to_targets() {
+        let graph = TargetGraph::new();
+
+        let package_id = graph.store_package("fbcode//pkg");
+        let target_a = graph.store_target("fbcode//pkg:a");
+        let target_b = graph.store_target("fbcode//pkg:b");
+        let survivor = graph.store_target("fbcode//pkg:survivor");
+
+        graph.add_target_to_package(package_id, target_a);
+        graph.add_target_to_package(package_id, target_b);
+        graph.add_target_to_package(package_id, survivor);
+
+        for &id in &[target_a, target_b, survivor] {
+            store_minimized_stub(&graph, id);
+        }
+
+        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        graph.remove_targets_batch(&to_remove);
+
+        let remaining = graph.get_targets_in_package(package_id).unwrap();
+        assert_eq!(remaining, vec![survivor]);
+    }
+
+    #[test]
+    fn batch_remove_cleans_package_id_to_targets_across_packages() {
+        let graph = TargetGraph::new();
+
+        let pkg1 = graph.store_package("fbcode//pkg1");
+        let pkg2 = graph.store_package("fbcode//pkg2");
+        let target_a = graph.store_target("fbcode//pkg1:a");
+        let target_b = graph.store_target("fbcode//pkg2:b");
+        let survivor = graph.store_target("fbcode//pkg2:survivor");
+
+        graph.add_target_to_package(pkg1, target_a);
+        graph.add_target_to_package(pkg2, target_b);
+        graph.add_target_to_package(pkg2, survivor);
+
+        for &id in &[target_a, target_b, survivor] {
+            store_minimized_stub(&graph, id);
+        }
+
+        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        graph.remove_targets_batch(&to_remove);
+
+        assert!(graph.get_targets_in_package(pkg1).is_none());
+        let remaining = graph.get_targets_in_package(pkg2).unwrap();
+        assert_eq!(remaining, vec![survivor]);
+    }
+
+    #[test]
+    fn remove_target_cleans_package_id_to_targets() {
+        let graph = TargetGraph::new();
+
+        let package_id = graph.store_package("fbcode//pkg");
+        let target_a = graph.store_target("fbcode//pkg:a");
+        let target_b = graph.store_target("fbcode//pkg:b");
+
+        graph.add_target_to_package(package_id, target_a);
+        graph.add_target_to_package(package_id, target_b);
+
+        for &id in &[target_a, target_b] {
+            store_minimized_stub(&graph, id);
+        }
+
+        graph.remove_target(target_a);
+
+        let remaining = graph.get_targets_in_package(package_id).unwrap();
+        assert_eq!(remaining, vec![target_b]);
     }
 }
