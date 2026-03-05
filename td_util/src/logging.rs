@@ -33,3 +33,16 @@ pub fn elapsed() -> Duration {
 pub fn step(name: &str) {
     info!("Starting {} at {:.3}s", name, elapsed().as_secs_f64());
 }
+
+pub fn rss_mb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|v| v.parse::<u64>().ok())
+        })
+        .map(|kb| kb / 1024)
+        .unwrap_or(0)
+}
