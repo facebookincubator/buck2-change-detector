@@ -337,6 +337,8 @@ impl CellName {
     }
 }
 
+pub const PACKAGE_FILE_NAMES: &[&str] = &["PACKAGE", "BUCK_TREE"];
+
 /// Example: `fbcode//buck2/TARGETS`
 #[derive(Debug, Hash, PartialEq, Eq, Deserialize, Serialize, Clone, Display)]
 pub struct CellPath(InternString);
@@ -488,7 +490,9 @@ impl CellPath {
     /// ```
     pub fn is_package_file(&self) -> bool {
         let s = self.0.as_str();
-        s.ends_with("/PACKAGE") || s.ends_with("/BUCK_TREE")
+        PACKAGE_FILE_NAMES
+            .iter()
+            .any(|name| s.ends_with(&format!("/{name}")))
     }
 
     /// ```
