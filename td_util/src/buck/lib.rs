@@ -26,6 +26,7 @@ pub mod select;
 pub mod target_graph;
 pub mod target_map;
 pub mod targets;
+pub mod tented;
 pub mod types;
 use td_util::tracing;
 
