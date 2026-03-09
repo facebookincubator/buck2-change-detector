@@ -62,6 +62,10 @@ impl TdProject {
     pub fn is_mobile(&self) -> bool {
         matches!(self, Self::Fbandroid | Self::Fbobjc | Self::Mobile)
     }
+
+    pub fn is_fbsource(&self) -> bool {
+        !matches!(self, Self::Configerator | Self::Www)
+    }
 }
 
 pub fn get_repo_root() -> io::Result<PathBuf> {
@@ -74,4 +78,29 @@ pub fn get_repo_root() -> io::Result<PathBuf> {
     let s = String::from_utf8(output.stdout).map_err(io::Error::other)?;
 
     Ok(PathBuf::from(s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_fbsource() {
+        // fbsource-based projects
+        assert!(TdProject::Fbcode.is_fbsource());
+        assert!(TdProject::Fbandroid.is_fbsource());
+        assert!(TdProject::Fbobjc.is_fbsource());
+        assert!(TdProject::Genai.is_fbsource());
+        assert!(TdProject::Mobile.is_fbsource());
+        assert!(TdProject::RL.is_fbsource());
+        assert!(TdProject::Wacommon.is_fbsource());
+        assert!(TdProject::Waclient.is_fbsource());
+        assert!(TdProject::Waserver.is_fbsource());
+        assert!(TdProject::Xplat.is_fbsource());
+        assert!(TdProject::Fasttrack.is_fbsource());
+
+        // Non-fbsource projects
+        assert!(!TdProject::Configerator.is_fbsource());
+        assert!(!TdProject::Www.is_fbsource());
+    }
 }
