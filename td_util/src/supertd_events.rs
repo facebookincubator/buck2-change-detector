@@ -45,6 +45,9 @@ pub enum Event {
     DEPRECATED_ARG_USED,
     BTD_GRAPH_CACHE_LOOKUP,
     VERSE_LOG_PREDICATE,
+    TENTING_FAILURE,
+    TENTING_SUCCESS,
+    TENTING_SCS_CALL,
 }
 
 #[derive(Debug)]
