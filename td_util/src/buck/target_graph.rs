@@ -332,6 +332,17 @@ impl TargetGraph {
         package_id_to_errors
     );
 
+    pub fn clear_errors(&self, package_id: PackageId) {
+        self.package_id_to_errors.remove(&package_id);
+    }
+
+    pub fn error_package_ids(&self) -> IdHashSet<PackageId> {
+        self.package_id_to_errors
+            .iter()
+            .map(|entry| *entry.key())
+            .collect()
+    }
+
     impl_collection_storage!(
         TargetId,
         CiDepsPatternId,
@@ -1714,5 +1725,45 @@ mod tests {
 
         let remaining = graph.get_targets_in_package(package_id).unwrap();
         assert_eq!(remaining, vec![target_b]);
+    }
+
+    #[test]
+    fn clear_errors_removes_all_errors_for_package() {
+        let graph = TargetGraph::new();
+        let package_id = graph.store_package("fbcode//broken/pkg");
+        graph.add_error(package_id, "error one".to_owned());
+        graph.add_error(package_id, "error two".to_owned());
+        assert_eq!(graph.get_errors(package_id).unwrap().len(), 2);
+
+        graph.clear_errors(package_id);
+
+        assert!(graph.get_errors(package_id).is_none());
+    }
+
+    #[test]
+    fn clear_errors_is_noop_for_package_without_errors() {
+        let graph = TargetGraph::new();
+        let package_id = graph.store_package("fbcode//clean/pkg");
+
+        graph.clear_errors(package_id);
+
+        assert!(graph.get_errors(package_id).is_none());
+    }
+
+    #[test]
+    fn error_package_ids_returns_packages_with_errors() {
+        let graph = TargetGraph::new();
+        let pkg_a = graph.store_package("fbcode//a");
+        let pkg_b = graph.store_package("fbcode//b");
+        let _pkg_c = graph.store_package("fbcode//c");
+
+        graph.add_error(pkg_a, "err".to_owned());
+        graph.add_error(pkg_b, "err".to_owned());
+
+        let ids = graph.error_package_ids();
+
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&pkg_a));
+        assert!(ids.contains(&pkg_b));
     }
 }
