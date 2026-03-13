@@ -18,6 +18,7 @@ use fnv::FnvHasher;
 use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
+use td_util::no_hash::BuildNoHash;
 
 use crate::types::Package;
 use crate::types::PatternType;
@@ -133,6 +134,10 @@ define_id_type!(FileId);
 define_id_type!(PackageId);
 define_id_type!(CiDepsPatternId);
 
+pub type IdDashMap<K, V> = DashMap<K, V, BuildNoHash>;
+pub type IdDashSet<K> = DashSet<K, BuildNoHash>;
+pub type IdHashSet<K> = HashSet<K, BuildNoHash>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinimizedBuckTarget {
     pub rule_type: RuleTypeId,
@@ -145,73 +150,73 @@ pub struct MinimizedBuckTarget {
 pub struct TargetGraph {
     // We store BuckTargets as ids as a form of string interning
     // These maps are used to convert Ids back to strings
-    target_id_to_label: DashMap<TargetId, String>,
-    rule_type_id_to_string: DashMap<RuleTypeId, String>,
-    oncall_id_to_string: DashMap<OncallId, String>,
-    label_id_to_string: DashMap<LabelId, String>,
-    minimized_targets: DashMap<TargetId, MinimizedBuckTarget>,
-    glob_pattern_id_to_string: DashMap<GlobPatternId, String>,
-    package_id_to_path: DashMap<PackageId, String>,
-    file_id_to_path: DashMap<FileId, String>,
-    ci_deps_pattern_id_to_string: DashMap<CiDepsPatternId, String>,
+    target_id_to_label: IdDashMap<TargetId, String>,
+    rule_type_id_to_string: IdDashMap<RuleTypeId, String>,
+    oncall_id_to_string: IdDashMap<OncallId, String>,
+    label_id_to_string: IdDashMap<LabelId, String>,
+    minimized_targets: IdDashMap<TargetId, MinimizedBuckTarget>,
+    glob_pattern_id_to_string: IdDashMap<GlobPatternId, String>,
+    package_id_to_path: IdDashMap<PackageId, String>,
+    file_id_to_path: IdDashMap<FileId, String>,
+    ci_deps_pattern_id_to_string: IdDashMap<CiDepsPatternId, String>,
 
     // Bidirectional dependency tracking
-    target_id_to_rdeps: DashMap<TargetId, Vec<TargetId>>,
-    target_id_to_deps: DashMap<TargetId, Vec<TargetId>>,
+    target_id_to_rdeps: IdDashMap<TargetId, Vec<TargetId>>,
+    target_id_to_deps: IdDashMap<TargetId, Vec<TargetId>>,
 
     // Bidirectional file relationship tracking for BZL imports
-    file_id_to_rdeps: DashMap<FileId, Vec<FileId>>,
-    file_id_to_deps: DashMap<FileId, Vec<FileId>>,
+    file_id_to_rdeps: IdDashMap<FileId, Vec<FileId>>,
+    file_id_to_deps: IdDashMap<FileId, Vec<FileId>>,
 
     // Package error tracking
-    package_id_to_errors: DashMap<PackageId, Vec<String>>,
+    package_id_to_errors: IdDashMap<PackageId, Vec<String>>,
 
     // Package to targets mapping
-    package_id_to_targets: DashMap<PackageId, Vec<TargetId>>,
+    package_id_to_targets: IdDashMap<PackageId, Vec<TargetId>>,
 
     // CI pattern storage
-    target_id_to_ci_srcs: DashMap<TargetId, Vec<GlobPatternId>>,
-    target_id_to_ci_srcs_must_match: DashMap<TargetId, Vec<GlobPatternId>>,
+    target_id_to_ci_srcs: IdDashMap<TargetId, Vec<GlobPatternId>>,
+    target_id_to_ci_srcs_must_match: IdDashMap<TargetId, Vec<GlobPatternId>>,
 
     // CI deps patterns storage
-    target_id_to_ci_deps_package_patterns: DashMap<TargetId, Vec<CiDepsPatternId>>,
-    target_id_to_ci_deps_recursive_patterns: DashMap<TargetId, Vec<CiDepsPatternId>>,
+    target_id_to_ci_deps_package_patterns: IdDashMap<TargetId, Vec<CiDepsPatternId>>,
+    target_id_to_ci_deps_recursive_patterns: IdDashMap<TargetId, Vec<CiDepsPatternId>>,
 
     // Targets that have the uses_sudo label
-    targets_with_sudo_label: DashSet<TargetId>,
+    targets_with_sudo_label: IdDashSet<TargetId>,
 
     // CI hint edge storage (separate from regular deps/rdeps)
     // ci_hint → targets it affects (when ci_hint changes, these targets are impacted)
-    ci_hint_to_affected: DashMap<TargetId, Vec<TargetId>>,
+    ci_hint_to_affected: IdDashMap<TargetId, Vec<TargetId>>,
     // target → CI hints that affect it (reverse lookup for cleanup)
-    affected_to_ci_hints: DashMap<TargetId, Vec<TargetId>>,
+    affected_to_ci_hints: IdDashMap<TargetId, Vec<TargetId>>,
 }
 
 impl TargetGraph {
     pub fn new() -> Self {
         Self {
-            target_id_to_label: DashMap::new(),
-            rule_type_id_to_string: DashMap::new(),
-            oncall_id_to_string: DashMap::new(),
-            label_id_to_string: DashMap::new(),
-            minimized_targets: DashMap::new(),
-            glob_pattern_id_to_string: DashMap::new(),
-            target_id_to_rdeps: DashMap::new(),
-            target_id_to_deps: DashMap::new(),
-            file_id_to_path: DashMap::new(),
-            file_id_to_rdeps: DashMap::new(),
-            file_id_to_deps: DashMap::new(),
-            package_id_to_path: DashMap::new(),
-            package_id_to_errors: DashMap::new(),
-            package_id_to_targets: DashMap::new(),
-            ci_deps_pattern_id_to_string: DashMap::new(),
-            target_id_to_ci_srcs: DashMap::new(),
-            target_id_to_ci_srcs_must_match: DashMap::new(),
-            target_id_to_ci_deps_package_patterns: DashMap::new(),
-            target_id_to_ci_deps_recursive_patterns: DashMap::new(),
-            targets_with_sudo_label: DashSet::new(),
-            ci_hint_to_affected: DashMap::new(),
-            affected_to_ci_hints: DashMap::new(),
+            target_id_to_label: IdDashMap::default(),
+            rule_type_id_to_string: IdDashMap::default(),
+            oncall_id_to_string: IdDashMap::default(),
+            label_id_to_string: IdDashMap::default(),
+            minimized_targets: IdDashMap::default(),
+            glob_pattern_id_to_string: IdDashMap::default(),
+            target_id_to_rdeps: IdDashMap::default(),
+            target_id_to_deps: IdDashMap::default(),
+            file_id_to_path: IdDashMap::default(),
+            file_id_to_rdeps: IdDashMap::default(),
+            file_id_to_deps: IdDashMap::default(),
+            package_id_to_path: IdDashMap::default(),
+            package_id_to_errors: IdDashMap::default(),
+            package_id_to_targets: IdDashMap::default(),
+            ci_deps_pattern_id_to_string: IdDashMap::default(),
+            target_id_to_ci_srcs: IdDashMap::default(),
+            target_id_to_ci_srcs_must_match: IdDashMap::default(),
+            target_id_to_ci_deps_package_patterns: IdDashMap::default(),
+            target_id_to_ci_deps_recursive_patterns: IdDashMap::default(),
+            targets_with_sudo_label: IdDashSet::default(),
+            ci_hint_to_affected: IdDashMap::default(),
+            affected_to_ci_hints: IdDashMap::default(),
         }
     }
 
