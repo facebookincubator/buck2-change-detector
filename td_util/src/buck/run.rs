@@ -209,6 +209,25 @@ pub fn targets_arguments() -> &'static [&'static str] {
     ]
 }
 
+/// Optimized variant of `targets_arguments` for BTDv2/graph_compressor.
+///
+/// Excludes `buck.inputs`, `tests`, and `remote_execution` from the output
+/// attributes since graph_compressor's `RawBuckTarget` does not use them.
+/// This avoids serializing large per-target input lists (~10% of output).
+pub fn targets_arguments_v2() -> &'static [&'static str] {
+    &[
+        "targets",
+        "--streaming",
+        "--keep-going",
+        "--no-cache",
+        "--show-unconfigured-target-hash",
+        "--json-lines",
+        "--output-attribute=^buck\\.deps$|^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^buck\\.target_hash$|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$",
+        "--imports",
+        "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
 
