@@ -42,6 +42,7 @@ use anyhow::anyhow;
 #[cfg(fbcode_build)]
 use btd_run_stats::BTDRunStats;
 use clap::Parser;
+use rustc_hash::FxHashSet;
 use serde::Serialize;
 use td_util::file_io::file_writer;
 use td_util::json;
@@ -318,7 +319,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         step("recursive sudo labels");
         sudo::requires_sudo_recursively(&diff)
     } else {
-        HashSet::new()
+        FxHashSet::default()
     };
     step("printing changes");
     if args.graph_size {
@@ -543,7 +544,7 @@ impl OutputFormat {
 
 fn print_recursive_changes<'a, T: Serialize + 'a>(
     changes: &[Vec<(&'a BuckTarget, ImpactTraceData)>],
-    sudos: &HashSet<TargetLabelKeyRef>,
+    sudos: &FxHashSet<TargetLabelKeyRef>,
     output: OutputFormat,
     output_path: Option<&Path>,
     mut augment: impl FnMut(&'a BuckTarget, Output<'a>) -> T,

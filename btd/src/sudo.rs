@@ -8,9 +8,8 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-use std::collections::HashSet;
-
+use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use td_util_buck::targets::BuckTarget;
 use td_util_buck::targets::Targets;
 use td_util_buck::types::TargetLabel;
@@ -18,11 +17,11 @@ use td_util_buck::types::TargetLabelKeyRef;
 
 // Currently, this function doesn't support progagating 'uses_sudo' label for target patterns.
 // We can possibly live with this version until a use case found.
-pub fn requires_sudo_recursively(targets: &Targets) -> HashSet<TargetLabelKeyRef<'_>> {
-    let mut rdeps: HashMap<&TargetLabel, Vec<&BuckTarget>> =
-        HashMap::with_capacity(targets.len_targets_upperbound());
+pub fn requires_sudo_recursively(targets: &Targets) -> FxHashSet<TargetLabelKeyRef<'_>> {
+    let mut rdeps: FxHashMap<&TargetLabel, Vec<&BuckTarget>> =
+        FxHashMap::with_capacity_and_hasher(targets.len_targets_upperbound(), Default::default());
     let mut todo: Vec<&BuckTarget> = Vec::new();
-    let mut sudos: HashSet<TargetLabelKeyRef> = HashSet::new();
+    let mut sudos: FxHashSet<TargetLabelKeyRef> = FxHashSet::default();
 
     for target in targets.targets() {
         for d in target.deps.iter() {

@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::mem;
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use td_util_buck::config::is_buckconfig_change;
 use td_util_buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
 use td_util_buck::glob::GlobSpec;
@@ -38,8 +38,8 @@ fn changed_bzl_files<'a>(
     state: &'a Targets,
     changes: &Changes,
     track_prelude_changes: bool,
-) -> HashSet<&'a CellPath> {
-    let mut rdeps: HashMap<&CellPath, Vec<&CellPath>> = HashMap::new();
+) -> FxHashSet<&'a CellPath> {
+    let mut rdeps: FxHashMap<&CellPath, Vec<&CellPath>> = FxHashMap::default();
     let mut todo = Vec::new();
     for x in state.imports() {
         // Always track regular rule changes, but ignore buck2 prelude changes
@@ -64,7 +64,7 @@ fn changed_bzl_files<'a>(
         }
     }
 
-    let mut res: HashSet<_> = todo.iter().copied().collect();
+    let mut res: FxHashSet<_> = todo.iter().copied().collect();
     while let Some(x) = todo.pop() {
         if let Some(rdep) = rdeps.get(x) {
             for r in rdep {
@@ -393,7 +393,7 @@ pub fn immediate_target_changes<'a>(
                     added_labels: if reason == RootImpactKind::Labels {
                         let old_ci_labels = Labels::filter_ci_labels(&old_target.labels);
                         let new_ci_labels = Labels::filter_ci_labels(&target.labels);
-                        let old_set: HashSet<_> =
+                        let old_set: FxHashSet<_> =
                             old_ci_labels.iter().map(|l| l.as_str()).collect();
                         new_ci_labels
                             .iter()
@@ -406,7 +406,7 @@ pub fn immediate_target_changes<'a>(
                     removed_labels: if reason == RootImpactKind::Labels {
                         let old_ci_labels = Labels::filter_ci_labels(&old_target.labels);
                         let new_ci_labels = Labels::filter_ci_labels(&target.labels);
-                        let new_set: HashSet<_> =
+                        let new_set: FxHashSet<_> =
                             new_ci_labels.iter().map(|l| l.as_str()).collect();
                         old_ci_labels
                             .iter()
@@ -434,7 +434,7 @@ pub fn immediate_target_changes<'a>(
                         let old_ci_labels =
                             Labels::filter_ci_labels(&old_target.package_values.labels);
                         let new_ci_labels = Labels::filter_ci_labels(&target.package_values.labels);
-                        let old_set: HashSet<_> =
+                        let old_set: FxHashSet<_> =
                             old_ci_labels.iter().map(|l| l.as_str()).collect();
                         new_ci_labels
                             .iter()
@@ -448,7 +448,7 @@ pub fn immediate_target_changes<'a>(
                         let old_ci_labels =
                             Labels::filter_ci_labels(&old_target.package_values.labels);
                         let new_ci_labels = Labels::filter_ci_labels(&target.package_values.labels);
-                        let new_set: HashSet<_> =
+                        let new_set: FxHashSet<_> =
                             new_ci_labels.iter().map(|l| l.as_str()).collect();
                         old_ci_labels
                             .iter()
@@ -531,7 +531,7 @@ pub fn recursive_target_changes<'a>(
 
     // We expect most things will have at least one dependency, so a reasonable approximate size
     let mut rdeps: TargetMap<&BuckTarget> = TargetMap::with_capacity(diff.len_targets_upperbound());
-    let mut hints: HashMap<(&Package, TargetName), TargetLabel> = HashMap::new();
+    let mut hints: FxHashMap<(&Package, TargetName), TargetLabel> = FxHashMap::default();
     for target in diff
         .targets()
         .filter(|t| matches_ci_srcs_must_match(&t.ci_srcs_must_match, changes))
@@ -585,7 +585,7 @@ pub fn recursive_target_changes<'a>(
     let mut todo = impact.recursive.clone();
     let mut non_recursive_changes = impact.non_recursive.clone();
 
-    let mut done: HashMap<TargetLabelKeyRef, bool> = impact
+    let mut done: FxHashMap<TargetLabelKeyRef, bool> = impact
         .recursive
         .iter()
         .map(|(x, _)| (x.label_key(), true))

@@ -15,6 +15,7 @@ use std::io::stdout;
 use std::path::Path;
 
 use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 use serde::Serialize;
 use td_util::file_io::file_writer;
 use td_util::json;
@@ -85,7 +86,7 @@ impl GraphSize {
     pub fn print_recursive_changes(
         &mut self,
         changes: &[Vec<(&BuckTarget, ImpactTraceData)>],
-        sudos: &HashSet<TargetLabelKeyRef>,
+        sudos: &FxHashSet<TargetLabelKeyRef>,
         output: OutputFormat,
         output_path: Option<&Path>,
     ) -> anyhow::Result<()> {
@@ -217,7 +218,7 @@ mod tests {
         let (base, diff) = create_test_graph();
         let mut graph_size = GraphSize::new(&base, &diff);
         let changes = create_test_changes(&diff);
-        let sudos = HashSet::new();
+        let sudos = FxHashSet::default();
 
         let result = graph_size.print_recursive_changes(
             &changes,
@@ -244,7 +245,7 @@ mod tests {
         let (base, diff) = create_test_graph();
         let mut graph_size = GraphSize::new(&base, &diff);
         let changes = create_test_changes(&diff);
-        let sudos = HashSet::new();
+        let sudos = FxHashSet::default();
 
         let result = graph_size.print_recursive_changes(
             &changes,
@@ -269,7 +270,7 @@ mod tests {
         let (base, diff) = create_test_graph();
         let mut graph_size = GraphSize::new(&base, &diff);
         let changes = create_test_changes(&diff);
-        let sudos = HashSet::new();
+        let sudos = FxHashSet::default();
 
         let result =
             graph_size.print_recursive_changes(&changes, &sudos, OutputFormat::JsonLines, None);

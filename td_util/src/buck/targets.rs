@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 
+use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use serde::Serialize;
 use td_util::json;
@@ -50,8 +50,9 @@ impl Targets {
     }
 
     /// Create a map from target key to target
-    pub fn targets_by_label_key(&self) -> HashMap<TargetLabelKeyRef<'_>, &BuckTarget> {
-        let mut res = HashMap::with_capacity(self.len_targets_upperbound());
+    pub fn targets_by_label_key(&self) -> FxHashMap<TargetLabelKeyRef<'_>, &BuckTarget> {
+        let mut res =
+            FxHashMap::with_capacity_and_hasher(self.len_targets_upperbound(), Default::default());
         for x in self.targets() {
             res.insert(x.label_key(), x);
         }
@@ -59,8 +60,9 @@ impl Targets {
     }
 
     /// Create a map from target label to target
-    pub fn targets_by_label(&self) -> HashMap<TargetLabel, &BuckTarget> {
-        let mut res = HashMap::with_capacity(self.len_targets_upperbound());
+    pub fn targets_by_label(&self) -> FxHashMap<TargetLabel, &BuckTarget> {
+        let mut res =
+            FxHashMap::with_capacity_and_hasher(self.len_targets_upperbound(), Default::default());
         for x in self.targets() {
             res.insert(x.label(), x);
         }
