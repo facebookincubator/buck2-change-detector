@@ -455,7 +455,9 @@ impl TargetGraph {
         if let Some(affected) = self.get_ci_hint_affected(target_id) {
             for affected_target in affected {
                 if let Some(mut ci_hints) = self.affected_to_ci_hints.get_mut(&affected_target) {
-                    ci_hints.retain(|&id| id != target_id);
+                    if let Some(pos) = ci_hints.iter().position(|&id| id == target_id) {
+                        ci_hints.swap_remove(pos);
+                    }
                     if ci_hints.is_empty() {
                         drop(ci_hints);
                         self.affected_to_ci_hints.remove(&affected_target);
@@ -645,7 +647,9 @@ impl TargetGraph {
         if let Some((_, deps)) = self.file_id_to_deps.remove(&importer) {
             for dep in deps {
                 if let Some(mut rdeps) = self.file_id_to_rdeps.get_mut(&dep) {
-                    rdeps.retain(|&id| id != importer);
+                    if let Some(pos) = rdeps.iter().position(|&id| id == importer) {
+                        rdeps.swap_remove(pos);
+                    }
                     if rdeps.is_empty() {
                         drop(rdeps);
                         self.file_id_to_rdeps.remove(&dep);
@@ -744,14 +748,18 @@ impl TargetGraph {
 
     pub fn remove_ci_hint_edge(&self, ci_hint_id: TargetId, affected_target: TargetId) {
         if let Some(mut affected) = self.ci_hint_to_affected.get_mut(&ci_hint_id) {
-            affected.retain(|&id| id != affected_target);
+            if let Some(pos) = affected.iter().position(|&id| id == affected_target) {
+                affected.swap_remove(pos);
+            }
             if affected.is_empty() {
                 drop(affected);
                 self.ci_hint_to_affected.remove(&ci_hint_id);
             }
         }
         if let Some(mut ci_hints) = self.affected_to_ci_hints.get_mut(&affected_target) {
-            ci_hints.retain(|&id| id != ci_hint_id);
+            if let Some(pos) = ci_hints.iter().position(|&id| id == ci_hint_id) {
+                ci_hints.swap_remove(pos);
+            }
             if ci_hints.is_empty() {
                 drop(ci_hints);
                 self.affected_to_ci_hints.remove(&affected_target);
