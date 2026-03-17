@@ -14,8 +14,8 @@ use std::str::FromStr;
 
 use dashmap::DashMap;
 use dashmap::DashSet;
-use fnv::FnvHasher;
 use rayon::prelude::*;
+use rustc_hash::FxHasher;
 use serde::Deserialize;
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
@@ -29,7 +29,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -117,7 +117,7 @@ macro_rules! define_id_type {
             type Err = std::convert::Infallible;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
-                let mut hasher = FnvHasher::default();
+                let mut hasher = FxHasher::default();
                 hasher.write(s.as_bytes());
                 Ok(Self(hasher.finish()))
             }
