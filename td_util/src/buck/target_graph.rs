@@ -490,7 +490,7 @@ impl TargetGraph {
         // to removed targets are preserved for detection.
     }
 
-    pub fn remove_targets_batch(&self, targets_to_remove: &HashSet<TargetId>) {
+    pub fn remove_targets_batch(&self, targets_to_remove: &IdHashSet<TargetId>) {
         if targets_to_remove.is_empty() {
             return;
         }
@@ -501,7 +501,7 @@ impl TargetGraph {
         self.clean_per_target_data(targets_to_remove);
     }
 
-    fn clean_ci_hint_edges_for_removed_targets(&self, targets_to_remove: &HashSet<TargetId>) {
+    fn clean_ci_hint_edges_for_removed_targets(&self, targets_to_remove: &IdHashSet<TargetId>) {
         for &target_id in targets_to_remove {
             if !self.is_ci_hint_target(target_id) {
                 continue;
@@ -522,11 +522,11 @@ impl TargetGraph {
         }
     }
 
-    fn clean_rdeps_for_removed_targets(&self, targets_to_remove: &HashSet<TargetId>) {
+    fn clean_rdeps_for_removed_targets(&self, targets_to_remove: &IdHashSet<TargetId>) {
         let unique_deps: Vec<TargetId> = targets_to_remove
             .iter()
             .flat_map(|&tid| self.get_deps(tid).unwrap_or_default())
-            .collect::<HashSet<_>>()
+            .collect::<IdHashSet<_>>()
             .into_iter()
             .collect();
 
@@ -542,14 +542,14 @@ impl TargetGraph {
         });
     }
 
-    fn clean_package_targets_for_removed_targets(&self, targets_to_remove: &HashSet<TargetId>) {
+    fn clean_package_targets_for_removed_targets(&self, targets_to_remove: &IdHashSet<TargetId>) {
         self.package_id_to_targets.retain(|_, targets| {
             targets.retain(|id| !targets_to_remove.contains(id));
             !targets.is_empty()
         });
     }
 
-    fn clean_per_target_data(&self, targets_to_remove: &HashSet<TargetId>) {
+    fn clean_per_target_data(&self, targets_to_remove: &IdHashSet<TargetId>) {
         for &target_id in targets_to_remove {
             self.target_id_to_deps.remove(&target_id);
             self.target_id_to_ci_srcs.remove(&target_id);
@@ -1591,7 +1591,7 @@ mod tests {
             store_minimized_stub(&graph, id);
         }
 
-        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        let to_remove: IdHashSet<TargetId> = [target_a, target_b].into_iter().collect();
         graph.remove_targets_batch(&to_remove);
 
         assert_eq!(graph.get_rdeps(shared_dep).unwrap(), vec![survivor]);
@@ -1612,7 +1612,7 @@ mod tests {
         let dest_id = store_target_with_rule_type(&graph, "fbcode//foo:test", "python_test");
         graph.add_ci_hint_edge(ci_hint_id, dest_id);
 
-        let to_remove: HashSet<TargetId> = [ci_hint_id].into_iter().collect();
+        let to_remove: IdHashSet<TargetId> = [ci_hint_id].into_iter().collect();
         graph.remove_targets_batch(&to_remove);
 
         assert!(graph.get_ci_hint_affected(ci_hint_id).is_none());
@@ -1636,7 +1636,7 @@ mod tests {
             store_minimized_stub(&graph, id);
         }
 
-        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        let to_remove: IdHashSet<TargetId> = [target_a, target_b].into_iter().collect();
         graph.remove_targets_batch(&to_remove);
 
         assert!(graph.get_rdeps(dep_x).is_none());
@@ -1650,7 +1650,7 @@ mod tests {
         let target = graph.store_target("fbcode//a:target");
         store_minimized_stub(&graph, target);
 
-        let to_remove: HashSet<TargetId> = HashSet::new();
+        let to_remove: IdHashSet<TargetId> = IdHashSet::default();
         graph.remove_targets_batch(&to_remove);
 
         assert!(graph.get_minimized_target(target).is_some());
@@ -1673,7 +1673,7 @@ mod tests {
             store_minimized_stub(&graph, id);
         }
 
-        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        let to_remove: IdHashSet<TargetId> = [target_a, target_b].into_iter().collect();
         graph.remove_targets_batch(&to_remove);
 
         let remaining = graph.get_targets_in_package(package_id).unwrap();
@@ -1698,7 +1698,7 @@ mod tests {
             store_minimized_stub(&graph, id);
         }
 
-        let to_remove: HashSet<TargetId> = [target_a, target_b].into_iter().collect();
+        let to_remove: IdHashSet<TargetId> = [target_a, target_b].into_iter().collect();
         graph.remove_targets_batch(&to_remove);
 
         assert!(graph.get_targets_in_package(pkg1).is_none());
