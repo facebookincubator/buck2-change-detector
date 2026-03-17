@@ -643,6 +643,33 @@ impl TargetGraph {
         self.file_id_to_deps.get(&file_id).map(|v| v.clone())
     }
 
+    pub fn set_file_deps(&self, importer: FileId, deps: Vec<FileId>) {
+        if deps.is_empty() {
+            self.file_id_to_deps.remove(&importer);
+        } else {
+            self.file_id_to_deps.insert(importer, deps);
+        }
+    }
+
+    pub fn add_to_file_rdeps(&self, imported: FileId, importer: FileId) {
+        self.file_id_to_rdeps
+            .entry(imported)
+            .or_default()
+            .push(importer);
+    }
+
+    pub fn remove_from_file_rdeps(&self, imported: FileId, importer: FileId) {
+        if let Some(mut rdeps) = self.file_id_to_rdeps.get_mut(&imported) {
+            if let Some(pos) = rdeps.iter().position(|&id| id == importer) {
+                rdeps.swap_remove(pos);
+            }
+            if rdeps.is_empty() {
+                drop(rdeps);
+                self.file_id_to_rdeps.remove(&imported);
+            }
+        }
+    }
+
     pub fn clear_file_deps(&self, importer: FileId) {
         if let Some((_, deps)) = self.file_id_to_deps.remove(&importer) {
             for dep in deps {
