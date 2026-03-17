@@ -408,9 +408,26 @@ impl TargetGraph {
         self.target_id_to_deps.get(&target_id).map(|v| v.clone())
     }
 
-    fn remove_from_rdeps(&self, dep_id: TargetId, target_to_remove: TargetId) {
+    pub fn set_deps(&self, target_id: TargetId, deps: Vec<TargetId>) {
+        if deps.is_empty() {
+            self.target_id_to_deps.remove(&target_id);
+        } else {
+            self.target_id_to_deps.insert(target_id, deps);
+        }
+    }
+
+    pub fn add_to_rdeps(&self, dep_id: TargetId, dependent_target: TargetId) {
+        self.target_id_to_rdeps
+            .entry(dep_id)
+            .or_default()
+            .push(dependent_target);
+    }
+
+    pub fn remove_from_rdeps(&self, dep_id: TargetId, target_to_remove: TargetId) {
         if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) {
-            rdeps.retain(|&id| id != target_to_remove);
+            if let Some(pos) = rdeps.iter().position(|&id| id == target_to_remove) {
+                rdeps.swap_remove(pos);
+            }
             if rdeps.is_empty() {
                 drop(rdeps);
                 self.target_id_to_rdeps.remove(&dep_id);
@@ -1108,6 +1125,70 @@ mod tests {
         assert_eq!(graph.rdeps_len(), 0);
         assert_eq!(graph.deps_len(), 0);
         assert!(graph.get_rdeps(id1).is_none());
+    }
+
+    #[test]
+    fn set_deps_replaces_existing_deps() {
+        let graph = TargetGraph::new();
+        let t = graph.store_target("fbcode//a:t");
+        let d1 = graph.store_target("fbcode//b:d1");
+        let d2 = graph.store_target("fbcode//c:d2");
+        let d3 = graph.store_target("fbcode//d:d3");
+
+        graph.set_deps(t, vec![d1, d2]);
+        assert_eq!(graph.get_deps(t).unwrap(), vec![d1, d2]);
+
+        graph.set_deps(t, vec![d3]);
+        assert_eq!(graph.get_deps(t).unwrap(), vec![d3]);
+    }
+
+    #[test]
+    fn set_deps_with_empty_removes_entry() {
+        let graph = TargetGraph::new();
+        let t = graph.store_target("fbcode//a:t");
+        let d1 = graph.store_target("fbcode//b:d1");
+
+        graph.set_deps(t, vec![d1]);
+        assert!(graph.get_deps(t).is_some());
+
+        graph.set_deps(t, vec![]);
+        assert!(graph.get_deps(t).is_none());
+    }
+
+    #[test]
+    fn add_to_rdeps_only_modifies_rdeps() {
+        let graph = TargetGraph::new();
+        let dep = graph.store_target("fbcode//a:dep");
+        let dependent = graph.store_target("fbcode//b:dependent");
+
+        graph.add_to_rdeps(dep, dependent);
+
+        assert_eq!(graph.get_rdeps(dep).unwrap(), vec![dependent]);
+        assert!(
+            graph.get_deps(dependent).is_none(),
+            "add_to_rdeps should not modify deps"
+        );
+    }
+
+    #[test]
+    fn remove_from_rdeps_removes_target_and_cleans_empty() {
+        let graph = TargetGraph::new();
+        let dep = graph.store_target("fbcode//a:dep");
+        let d1 = graph.store_target("fbcode//b:d1");
+        let d2 = graph.store_target("fbcode//c:d2");
+
+        graph.add_to_rdeps(dep, d1);
+        graph.add_to_rdeps(dep, d2);
+        assert_eq!(graph.get_rdeps(dep).unwrap().len(), 2);
+
+        graph.remove_from_rdeps(dep, d1);
+        assert_eq!(graph.get_rdeps(dep).unwrap(), vec![d2]);
+
+        graph.remove_from_rdeps(dep, d2);
+        assert!(
+            graph.get_rdeps(dep).is_none(),
+            "should remove empty rdeps entry"
+        );
     }
 
     #[test]
