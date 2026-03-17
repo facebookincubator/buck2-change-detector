@@ -380,26 +380,6 @@ impl TargetGraph {
             .push(target_id);
     }
 
-    pub fn remove_rdep(&self, target_id: TargetId, dependent_target: TargetId) {
-        // Remove from reverse dependencies
-        if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&target_id) {
-            rdeps.retain(|&id| id != dependent_target);
-            if rdeps.is_empty() {
-                drop(rdeps);
-                self.target_id_to_rdeps.remove(&target_id);
-            }
-        }
-
-        // Remove from forward dependencies
-        if let Some(mut deps) = self.target_id_to_deps.get_mut(&dependent_target) {
-            deps.retain(|&id| id != target_id);
-            if deps.is_empty() {
-                drop(deps);
-                self.target_id_to_deps.remove(&dependent_target);
-            }
-        }
-    }
-
     pub fn get_rdeps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
         self.target_id_to_rdeps.get(&target_id).map(|v| v.clone())
     }
@@ -1087,44 +1067,6 @@ mod tests {
             ci_pattern1.parse::<CiDepsPatternId>().unwrap(),
             ci_pattern_id1
         );
-    }
-
-    #[test]
-    fn test_remove_rdep_cleans_empty_entries() {
-        let graph = TargetGraph::new();
-
-        let target1 = "fbcode//a:target1";
-        let target2 = "fbcode//b:target2";
-        let target3 = "fbcode//c:target3";
-
-        let id1 = graph.store_target(target1);
-        let id2 = graph.store_target(target2);
-        let id3 = graph.store_target(target3);
-
-        // Add dependencies: target1 <- target2, target1 <- target3
-        graph.add_rdep(id1, id2);
-        graph.add_rdep(id1, id3);
-
-        // Verify initial state
-        assert_eq!(graph.rdeps_len(), 1);
-        assert_eq!(graph.deps_len(), 2);
-        assert_eq!(graph.get_rdeps(id1).unwrap().len(), 2);
-
-        // Remove one dependency
-        graph.remove_rdep(id1, id2);
-
-        // Should still have entries as id1 still has rdeps
-        assert_eq!(graph.rdeps_len(), 1);
-        assert_eq!(graph.deps_len(), 1);
-        assert_eq!(graph.get_rdeps(id1).unwrap().len(), 1);
-
-        // Remove the last dependency
-        graph.remove_rdep(id1, id3);
-
-        // Should have removed the empty entries
-        assert_eq!(graph.rdeps_len(), 0);
-        assert_eq!(graph.deps_len(), 0);
-        assert!(graph.get_rdeps(id1).is_none());
     }
 
     #[test]
