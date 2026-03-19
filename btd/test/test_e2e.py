@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
+# pyre-strict
 
 import glob
 import json
@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +66,7 @@ class OutputPaths:
             btd_dangling_errors=output_dir / "btd_dangling_errors.json",
         )
 
-    def btd_args(self) -> list:
+    def btd_args(self) -> list[str | Path]:
         return [
             "--check-dangling",
             "--check-dangling-universe=root//...",
@@ -82,7 +83,12 @@ class OutputPaths:
         ]
 
 
-def run(*args, output=None, log_output=None, expect_fail=None):
+def run(
+    *args: str | Path,
+    output: Path | None = None,
+    log_output: Path | None = None,
+    expect_fail: str | None = None,
+) -> None:
     # On Ci stderr gets out of order with stdout. To avoid this, we need to flush stdout/stderr first.
     sys.stdout.flush()
     sys.stderr.flush()
@@ -118,17 +124,17 @@ def run(*args, output=None, log_output=None, expect_fail=None):
         sys.exit(1)
 
 
-def write_file(path, contents):
+def write_file(path: str | Path, contents: str) -> None:
     with open(path, "w") as file:
         file.write(contents)
 
 
-def read_file(path):
+def read_file(path: str | Path) -> str:
     with open(path, "r") as file:
         return file.read()
 
 
-def copy_tree(src, dst):
+def copy_tree(src: str, dst: str) -> None:
     if not os.path.exists(dst):
         os.makedirs(dst)
     for item in os.listdir(src):
@@ -140,7 +146,7 @@ def copy_tree(src, dst):
             shutil.copy2(s, d.removesuffix(".test"))
 
 
-def rmtree_with_retry(path, retry=3):
+def rmtree_with_retry(path: str, retry: int = 3) -> None:
     for _ in range(retry):
         try:
             shutil.rmtree(path)
@@ -149,7 +155,7 @@ def rmtree_with_retry(path, retry=3):
             time.sleep(1)
 
 
-def apply(base, patch):
+def apply(base: str, patch: str | None) -> None:
     for file in glob.glob("*"):
         if file != ".hg" and os.path.isfile(file):
             os.remove(file)
@@ -165,7 +171,7 @@ def apply(base, patch):
 
 
 @contextmanager
-def test_environment():
+def test_environment() -> Generator[tuple[Path, OutputPaths], None, None]:
     """Context manager that sets up temp directories and cleans up after."""
     with (
         tempfile.TemporaryDirectory() as working_dir,
@@ -179,7 +185,7 @@ def test_environment():
             rmtree_with_retry(working_dir)
 
 
-def setup_base_repo(env: EnvConfig, paths: OutputPaths):
+def setup_base_repo(env: EnvConfig, paths: OutputPaths) -> None:
     """Initialize hg repo and create base commit with targets."""
     run("hg", "init")
     apply(env.base, None)
@@ -196,7 +202,7 @@ def setup_base_repo(env: EnvConfig, paths: OutputPaths):
     )
 
 
-def apply_patch_and_collect(env: EnvConfig, paths: OutputPaths, patch: str):
+def apply_patch_and_collect(env: EnvConfig, paths: OutputPaths, patch: str) -> None:
     """Apply a patch and collect cell/config/diff/changes info."""
     apply(env.base, patch)
     run(env.audit, "cell", "--buck", env.buck, output=paths.cells)
@@ -213,15 +219,17 @@ def apply_patch_and_collect(env: EnvConfig, paths: OutputPaths, patch: str):
     run("hg", "status", "-amr", "--root-relative", output=paths.changes)
 
 
-def get_patches():
-    patches = glob.glob(os.getenv("TESTCASES") + "/*.patch")
+def get_patches() -> list[str]:
+    testcases = os.getenv("TESTCASES", "")
+    patches = glob.glob(testcases + "/*.patch")
     assert patches != []
     test_names = [os.path.basename(patch) for patch in patches]
     return test_names
 
 
+# pyre-ignore[56]: Pyre cannot infer type for parametrize argument
 @pytest.mark.parametrize("patch_name", get_patches())
-def test_run(patch_name):
+def test_run(patch_name: str) -> None:
     env = EnvConfig.from_env()
     patch = os.path.join(env.testcases, patch_name)
     patch_name = Path(patch).stem
@@ -284,7 +292,7 @@ def test_run(patch_name):
         check_properties_rerun(patch_name, rerun)
 
 
-def check_properties(patch, rdeps):
+def check_properties(patch: str, rdeps: list[dict[str, object]]) -> None:
     if patch == "nothing":
         assert rdeps == []
     elif patch == "file":
@@ -401,17 +409,17 @@ EXPECTED_RERUN = {
 }
 
 
-def check_properties_rerun(patch, rerun):
+def check_properties_rerun(patch: str, rerun: str) -> None:
     if patch not in EXPECTED_RERUN:
         raise AssertionError("No properties known for: " + patch)
     assert rerun == EXPECTED_RERUN[patch]
 
 
-def expect_dangling_check_error(patch):
+def expect_dangling_check_error(patch: str) -> bool:
     return patch == "delete_inner"
 
 
-def assert_dangling_check_errors(out_btd_dangling_errors):
+def assert_dangling_check_errors(out_btd_dangling_errors: Path) -> None:
     assert out_btd_dangling_errors.exists()
     dangling_errors = json.loads(read_file(out_btd_dangling_errors))
     target_deleted_error = next(
@@ -427,7 +435,7 @@ def assert_dangling_check_errors(out_btd_dangling_errors):
     assert target_deleted_error["referenced_by"] == "root//:bar"
 
 
-def test_output_flag():
+def test_output_flag() -> None:
     """Test that the --output flag writes to a file instead of stdout."""
     env = EnvConfig.from_env()
     patch = os.path.join(env.testcases, "file.patch")
@@ -460,7 +468,7 @@ def test_output_flag():
         assert len(output) == 2, "Expected 2 targets for file.patch"
 
 
-def read_compressed_file(path):
+def read_compressed_file(path: Path) -> str:
     result = subprocess.run(
         ["zstd", "-d", "-c", str(path)],
         capture_output=True,
@@ -470,7 +478,7 @@ def read_compressed_file(path):
     return result.stdout
 
 
-def test_compressed_output_flag():
+def test_compressed_output_flag() -> None:
     """Test that the --output flag with a .zst extension writes compressed output."""
     env = EnvConfig.from_env()
     patch = os.path.join(env.testcases, "file.patch")
