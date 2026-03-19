@@ -43,8 +43,14 @@ pub fn rerun(
     base: &Targets,
     changes: &Changes,
 ) -> anyhow::Result<Option<HashMap<Package, PackageStatus>>> {
-    // if there are any .buckconfig changes, we should give up
-    if changes.cell_paths().any(invalidates_graph) {
+    // if there are any .buckconfig changes, we should give up — but only for
+    // modifications/deletions. Newly-added buckconfig/mode files cannot affect
+    // existing targets since no target references them yet.
+    let has_graph_invalidation = changes.status_cell_paths().any(|s| match s {
+        Status::Modified(path) | Status::Removed(path) => invalidates_graph(path),
+        Status::Added(_) => false,
+    });
+    if has_graph_invalidation {
         return Ok(None);
     }
 
@@ -469,6 +475,40 @@ mod tests {
             )
             .len(),
             1
+        );
+    }
+
+    #[test]
+    fn test_rerun_skips_graph_invalidation_for_added_buckconfigs() {
+        // Adding new buckconfig/mode files should NOT invalidate the entire graph.
+        // Only modifications/deletions of existing buckconfigs should cause full invalidation.
+        let target_entries = vec![TargetsEntry::Import(BuckImport {
+            file: CellPath::new("foo//pkg/BUCK"),
+            imports: Box::new([]),
+            package: Some(Package::new("foo//pkg")),
+        })];
+        let base = Targets::new(target_entries);
+        let cells = CellInfo::testing();
+
+        // Use .buckconfig extension which triggers is_buckconfig_change() regardless of cell,
+        // and use foo// cell which exists in CellInfo::testing().
+        let added_changes = Changes::testing(&[Status::Added(CellPath::new(
+            "foo//some/path/new.buckconfig",
+        ))]);
+        let result = rerun(&cells, &base, &added_changes).unwrap();
+        assert!(
+            result.is_some(),
+            "Added-only buckconfig should not invalidate the graph"
+        );
+
+        // Modified buckconfig — SHOULD return None (invalidates graph)
+        let modified_changes = Changes::testing(&[Status::Modified(CellPath::new(
+            "foo//some/path/existing.buckconfig",
+        ))]);
+        let result = rerun(&cells, &base, &modified_changes).unwrap();
+        assert!(
+            result.is_none(),
+            "Modified buckconfig should invalidate the graph"
         );
     }
 

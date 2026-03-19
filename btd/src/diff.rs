@@ -32,6 +32,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::changes::Changes;
+use crate::sapling::status::Status;
 
 /// Given the state, which .bzl files have changed, either directly or by transitive dependencies
 fn changed_bzl_files<'a>(
@@ -270,7 +271,14 @@ pub fn immediate_target_changes<'a>(
     changes: &Changes,
     track_prelude_changes: bool,
 ) -> GraphImpact<'a> {
-    if changes.cell_paths().any(is_buckconfig_change) {
+    // Newly-added buckconfig/mode files cannot affect existing targets — they didn't
+    // exist in the base revision, so no target references them. Only modifications or
+    // deletions of existing buckconfigs should trigger the universal fallback.
+    let has_buckconfig_change = changes.status_cell_paths().any(|s| match s {
+        Status::Modified(path) | Status::Removed(path) => is_buckconfig_change(path),
+        Status::Added(_) => false,
+    });
+    if has_buckconfig_change {
         let mut ret = GraphImpact::from_non_recursive(
             diff.targets()
                 .map(|t| (t, ImpactTraceData::new(t, RootImpactKind::UniversalFile)))
@@ -1693,6 +1701,51 @@ mod tests {
             .map(|(target, _)| target.name.as_str())
             .collect_vec();
         assert_eq!(expected_target_names, result_targets)
+    }
+
+    #[test]
+    fn test_immediate_target_changes_skips_universal_fallback_for_added_buckconfigs() {
+        // When buckconfig/mode files are only Added (not Modified), the universal
+        // fallback should NOT fire. This is the fix for the blast radius problem
+        // where adding new mode files (e.g., TSAN modes) triggered 1M+ CI jobs.
+        let targets = Targets::new(vec![
+            create_buck_target("a", "cpp_binary", None, None, Some(&["dep1"])),
+            create_buck_target("b", "python_library", None, None, None),
+        ]);
+
+        // Only Added buckconfig files — should NOT trigger universal fallback
+        let added_only_changes = Changes::testing(&[
+            Status::Added(CellPath::new(
+                "fbsource//arvr/mode/android/apk/linux/dev-tsan",
+            )),
+            Status::Added(CellPath::new(
+                "fbsource//tools/buckconfigs/fbsource/generated/platforms.bcfg",
+            )),
+        ]);
+
+        let result = immediate_target_changes(&targets, &targets, &added_only_changes, true);
+
+        // No targets should be affected — the universal fallback should not fire,
+        // and no other changes exist to trigger normal change detection.
+        assert_eq!(
+            result.len(),
+            0,
+            "Added-only buckconfig changes should not trigger universal fallback, \
+             but {} targets were marked as affected",
+            result.len()
+        );
+
+        // Verify that Modified buckconfig still triggers the universal fallback
+        let modified_changes = Changes::testing(&[Status::Modified(CellPath::new(
+            "fbsource//arvr/mode/android/apk/linux/dev-tsan",
+        ))]);
+
+        let result = immediate_target_changes(&targets, &targets, &modified_changes, true);
+
+        assert!(
+            result.len() > 0,
+            "Modified buckconfig changes should still trigger universal fallback"
+        );
     }
 
     #[test]
