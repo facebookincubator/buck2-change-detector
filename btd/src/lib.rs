@@ -292,7 +292,11 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     };
 
     if let Some(dangling_error_file) = args.write_dangling_errors_to_file {
-        write_errors_to_file(&dangling_errors, dangling_error_file, OutputFormat::Json)?;
+        write_errors_to_file(
+            &dangling_errors,
+            dangling_error_file,
+            OutputFormat::JsonLines,
+        )?;
     }
 
     let recursive = if args.glean {

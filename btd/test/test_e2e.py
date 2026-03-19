@@ -421,7 +421,11 @@ def expect_dangling_check_error(patch: str) -> bool:
 
 def assert_dangling_check_errors(out_btd_dangling_errors: Path) -> None:
     assert out_btd_dangling_errors.exists()
-    dangling_errors = json.loads(read_file(out_btd_dangling_errors))
+    dangling_errors = [
+        json.loads(line)
+        for line in read_file(out_btd_dangling_errors).splitlines()
+        if line.strip()
+    ]
     target_deleted_error = next(
         (
             error["TargetDeleted"]
