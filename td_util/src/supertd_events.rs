@@ -48,6 +48,8 @@ pub enum Event {
     TENTING_FAILURE,
     TENTING_SUCCESS,
     TENTING_SCS_CALL,
+    XGBOOST_LASER_STAT,
+    XGBOOST_PACKING_STAT,
 }
 
 #[derive(Debug)]
