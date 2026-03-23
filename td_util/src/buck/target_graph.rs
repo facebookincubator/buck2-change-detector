@@ -762,6 +762,14 @@ impl TargetGraph {
             .map(|v| v.clone())
     }
 
+    pub fn iter_packages_with_targets(&self) -> impl Iterator<Item = (PackageId, String)> + '_ {
+        self.package_id_to_targets.iter().filter_map(|entry| {
+            let package_id = *entry.key();
+            self.get_package_path(package_id)
+                .map(|path| (package_id, path))
+        })
+    }
+
     pub fn add_ci_hint_edge(&self, ci_hint_id: TargetId, affected_target: TargetId) {
         self.ci_hint_to_affected
             .entry(ci_hint_id)
