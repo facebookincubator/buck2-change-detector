@@ -138,10 +138,10 @@ pub struct Args {
     #[arg(long)]
     flagfile: Vec<String>,
 
-    /// Check for dangling edges introduced in the graph.
+    /// Enable dangling edge checks using the BTD universe.
     #[arg(long)]
     check_dangling: bool,
-    /// Check for dangling edges from these targets.
+    /// Check for dangling edges from these targets (deprecated, use --check-dangling instead).
     #[arg(long, value_name = "TARGET_PATTERN", value_delimiter = ',')]
     check_dangling_universe: Vec<String>,
 
@@ -276,11 +276,14 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         check_empty(&check::check_errors(&base, &diff, &changes))?;
     }
 
-    let dangling_universe = args
-        .check_dangling_universe
-        .iter()
-        .map(|pattern| TargetPattern::new(pattern))
-        .collect::<Vec<_>>();
+    let dangling_universe: Vec<TargetPattern> = if args.check_dangling {
+        universe.clone()
+    } else {
+        args.check_dangling_universe
+            .iter()
+            .map(|s| TargetPattern::new(s))
+            .collect()
+    };
 
     let dangling_errors = if !dangling_universe.is_empty() {
         // Dangling check within the provided universe
