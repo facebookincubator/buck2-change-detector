@@ -54,11 +54,8 @@ impl Buck2 {
 
     pub fn command(&self) -> Command {
         let mut command = Command::new(&self.program);
-        match &self.isolation_dir {
-            None => {}
-            Some(isolation_dir) => {
-                command.args(["--isolation-dir", isolation_dir]);
-            }
+        if let Some(isolation_dir) = &self.isolation_dir {
+            command.args(["--isolation-dir", isolation_dir]);
         }
         command
     }
