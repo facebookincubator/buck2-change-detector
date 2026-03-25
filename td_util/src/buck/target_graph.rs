@@ -547,23 +547,13 @@ impl TargetGraph {
     }
 
     fn clean_rdeps_for_removed_targets(&self, targets_to_remove: &IdHashSet<TargetId>) {
-        let unique_deps: Vec<TargetId> = targets_to_remove
-            .iter()
-            .flat_map(|&tid| self.get_deps(tid).unwrap_or_default())
-            .collect::<IdHashSet<_>>()
-            .into_iter()
-            .collect();
-
-        unique_deps.par_iter().for_each(|&dep_id| {
-            let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) else {
-                return;
-            };
-            rdeps.retain(|id| !targets_to_remove.contains(id));
-            if rdeps.is_empty() {
-                drop(rdeps);
-                self.target_id_to_rdeps.remove(&dep_id);
+        let removals: IdDashMap<TargetId, Vec<TargetId>> = IdDashMap::default();
+        for &tid in targets_to_remove {
+            for dep_id in self.get_deps(tid).unwrap_or_default() {
+                removals.entry(dep_id).or_default().push(tid);
             }
-        });
+        }
+        self.batch_update_rdeps(IdDashMap::default(), removals);
     }
 
     fn clean_package_targets_for_removed_targets(&self, targets_to_remove: &IdHashSet<TargetId>) {
