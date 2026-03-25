@@ -403,6 +403,31 @@ impl TargetGraph {
             .push(dependent_target);
     }
 
+    pub fn batch_update_rdeps(
+        &self,
+        additions: IdDashMap<TargetId, Vec<TargetId>>,
+        removals: IdDashMap<TargetId, Vec<TargetId>>,
+    ) {
+        removals.into_par_iter().for_each(|(dep_id, to_remove)| {
+            let remove_set: IdHashSet<TargetId> = to_remove.into_iter().collect();
+            let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) else {
+                return;
+            };
+            rdeps.retain(|id| !remove_set.contains(id));
+            if rdeps.is_empty() {
+                drop(rdeps);
+                self.target_id_to_rdeps.remove(&dep_id);
+            }
+        });
+
+        additions.into_par_iter().for_each(|(dep_id, to_add)| {
+            self.target_id_to_rdeps
+                .entry(dep_id)
+                .or_default()
+                .extend(to_add);
+        });
+    }
+
     pub fn remove_from_rdeps(&self, dep_id: TargetId, target_to_remove: TargetId) {
         if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) {
             if let Some(pos) = rdeps.iter().position(|&id| id == target_to_remove) {
@@ -1831,5 +1856,67 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&pkg_a));
         assert!(ids.contains(&pkg_b));
+    }
+
+    fn rdep_map(entries: &[(TargetId, TargetId)]) -> IdDashMap<TargetId, Vec<TargetId>> {
+        let map: IdDashMap<TargetId, Vec<TargetId>> = IdDashMap::default();
+        for &(dep, target) in entries {
+            map.entry(dep).or_default().push(target);
+        }
+        map
+    }
+
+    #[test]
+    fn batch_update_rdeps_applies_additions_and_removals() {
+        let graph = TargetGraph::new();
+        let dep1 = graph.store_target("fbcode//a:dep1");
+        let dep2 = graph.store_target("fbcode//a:dep2");
+        let t1 = graph.store_target("fbcode//b:t1");
+        let t2 = graph.store_target("fbcode//b:t2");
+        let t3 = graph.store_target("fbcode//b:t3");
+
+        graph.add_to_rdeps(dep1, t1);
+        graph.add_to_rdeps(dep1, t2);
+        graph.add_to_rdeps(dep2, t1);
+
+        graph.batch_update_rdeps(rdep_map(&[(dep1, t3), (dep2, t2)]), rdep_map(&[(dep1, t1)]));
+
+        let rdeps1 = graph.get_rdeps(dep1).unwrap();
+        assert_eq!(rdeps1.len(), 2);
+        assert!(rdeps1.contains(&t2));
+        assert!(rdeps1.contains(&t3));
+        assert!(!rdeps1.contains(&t1));
+
+        let rdeps2 = graph.get_rdeps(dep2).unwrap();
+        assert_eq!(rdeps2.len(), 2);
+        assert!(rdeps2.contains(&t1));
+        assert!(rdeps2.contains(&t2));
+    }
+
+    #[test]
+    fn batch_update_rdeps_cleans_empty_entries() {
+        let graph = TargetGraph::new();
+        let dep = graph.store_target("fbcode//a:dep");
+        let t1 = graph.store_target("fbcode//b:t1");
+
+        graph.add_to_rdeps(dep, t1);
+
+        graph.batch_update_rdeps(rdep_map(&[]), rdep_map(&[(dep, t1)]));
+
+        assert!(
+            graph.get_rdeps(dep).is_none(),
+            "should remove empty rdeps entry"
+        );
+    }
+
+    #[test]
+    fn batch_update_rdeps_additions_to_nonexistent() {
+        let graph = TargetGraph::new();
+        let dep = graph.store_target("fbcode//a:dep");
+        let t1 = graph.store_target("fbcode//b:t1");
+
+        graph.batch_update_rdeps(rdep_map(&[(dep, t1)]), rdep_map(&[]));
+
+        assert_eq!(graph.get_rdeps(dep).unwrap(), vec![t1]);
     }
 }

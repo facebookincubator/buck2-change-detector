@@ -9,7 +9,7 @@ path = "lib.rs"
 [dependencies]
 anyhow = "1.0"
 audit = { path = "../../../audit" }
-dashmap = { version = "5.5", features = ["serde"] }
+dashmap = { version = "5.5", features = ["serde", "rayon"] }
 fbinit = { workspace = true }
 glob = "0.3.0"
 globset = "0.4.10"
