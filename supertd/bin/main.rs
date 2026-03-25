@@ -46,6 +46,8 @@ enum Args {
     Rerun(rerun::Args),
     #[cfg(fbcode_build)]
     Scheduler(scheduler::Args),
+    #[cfg(fbcode_build)]
+    SchedulerRehydrate(scheduler::rehydrate::RehydrateArgs),
     Targets(targets::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Verse(verse_citadel_adaptor::Args),
@@ -109,6 +111,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Rerun(args) => rerun::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::Scheduler(args) => scheduler::main(fb, args).await,
+        #[cfg(fbcode_build)]
+        Args::SchedulerRehydrate(args) => scheduler::rehydrate::rehydrate(fb, args).await,
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Verse(args) => verse_citadel_adaptor::main(fb, args).await,
