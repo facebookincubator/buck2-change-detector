@@ -34,6 +34,8 @@ use tracing::warn;
 use crate::changes::Changes;
 use crate::sapling::status::Status;
 
+const CI_DANGEROUSLY_SKIP_UPSTREAM_LABEL: &str = "ci:dangerously_skip_upstream";
+
 /// Given the state, which .bzl files have changed, either directly or by transitive dependencies
 fn changed_bzl_files<'a>(
     state: &'a Targets,
@@ -632,6 +634,9 @@ pub fn recursive_target_changes<'a>(
         let mut next = Vec::new();
 
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
+            if lbl.labels.contains(CI_DANGEROUSLY_SKIP_UPSTREAM_LABEL) {
+                continue;
+            }
             if follow_rule_type(&lbl.rule_type) {
                 let updated_reason = ImpactTraceData {
                     affected_dep: Arc::new(lbl.label().to_string()),
@@ -1920,5 +1925,35 @@ mod tests {
     #[test]
     fn test_is_target_with_ci_srcs_returns_true_for_non_ci_skycastle_rule_type() {
         run_is_target_with_ci_srcs_test(&["other_rule_type"], None, &Changes::default(), true);
+    }
+
+    #[test]
+    fn test_dangerously_skip_upstream_prevents_rdeps_traversal() {
+        fn target(name: &str, deps: &[&str]) -> TargetsEntry {
+            let pkg = Package::new("foo//");
+            TargetsEntry::Target(BuckTarget {
+                deps: deps.iter().map(|x| pkg.join(&TargetName::new(x))).collect(),
+                ..BuckTarget::testing(name, pkg.as_str(), "prelude//rules.bzl:cxx_library")
+            })
+        }
+
+        let pkg = Package::new("foo//");
+        let diff = Targets::new(vec![
+            TargetsEntry::Target(BuckTarget {
+                labels: Labels::new(&["ci:dangerously_skip_upstream"]),
+                ..BuckTarget::testing("a", pkg.as_str(), "prelude//rules.bzl:cxx_library")
+            }),
+            target("b", &["a"]),
+        ]);
+
+        let impact = GraphImpact::from_recursive(vec![(
+            diff.targets().next().unwrap(),
+            ImpactTraceData::testing(),
+        )]);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, None, |_| true);
+
+        assert_eq!(res[0].len(), 1);
+        assert_eq!(res[0][0].0.name.as_str(), "a");
+        assert!(res[1].is_empty());
     }
 }
