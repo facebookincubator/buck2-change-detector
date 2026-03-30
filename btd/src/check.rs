@@ -55,7 +55,6 @@ fn in_universe(universe: &[TargetPattern], dep: &TargetLabel) -> bool {
 /// low as possible. But limit dangling edges within the universe, since
 /// the edges outside the universe are impossible to validate by construction.
 pub fn dump_all_errors(graph: &Targets, universe: &[TargetPattern]) -> Vec<ValidationError> {
-    // Collect all the parse errors first.
     let mut all_errors: Vec<ValidationError> = graph
         .errors()
         .map(|err| ValidationError::PackageFailed {
@@ -96,8 +95,6 @@ pub fn check_errors(base: &Targets, diff: &Targets, changes: &Changes) -> Vec<Va
     for err in base.errors() {
         if let Some(diff_err) = diff_errors.remove(&err.package) {
             if diff_err != &err.error {
-                // We could say that a change of error means that it is a fresh break.
-                // But error messages might be non-deterministic in some circumstances, so let them through.
                 warn!(
                     "Error for package `{}` has changed, was:\n{}\nNow:\n{}",
                     err.package, err.error, diff_err
@@ -114,9 +111,6 @@ pub fn check_errors(base: &Targets, diff: &Targets, changes: &Changes) -> Vec<Va
         })
         .collect();
 
-    // If there are errors which you caused, and also preexisting errors that happen to impact you
-    // then the first are ones you can directly fix, the second are more of a pain and hopefully will
-    // disappear on a rebase anyway. So just report the former.
     if !res.is_empty() {
         return res;
     }
@@ -146,7 +140,6 @@ fn check_deleted_edges<'a, I>(
     I: Iterator<Item = &'a TargetLabel>,
 {
     for edge in edges {
-        // remove so that we only report each target at most once
         if in_universe(universe, edge) && deleted.remove(edge) {
             errors.push(ValidationError::TargetDeleted {
                 deleted: edge.clone(),
@@ -172,8 +165,6 @@ fn check_broken_edges<'a, I>(
 {
     for edge in edges {
         let key = edge.key();
-        // Only check newly introduced dangling dependencies that are
-        // within our universe.
         if !exists_after.contains_key(&key.to_ref())
             && !base_edges.iter().any(|e| e == edge)
             && in_universe(universe, edge)
@@ -199,14 +190,12 @@ pub fn check_dangling(
     let base_targets_map = base.targets_by_label_key();
 
     let mut errors = Vec::new();
-    // Lets check if dangling edges were introduced.
     for (target, _) in immediate_changes.iter() {
         let (base_deps, base_tests) = base_targets_map
             .get(&target.label_key())
             .map(|t| (t.deps.as_ref(), t.tests.as_ref()))
             .unwrap_or((&[], &[]));
 
-        // checks for broken edges in the deps
         check_broken_edges(
             target.deps.iter(),
             target,
@@ -216,7 +205,6 @@ pub fn check_dangling(
             &mut errors,
         );
 
-        // checks for broken edges in the tests
         check_broken_edges(
             target.tests.iter(),
             target,
@@ -234,12 +222,10 @@ pub fn check_dangling(
         }
     }
 
-    // Avoid iterating on the full graph.
     if deleted.is_empty() {
         return errors;
     }
 
-    // now lets see if any of those we deleted show up
     for x in diff.targets() {
         check_deleted_edges(
             x.deps.iter().chain(x.tests.iter()),
@@ -267,7 +253,6 @@ mod tests {
 
     #[test]
     fn test_check_errors_changed() {
-        // We need to make sure that if an error appears, we fail
         let err_bar0 = &TargetsEntry::Error(BuckError {
             package: Package::new("foo//bar"),
             error: "Bad 0".to_owned(),
@@ -295,14 +280,11 @@ mod tests {
         assert_eq!(errs(&[err_bar0], &[err_bar0]).len(), 0);
         assert_eq!(errs(&[err_bar0], &[]).len(), 0);
         assert_eq!(errs(&[err_bar1, err_baz], &[]).len(), 0);
-        // This one is debatable, the error changed between base and diff, but is in the same package.
-        // Because error messages might be non-deterministic we should keep it.
         assert_eq!(errs(&[err_bar1], &[err_bar0]).len(), 0);
     }
 
     #[test]
     fn test_check_errors_impactful() {
-        // Any errors in packages above us should cause a failure, since our code is a bit broken
         let error0 = TargetsEntry::Error(BuckError {
             package: Package::new("foo//bar"),
             error: "Bad 0".to_owned(),
@@ -360,7 +342,6 @@ mod tests {
     }
 
     #[rstest]
-    // Delete target and its deps - OK
     #[case::delete_target_and_deps(
         vec![
             target_entry("aaa", &[], &[]),
@@ -375,7 +356,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // Delete target with no deps - OK
     #[case::delete_target_no_deps(
         vec![target_entry("aaa", &[], &[]), target_entry("bbb", &[], &[])],
         vec![target_entry("bbb", &[], &[])],
@@ -383,7 +363,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // Delete target but leave its deps - BAD
     #[case::delete_target_leave_deps(
         vec![
             target_entry("aaa", &[], &[]),
@@ -394,7 +373,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         1
     )]
-    // Don't error when deleted dependency is outside universe
     #[case::deleted_dep_outside_universe(
         vec![
             target_entry("aaa", &[], &[]),
@@ -405,7 +383,6 @@ mod tests {
         vec![TargetPattern::new("bar//...")],
         0
     )]
-    // Dangling edges on dep addition - BAD
     #[case::dangling_on_dep_addition(
         vec![
             target_entry("aaa", &[], &[]),
@@ -419,7 +396,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         1
     )]
-    // Dangling edges on target addition - BAD
     #[case::dangling_on_target_addition(
         vec![
             target_entry("aaa", &[], &[]),
@@ -434,7 +410,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         1
     )]
-    // Don't error on pre-existing dangling edges
     #[case::preexisting_dangling_edges(
         vec![
             target_entry("aaa", &["ccc"], &[]),
@@ -448,7 +423,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // Don't error even if we modify target with dangling edge
     #[case::modify_target_with_dangling_edge(
         vec![
             target_entry("aaa", &["ccc"], &[]),
@@ -462,7 +436,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // No error if we fix the missing edge
     #[case::fix_missing_edge(
         vec![
             target_entry("aaa", &["ccc"], &[]),
@@ -476,7 +449,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // Test dangling tests edge detection - BAD
     #[case::dangling_test_edge(
         vec![target_entry("lib", &[], &[])],
         vec![target_entry("lib", &[], &["lib_test"])],
@@ -484,7 +456,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         1
     )]
-    // No error when test target exists - OK
     #[case::test_target_exists(
         vec![
             target_entry("lib", &[], &[]),
@@ -498,7 +469,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // No error for pre-existing dangling tests edge - OK
     #[case::preexisting_dangling_test(
         vec![target_entry("lib", &[], &["lib_test"])],
         vec![target_entry("lib", &[], &["lib_test"])],
@@ -506,7 +476,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // Test TargetDeleted for tests edge - BAD
     #[case::deleted_test_target(
         vec![
             target_entry("lib", &[], &["lib_test"]),
@@ -517,7 +486,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         1
     )]
-    // No TargetDeleted error when test target deletion is outside universe - OK
     #[case::deleted_test_outside_universe(
         vec![
             target_entry("lib", &[], &["lib_test"]),
@@ -528,7 +496,6 @@ mod tests {
         vec![TargetPattern::new("other//...")],
         0
     )]
-    // Adding multiple test edges, some dangling - BAD
     #[case::multiple_test_edges_some_dangling(
         vec![
             target_entry("lib", &[], &[]),
@@ -542,7 +509,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         2
     )]
-    // Delete target and its tests - OK
     #[case::delete_target_and_tests(
         vec![
             target_entry("lib", &[], &[]),
@@ -557,7 +523,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         0
     )]
-    // Mix of deps and tests dangling edges - BAD
     #[case::deps_and_tests_dangling(
         vec![target_entry("lib", &[], &[])],
         vec![target_entry("lib", &["missing_dep"], &["missing_test"])],
@@ -565,7 +530,6 @@ mod tests {
         vec![TargetPattern::new("foo//...")],
         2
     )]
-    // Fix dangling test edge - OK
     #[case::fix_dangling_test(
         vec![target_entry("lib", &[], &["lib_test"])],
         vec![target_entry("lib", &[], &[])],
@@ -599,7 +563,6 @@ mod tests {
 
     #[test]
     fn test_dump_all_errors() {
-        // We need to make sure that if an error appears, we fail
         let error0 = TargetsEntry::Error(BuckError {
             package: Package::new("foo//bar"),
             error: "Bad 0".to_owned(),
@@ -633,20 +596,16 @@ mod tests {
         let errs = |xs: &[usize]| Targets::new(xs.map(|i| targets[*i].clone()));
 
         let universe = [TargetPattern::new("foo//...")];
-        // We report all errors per package.
         assert_eq!(dump_all_errors(&errs(&[0, 1]), &universe).len(), 2);
         assert_eq!(dump_all_errors(&errs(&[0, 1, 2]), &universe).len(), 3);
         assert_eq!(
             dump_all_errors(&errs(&[0, 1, 2, 3, 4, 5]), &universe).len(),
             4
         );
-        // We report dangling edges within the universe.
         assert_eq!(dump_all_errors(&errs(&[3, 5]), &universe).len(), 1);
         assert_eq!(dump_all_errors(&errs(&[3, 4]), &universe).len(), 0);
-        // Error is outside the universe, so don't report it.
         assert_eq!(dump_all_errors(&errs(&[3, 4, 6]), &universe).len(), 0);
         assert_eq!(dump_all_errors(&errs(&[3, 5, 6]), &universe).len(), 1);
-        // Different universe discovers the error.
         assert_eq!(
             dump_all_errors(&errs(&[3, 4, 6]), &[TargetPattern::new("outside//...")]).len(),
             1

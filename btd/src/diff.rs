@@ -396,36 +396,17 @@ pub fn immediate_target_changes<'a>(
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         } else if let Some(reason) = change_target_ci_labels() {
+            let (added_labels, removed_labels) = if reason == RootImpactKind::Labels {
+                compute_ci_label_changes(&old_target.labels, &target.labels)
+            } else {
+                (vec![], vec![])
+            };
             res.non_recursive.push((
                 target,
                 ImpactTraceData {
                     // We want to add addded and removed labels to trace data so we can flag key differences later on, this only gets included if reason is labels.
-                    added_labels: if reason == RootImpactKind::Labels {
-                        let old_ci_labels = Labels::filter_ci_labels(&old_target.labels);
-                        let new_ci_labels = Labels::filter_ci_labels(&target.labels);
-                        let old_set: FxHashSet<_> =
-                            old_ci_labels.iter().map(|l| l.as_str()).collect();
-                        new_ci_labels
-                            .iter()
-                            .filter(|l| !old_set.contains(l.as_str()))
-                            .map(|l| Arc::new(l.to_string()))
-                            .collect()
-                    } else {
-                        vec![]
-                    },
-                    removed_labels: if reason == RootImpactKind::Labels {
-                        let old_ci_labels = Labels::filter_ci_labels(&old_target.labels);
-                        let new_ci_labels = Labels::filter_ci_labels(&target.labels);
-                        let new_set: FxHashSet<_> =
-                            new_ci_labels.iter().map(|l| l.as_str()).collect();
-                        old_ci_labels
-                            .iter()
-                            .filter(|l| !new_set.contains(l.as_str()))
-                            .map(|l| Arc::new(l.to_string()))
-                            .collect()
-                    } else {
-                        vec![]
-                    },
+                    added_labels,
+                    removed_labels,
                     ..ImpactTraceData::new(target, reason)
                 },
             ));
@@ -437,37 +418,19 @@ pub fn immediate_target_changes<'a>(
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
         } else if let Some(reason) = change_package_ci_labels().or_else(change_package_values) {
+            let (added_labels, removed_labels) = if reason == RootImpactKind::Labels {
+                compute_ci_label_changes(
+                    &old_target.package_values.labels,
+                    &target.package_values.labels,
+                )
+            } else {
+                (vec![], vec![])
+            };
             res.non_recursive.push((
                 target,
                 ImpactTraceData {
-                    added_labels: if reason == RootImpactKind::Labels {
-                        let old_ci_labels =
-                            Labels::filter_ci_labels(&old_target.package_values.labels);
-                        let new_ci_labels = Labels::filter_ci_labels(&target.package_values.labels);
-                        let old_set: FxHashSet<_> =
-                            old_ci_labels.iter().map(|l| l.as_str()).collect();
-                        new_ci_labels
-                            .iter()
-                            .filter(|l| !old_set.contains(l.as_str()))
-                            .map(|l| Arc::new(l.to_string()))
-                            .collect()
-                    } else {
-                        vec![]
-                    },
-                    removed_labels: if reason == RootImpactKind::Labels {
-                        let old_ci_labels =
-                            Labels::filter_ci_labels(&old_target.package_values.labels);
-                        let new_ci_labels = Labels::filter_ci_labels(&target.package_values.labels);
-                        let new_set: FxHashSet<_> =
-                            new_ci_labels.iter().map(|l| l.as_str()).collect();
-                        old_ci_labels
-                            .iter()
-                            .filter(|l| !new_set.contains(l.as_str()))
-                            .map(|l| Arc::new(l.to_string()))
-                            .collect()
-                    } else {
-                        vec![]
-                    },
+                    added_labels,
+                    removed_labels,
                     ..ImpactTraceData::new(target, reason)
                 },
             ));
@@ -493,6 +456,27 @@ pub fn is_ci_target(buck_target: &BuckTarget) -> bool {
 
 pub fn ci_labels_unchanged(labels: &Labels, old_labels: &Labels) -> bool {
     Labels::filter_ci_labels(labels).eq(&Labels::filter_ci_labels(old_labels))
+}
+
+fn compute_ci_label_changes(
+    old_labels: &Labels,
+    new_labels: &Labels,
+) -> (Vec<Arc<String>>, Vec<Arc<String>>) {
+    let old_ci = Labels::filter_ci_labels(old_labels);
+    let new_ci = Labels::filter_ci_labels(new_labels);
+    let old_set: FxHashSet<_> = old_ci.iter().map(|l| l.as_str()).collect();
+    let new_set: FxHashSet<_> = new_ci.iter().map(|l| l.as_str()).collect();
+    let added = new_ci
+        .iter()
+        .filter(|l| !old_set.contains(l.as_str()))
+        .map(|l| Arc::new(l.to_string()))
+        .collect();
+    let removed = old_ci
+        .iter()
+        .filter(|l| !new_set.contains(l.as_str()))
+        .map(|l| Arc::new(l.to_string()))
+        .collect();
+    (added, removed)
 }
 
 pub fn is_target_with_changed_ci_srcs(buck_target: &BuckTarget, changes: &Changes) -> bool {
