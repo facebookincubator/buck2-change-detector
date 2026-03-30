@@ -69,7 +69,6 @@ class OutputPaths:
     def btd_args(self) -> list[str | Path]:
         return [
             "--check-dangling",
-            "--check-dangling-universe=root//...",
             "--write-dangling-errors-to-file",
             self.btd_dangling_errors,
             "--cells",
