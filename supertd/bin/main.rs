@@ -55,6 +55,8 @@ enum Args {
     LlmSelect(llm_select::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Orchestrator(orchestrator::Args),
+    #[cfg(all(fbcode_build, target_os = "linux"))]
+    Select(select::Args),
     #[cfg(fbcode_build)]
     Summary(citrace_v2::cli::SummaryArgs),
 }
@@ -120,6 +122,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::LlmSelect(args) => llm_select::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Orchestrator(args) => orchestrator::main(fb, args).await,
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::Select(args) => select::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::Summary(args) => citrace_v2::summary::run_summary(args),
     };
