@@ -48,7 +48,6 @@ pub enum TdProject {
     Fbandroid,
     Fbobjc,
     Genai,
-    Infrasilicon,
     Mobile,
     RL,
     Wacommon,
@@ -92,7 +91,6 @@ mod tests {
         assert!(TdProject::Fbandroid.is_fbsource());
         assert!(TdProject::Fbobjc.is_fbsource());
         assert!(TdProject::Genai.is_fbsource());
-        assert!(TdProject::Infrasilicon.is_fbsource());
         assert!(TdProject::Mobile.is_fbsource());
         assert!(TdProject::RL.is_fbsource());
         assert!(TdProject::Wacommon.is_fbsource());
