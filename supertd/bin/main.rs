@@ -104,11 +104,11 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::LogGraphCache(args) => td_util::btd_graph_cache::main(args),
         #[cfg(fbcode_build)]
-        Args::MetadataFetcher(args) => metadata_fetcher::main(args).await,
+        Args::MetadataFetcher(args) => metadata_fetcher::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::VerifiableMatcher(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
-        Args::Ranker(args) => ranker::main(args).await,
+        Args::Ranker(args) => ranker::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::Rerun(args) => rerun::main(fb, args).await,
         #[cfg(fbcode_build)]
