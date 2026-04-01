@@ -64,6 +64,7 @@ pub enum Step {
     VERSE,
     SCHEDULER,
     RERUN,
+    LLM_SELECT,
 }
 
 /// Initialize the Scuba client for the `supertd_events` dataset.
