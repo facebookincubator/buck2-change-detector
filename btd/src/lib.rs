@@ -19,7 +19,6 @@
 pub mod changes;
 pub mod check;
 pub mod diff;
-pub mod filter;
 pub mod glean;
 pub mod graph_size;
 pub mod output;
@@ -170,11 +169,6 @@ pub struct Args {
     #[arg(long)]
     write_run_stats_to_file: Option<PathBuf>,
 
-    /// File containing one target per line. If specified, output of BTD will
-    /// be filtered to only include targets that are in this file.
-    #[arg(long)]
-    targets_superset: Option<PathBuf>,
-
     /// Write the impacted targets to the specified file - supports .jsonl and .bin formats with optional .zst compression
     #[arg(long, value_name = "FILE")]
     output: Option<PathBuf>,
@@ -295,19 +289,6 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     } else {
         step("recursive changes");
         diff::recursive_target_changes(&diff, &changes, &immediate, args.depth, |_| true)
-    };
-    let recursive = if let Some(targets_superset_path) = &args.targets_superset {
-        step("filtering with targets superset");
-        let superset_content =
-            std::fs::read_to_string(targets_superset_path).with_context(|| {
-                format!(
-                    "Failed to read targets superset file: {:?}",
-                    targets_superset_path
-                )
-            })?;
-        filter::filter_targets_with_superset(superset_content, recursive)
-    } else {
-        recursive
     };
     let sudos = if args.propagate_uses_sudo {
         step("recursive sudo labels");
