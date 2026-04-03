@@ -61,6 +61,8 @@ enum Args {
     Execute(execute::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Validate(citadel_validate::Args),
+    #[cfg(all(fbcode_build, target_os = "linux"))]
+    FilterVerifiables(filter_verifiables::Args),
     #[cfg(fbcode_build)]
     Summary(citrace_v2::cli::SummaryArgs),
 }
@@ -132,6 +134,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Execute(args) => execute::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Validate(args) => citadel_validate::main(fb, args).await,
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::FilterVerifiables(args) => filter_verifiables::main(args),
         #[cfg(fbcode_build)]
         Args::Summary(args) => citrace_v2::summary::run_summary(args),
     };
