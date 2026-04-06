@@ -63,53 +63,29 @@ pub fn is_buckconfig_change(path: &CellPath) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
 
     use super::*;
 
-    #[test]
-    fn test_is_buck_deployment() {
-        assert!(is_buck_deployment(&CellPath::new(
-            "fbsource//tools/buck2-versions/previous"
-        )));
-        assert!(is_buck_deployment(&CellPath::new(
-            "fbsource//tools/buck2-versions/stable"
-        )));
+    #[rstest]
+    #[case::previous("fbsource//tools/buck2-versions/previous", true)]
+    #[case::stable("fbsource//tools/buck2-versions/stable", true)]
+    fn test_is_buck_deployment(#[case] path: &str, #[case] expected: bool) {
+        assert_eq!(is_buck_deployment(&CellPath::new(path)), expected);
     }
 
-    #[test]
-    fn test_is_buckconfig_change() {
-        // random buckconfigs
-        assert!(!is_buckconfig_change(&CellPath::new(
-            "fbcode//some_config.bcfg"
-        )));
-        // buckconfigs
-        assert!(is_buckconfig_change(&CellPath::new(
-            "fbsource//.buckconfig"
-        )));
-        // bcfg
-        assert!(is_buckconfig_change(&CellPath::new(
-            "fbsource//tools/buckconfigs/abc/xyz.bcfg"
-        )));
-        assert!(!is_buckconfig_change(&CellPath::new(
-            "fbcode//buck2/TARGETS"
-        )));
-        assert!(!is_buckconfig_change(&CellPath::new(
-            "fbcode//buck2/src/file.rs"
-        )));
-        assert!(is_buckconfig_change(&CellPath::new(
-            "fbsource//tools/buckconfigs/cxx/windows/clang.inc"
-        )));
-        assert!(is_buckconfig_change(&CellPath::new(
-            "fbsource//arvr/mode/dv/dev.buckconfig"
-        )));
-        assert!(is_buckconfig_change(&CellPath::new(
-            "fbsource//tools/buckconfigs/fbsource-specific.bcfg"
-        )));
-        assert!(is_buckconfig_change(&CellPath::new(
-            "fbsource//.buckconfig"
-        )));
-        assert!(!is_buckconfig_change(&CellPath::new(
-            "fbcode//buck2/tests/foo_data/.buckconfig"
-        )));
+    #[rstest]
+    #[case::random_bcfg("fbcode//some_config.bcfg", false)]
+    #[case::buckconfig("fbsource//.buckconfig", true)]
+    #[case::bcfg_in_buckconfigs("fbsource//tools/buckconfigs/abc/xyz.bcfg", true)]
+    #[case::buck2_targets("fbcode//buck2/TARGETS", false)]
+    #[case::buck2_src("fbcode//buck2/src/file.rs", false)]
+    #[case::buckconfigs_inc("fbsource//tools/buckconfigs/cxx/windows/clang.inc", true)]
+    #[case::arvr_mode("fbsource//arvr/mode/dv/dev.buckconfig", true)]
+    #[case::fbsource_specific("fbsource//tools/buckconfigs/fbsource-specific.bcfg", true)]
+    #[case::root_buckconfig("fbsource//.buckconfig", true)]
+    #[case::buck2_tests("fbcode//buck2/tests/foo_data/.buckconfig", false)]
+    fn test_is_buckconfig_change(#[case] path: &str, #[case] expected: bool) {
+        assert_eq!(is_buckconfig_change(&CellPath::new(path)), expected);
     }
 }
