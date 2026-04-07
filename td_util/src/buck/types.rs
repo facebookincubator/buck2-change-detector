@@ -122,6 +122,11 @@ impl TargetPattern {
         &self.0
     }
 
+    /// Returns true if this is a recursive pattern (ends with `...`).
+    pub fn is_recursive(&self) -> bool {
+        self.0.ends_with("...")
+    }
+
     /// ```
     /// use td_util_buck::types::TargetPattern;
     /// assert!(!TargetPattern::new("foo//bar/...").is_specific_target());
@@ -817,6 +822,15 @@ mod tests {
             cell_root.to_target_pattern(PatternType::Recursive).as_str(),
             "fbcode//..."
         );
+    }
+
+    #[test]
+    fn test_is_recursive() {
+        assert!(TargetPattern::new("foo//bar/...").is_recursive());
+        assert!(TargetPattern::new("foo//...").is_recursive());
+        assert!(!TargetPattern::new("foo//bar:baz").is_recursive());
+        assert!(!TargetPattern::new("foo//bar:").is_recursive());
+        assert!(!TargetPattern::new("foo//bar").is_recursive());
     }
 
     #[test]
