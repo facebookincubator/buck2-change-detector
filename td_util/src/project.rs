@@ -82,25 +82,25 @@ pub fn get_repo_root() -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn test_is_fbsource() {
-        // fbsource-based projects
-        assert!(TdProject::Fbcode.is_fbsource());
-        assert!(TdProject::Fbandroid.is_fbsource());
-        assert!(TdProject::Fbobjc.is_fbsource());
-        assert!(TdProject::Genai.is_fbsource());
-        assert!(TdProject::Mobile.is_fbsource());
-        assert!(TdProject::RL.is_fbsource());
-        assert!(TdProject::Wacommon.is_fbsource());
-        assert!(TdProject::Waclient.is_fbsource());
-        assert!(TdProject::Waserver.is_fbsource());
-        assert!(TdProject::Xplat.is_fbsource());
-        assert!(TdProject::Fasttrack.is_fbsource());
-
-        // Non-fbsource projects
-        assert!(!TdProject::Configerator.is_fbsource());
-        assert!(!TdProject::Www.is_fbsource());
+    #[rstest]
+    #[case::fbcode(TdProject::Fbcode, true)]
+    #[case::fbandroid(TdProject::Fbandroid, true)]
+    #[case::fbobjc(TdProject::Fbobjc, true)]
+    #[case::genai(TdProject::Genai, true)]
+    #[case::mobile(TdProject::Mobile, true)]
+    #[case::rl(TdProject::RL, true)]
+    #[case::wacommon(TdProject::Wacommon, true)]
+    #[case::waclient(TdProject::Waclient, true)]
+    #[case::waserver(TdProject::Waserver, true)]
+    #[case::xplat(TdProject::Xplat, true)]
+    #[case::fasttrack(TdProject::Fasttrack, true)]
+    #[case::configerator(TdProject::Configerator, false)]
+    #[case::www(TdProject::Www, false)]
+    fn test_is_fbsource(#[case] project: TdProject, #[case] expected: bool) {
+        assert_eq!(project.is_fbsource(), expected);
     }
 }
