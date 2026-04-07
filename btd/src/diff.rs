@@ -698,27 +698,27 @@ mod tests {
     use super::*;
     use crate::sapling::status::Status;
 
+    fn target_with_package_values(
+        pkg: &str,
+        name: &str,
+        inputs: &[&CellPath],
+        hash: &str,
+        package_values: &PackageValues,
+    ) -> TargetsEntry {
+        TargetsEntry::Target(BuckTarget {
+            inputs: inputs.iter().map(|x| (*x).clone()).collect(),
+            hash: TargetHash::new(hash),
+            package_values: package_values.clone(),
+            ..BuckTarget::testing(name, pkg, "prelude//rules.bzl:cxx_library")
+        })
+    }
+
     fn basic_changes() -> Changes {
         Changes::testing(&[Status::Modified(CellPath::new("foo//irrelevant_file"))])
     }
 
     #[test]
     fn test_immediate_changes() {
-        fn target(
-            pkg: &str,
-            name: &str,
-            inputs: &[&CellPath],
-            hash: &str,
-            package_values: &PackageValues,
-        ) -> TargetsEntry {
-            TargetsEntry::Target(BuckTarget {
-                inputs: inputs.iter().map(|x| (*x).clone()).collect(),
-                hash: TargetHash::new(hash),
-                package_values: package_values.clone(),
-                ..BuckTarget::testing(name, pkg, "prelude//rules.bzl:cxx_library")
-            })
-        }
-
         let file1 = CellPath::new("foo//bar/file1.txt");
         let file2 = CellPath::new("foo//bar/file2.txt");
         let file3 = CellPath::new("foo//bar/file3.txt");
@@ -728,20 +728,20 @@ mod tests {
         // Or because the target is new.
         let default_package_value = PackageValues::new(&["default"]);
         let base = Targets::new(vec![
-            target(
+            target_with_package_values(
                 "foo//bar",
                 "aaa",
                 &[&file1, &file2],
                 "123",
                 &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
-            target("foo//bar", "ddd", &[], "123", &default_package_value),
-            target("foo//bar", "eee", &[], "123", &default_package_value),
-            target("foo//bar", "ggg", &[&file4], "123", &default_package_value),
-            target(
+            target_with_package_values("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target_with_package_values("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ddd", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "eee", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ggg", &[&file4], "123", &default_package_value),
+            target_with_package_values(
                 "foo//bar",
                 "zzz",
                 &[&file4],
@@ -750,21 +750,21 @@ mod tests {
             ),
         ]);
         let diff = Targets::new(vec![
-            target(
+            target_with_package_values(
                 "foo//bar",
                 "aaa",
                 &[&file1, &file4],
                 "123",
                 &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
-            target("foo//bar", "ddd", &[], "123", &default_package_value),
-            target("foo//bar", "fff", &[], "123", &default_package_value),
-            target("foo//bar", "ggg", &[&file4], "321", &default_package_value),
+            target_with_package_values("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target_with_package_values("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ddd", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "fff", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ggg", &[&file4], "321", &default_package_value),
             // only package value changed
-            target(
+            target_with_package_values(
                 "foo//bar",
                 "zzz",
                 &[&file4],
@@ -799,30 +799,15 @@ mod tests {
 
     #[test]
     fn test_everything_is_immediate_on_universal_changes() {
-        fn target(
-            pkg: &str,
-            name: &str,
-            inputs: &[&CellPath],
-            hash: &str,
-            package_values: &PackageValues,
-        ) -> TargetsEntry {
-            TargetsEntry::Target(BuckTarget {
-                inputs: inputs.iter().map(|x| (*x).clone()).collect(),
-                hash: TargetHash::new(hash),
-                package_values: package_values.clone(),
-                ..BuckTarget::testing(name, pkg, "prelude//rules.bzl:cxx_library")
-            })
-        }
-
         let file1 = CellPath::new("fbsource//tools/buckconfigs/file1.bcfg");
         let file2 = CellPath::new("foo//bar/file2.txt");
         let file3 = CellPath::new("foo//bar/file3.txt");
 
         let default_package_value = PackageValues::new(&["default"]);
         let base = Targets::new(vec![
-            target("foo//bar", "aaa", &[], "123", &default_package_value),
-            target("foo//baz", "bbb", &[&file2], "123", &default_package_value),
-            target("foo//bar", "ccc", &[&file3], "123", &default_package_value),
+            target_with_package_values("foo//bar", "aaa", &[], "123", &default_package_value),
+            target_with_package_values("foo//baz", "bbb", &[&file2], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ccc", &[&file3], "123", &default_package_value),
         ]);
         let res = immediate_target_changes(
             &base,
@@ -840,21 +825,6 @@ mod tests {
 
     #[test]
     fn test_immediate_changes_with_removed() {
-        fn target(
-            pkg: &str,
-            name: &str,
-            inputs: &[&CellPath],
-            hash: &str,
-            package_values: &PackageValues,
-        ) -> TargetsEntry {
-            TargetsEntry::Target(BuckTarget {
-                inputs: inputs.iter().map(|x| (*x).clone()).collect(),
-                hash: TargetHash::new(hash),
-                package_values: package_values.clone(),
-                ..BuckTarget::testing(name, pkg, "prelude//rules.bzl:cxx_library")
-            })
-        }
-
         let file1 = CellPath::new("foo//bar/file1.txt");
         let file2 = CellPath::new("foo//bar/file2.txt");
         let file3 = CellPath::new("foo//bar/file3.txt");
@@ -864,20 +834,20 @@ mod tests {
         // Or because the target is new.
         let default_package_value = PackageValues::new(&["default"]);
         let base = Targets::new(vec![
-            target(
+            target_with_package_values(
                 "foo//bar",
                 "aaa",
                 &[&file1, &file2],
                 "123",
                 &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
-            target("foo//bar", "ddd", &[], "123", &default_package_value),
-            target("foo//bar", "eee", &[], "123", &default_package_value),
-            target("foo//bar", "ggg", &[&file4], "123", &default_package_value),
-            target(
+            target_with_package_values("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target_with_package_values("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ddd", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "eee", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ggg", &[&file4], "123", &default_package_value),
+            target_with_package_values(
                 "foo//bar",
                 "zzz",
                 &[&file4],
@@ -886,21 +856,21 @@ mod tests {
             ),
         ]);
         let diff = Targets::new(vec![
-            target(
+            target_with_package_values(
                 "foo//bar",
                 "aaa",
                 &[&file1, &file4],
                 "123",
                 &default_package_value,
             ),
-            target("foo//baz", "aaa", &[&file2], "123", &default_package_value),
-            target("foo//bar", "bbb", &[&file3], "123", &default_package_value),
-            target("foo//bar", "ccc", &[&file4], "123", &default_package_value),
-            target("foo//bar", "ddd", &[], "123", &default_package_value),
-            target("foo//bar", "fff", &[], "123", &default_package_value),
-            target("foo//bar", "ggg", &[&file4], "321", &default_package_value),
+            target_with_package_values("foo//baz", "aaa", &[&file2], "123", &default_package_value),
+            target_with_package_values("foo//bar", "bbb", &[&file3], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ccc", &[&file4], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ddd", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "fff", &[], "123", &default_package_value),
+            target_with_package_values("foo//bar", "ggg", &[&file4], "321", &default_package_value),
             // only package value changed
-            target(
+            target_with_package_values(
                 "foo//bar",
                 "zzz",
                 &[&file4],
