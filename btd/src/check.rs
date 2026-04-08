@@ -274,12 +274,19 @@ mod tests {
             )
         }
 
+        // new error in diff not present in base → reported
         assert_eq!(errs(&[], &[err_bar0]).len(), 1);
+        // new error in different package → reported (err_baz in base doesn't mask err_bar0)
         assert_eq!(errs(&[err_baz], &[err_bar0]).len(), 1);
+        // two new errors → both reported
         assert_eq!(errs(&[], &[err_bar1, err_baz]).len(), 2);
+        // same error in both base and diff → not reported
         assert_eq!(errs(&[err_bar0], &[err_bar0]).len(), 0);
+        // error only in base, not in diff → not reported
         assert_eq!(errs(&[err_bar0], &[]).len(), 0);
+        // errors only in base → not reported
         assert_eq!(errs(&[err_bar1, err_baz], &[]).len(), 0);
+        // same package error with different message → not reported (package already had error)
         assert_eq!(errs(&[err_bar1], &[err_bar0]).len(), 0);
     }
 

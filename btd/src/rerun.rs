@@ -294,8 +294,14 @@ mod tests {
             Status::Added(CellPath::new("fbcode//pkg/hello/another.rs")), // modify fbcode//pkg/hello
         ]);
         let changed_package = rerun_globs(&changes, &package_set(&base));
-        assert!(changed_package.contains(&Package::new("fbcode//pkg")));
-        assert!(changed_package.contains(&Package::new("fbcode//pkg/hello")));
+        assert!(
+            changed_package.contains(&Package::new("fbcode//pkg")),
+            "expected fbcode//pkg to be marked changed (files added/removed in it)"
+        );
+        assert!(
+            changed_package.contains(&Package::new("fbcode//pkg/hello")),
+            "expected fbcode//pkg/hello to be marked changed (file added in it)"
+        );
         assert_eq!(changed_package.len(), 2);
     }
 
