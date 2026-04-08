@@ -220,14 +220,14 @@ mod tests {
         let changes = create_test_changes(&diff);
         let sudos = FxHashSet::default();
 
-        let result = graph_size.print_recursive_changes(
-            &changes,
-            &sudos,
-            OutputFormat::JsonLines,
-            Some(output_path.as_path()),
-        );
-
-        assert!(result.is_ok());
+        graph_size
+            .print_recursive_changes(
+                &changes,
+                &sudos,
+                OutputFormat::JsonLines,
+                Some(output_path.as_path()),
+            )
+            .unwrap_or_else(|e| panic!("print_recursive_changes failed: {:#}", e));
         assert!(output_path.exists());
 
         // Verify the file contains valid JSON lines
@@ -247,14 +247,14 @@ mod tests {
         let changes = create_test_changes(&diff);
         let sudos = FxHashSet::default();
 
-        let result = graph_size.print_recursive_changes(
-            &changes,
-            &sudos,
-            OutputFormat::JsonLines,
-            Some(output_path.as_path()),
-        );
-
-        assert!(result.is_ok());
+        graph_size
+            .print_recursive_changes(
+                &changes,
+                &sudos,
+                OutputFormat::JsonLines,
+                Some(output_path.as_path()),
+            )
+            .unwrap_or_else(|e| panic!("print_recursive_changes (compressed) failed: {:#}", e));
         assert!(output_path.exists());
 
         // Verify the file can be read back (file_reader handles decompression)
