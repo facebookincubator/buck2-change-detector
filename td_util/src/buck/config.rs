@@ -12,10 +12,14 @@
 
 use crate::types::CellPath;
 
-/// Certain bzl files should be excluded from transitive impact tracing.
+/// Certain bzl files should not cause targets to be marked as affected via
+/// `RootImpactKind::Rule` when they appear in the transitive import closure.
+/// These files are still included in the closure for rerun (re-query) purposes,
+/// so hash and label changes are detected normally.
+///
 /// This list should *only* be extended if we are certain that changes to the file
 /// will have its impact traced through other means, e.g., attribute changes.
-pub fn should_exclude_bzl_file_from_transitive_impact_tracing(path: &str) -> bool {
+pub fn should_exclude_bzl_file_from_rule_impact(path: &str) -> bool {
     path.ends_with(".bzl")
         && [
             "fbsource//tools/target_determinator/macros",

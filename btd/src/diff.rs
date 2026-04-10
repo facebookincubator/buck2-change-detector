@@ -15,7 +15,7 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use td_util_buck::config::is_buckconfig_change;
-use td_util_buck::config::should_exclude_bzl_file_from_transitive_impact_tracing;
+use td_util_buck::config::should_exclude_bzl_file_from_rule_impact;
 use td_util_buck::glob::GlobSpec;
 use td_util_buck::labels::Labels;
 use td_util_buck::target_map::TargetMap;
@@ -55,7 +55,7 @@ fn changed_bzl_files<'a>(
         // without tracing transitively impacted bzl files e.g. via their changes
         // to package values, target attributes etc. This escape hatch
         // helps keep the blast radius of such included bzl files more reasonable.
-        if should_exclude_bzl_file_from_transitive_impact_tracing(x.file.as_str()) {
+        if should_exclude_bzl_file_from_rule_impact(x.file.as_str()) {
             continue;
         }
 
