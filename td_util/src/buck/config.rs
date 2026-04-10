@@ -28,6 +28,10 @@ pub fn should_exclude_bzl_file_from_rule_impact(path: &str) -> bool {
             // end up being affected, which massively overbuilds on otherwise
             // limited rule changes.
             "prelude//prelude.bzl",
+            // Only controls which ci.labels get applied to targets. Label
+            // changes are detected independently via hash/label comparison
+            // after rerun.
+            "fbsource//tools/build_defs/fbcode_macros/build_defs/lib/python_opt_rollout.bzl",
         ]
         .iter()
         .any(|prefix| path.starts_with(*prefix))
@@ -70,6 +74,19 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::td_macros("fbsource//tools/target_determinator/macros/defs.bzl", true)]
+    #[case::prelude("prelude//prelude.bzl", true)]
+    #[case::python_opt_rollout(
+        "fbsource//tools/build_defs/fbcode_macros/build_defs/lib/python_opt_rollout.bzl",
+        true
+    )]
+    #[case::regular_bzl("fbcode//some/path/defs.bzl", false)]
+    #[case::non_bzl("fbsource//tools/target_determinator/macros/README.md", false)]
+    fn test_should_exclude_bzl_file_from_rule_impact(#[case] path: &str, #[case] expected: bool) {
+        assert_eq!(should_exclude_bzl_file_from_rule_impact(path), expected);
+    }
 
     #[rstest]
     #[case::previous("fbsource//tools/buck2-versions/previous", true)]
