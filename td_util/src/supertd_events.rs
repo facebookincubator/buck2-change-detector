@@ -50,6 +50,7 @@ pub enum Event {
     TENTING_SCS_CALL,
     XGBOOST_LASER_STAT,
     XGBOOST_PACKING_STAT,
+    LLM_SELECT_SUCCESS,
 }
 
 #[derive(Debug)]
