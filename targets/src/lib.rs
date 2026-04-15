@@ -26,6 +26,7 @@ use td_util::file_io::file_writer;
 use td_util::logging::elapsed;
 use td_util::workflow_error::WorkflowError;
 use td_util_buck::run::targets_arguments;
+use td_util_buck::run::targets_arguments_v2;
 
 /// Run `buck2 targets` with all the arguments required for BTD/Citadel.
 #[derive(Parser)]
@@ -61,15 +62,31 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     )
 }
 
-pub fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
+fn build_targets_command(
+    buck: &str,
+    isolation_dir: Option<String>,
+    targets_args: &[&str],
+    arguments: &[String],
+) -> Command {
     let mut command = Command::new(buck);
-    // This is an argument for buck.
     if let Some(prefix) = isolation_dir {
         command.args(["--isolation-dir", &prefix]);
     }
-    command.args(targets_arguments());
+    command.args(targets_args);
     command.args(arguments);
     command
+}
+
+pub fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
+    build_targets_command(buck, isolation_dir, targets_arguments(), arguments)
+}
+
+pub fn build_command_v2(
+    buck: &str,
+    isolation_dir: Option<String>,
+    arguments: &[String],
+) -> Command {
+    build_targets_command(buck, isolation_dir, targets_arguments_v2(), arguments)
 }
 
 /// This function runs the `buck2 targets` command, utilizing various arguments to optimize its behavior for BTD/Citadel.

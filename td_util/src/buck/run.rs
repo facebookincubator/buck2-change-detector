@@ -203,6 +203,13 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$|^tests$",
         "--imports",
         "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
+        // Normalize buckconfig values that cache_mode reads via read() at parse
+        // time. These get baked into the unconfigured target hash, so different
+        // schedule types would produce different hashes and cause false positives
+        // across nearly the entire graph.
+        "--config=cache.schedule_type=",
+        "--config=user.sandcastle_alias=",
+        "--config=cache.http_mode=",
     ]
 }
 
@@ -267,25 +274,29 @@ mod tests {
     }
 
     #[test]
-    fn targets_v2_normalizes_buckconfig_for_cache_mode_stability() {
-        let args = targets_arguments_v2();
-        let has_blanked_config = |key: &str| {
-            let expected = format!("--config={}=", key);
-            args.contains(&expected.as_str())
-        };
+    fn targets_normalizes_buckconfig_for_cache_mode_stability() {
+        for (label, args) in [
+            ("v1", targets_arguments() as &[&str]),
+            ("v2", targets_arguments_v2()),
+        ] {
+            let has_blanked_config = |key: &str| {
+                let expected = format!("--config={}=", key);
+                args.contains(&expected.as_str())
+            };
 
-        assert!(
-            has_blanked_config("cache.schedule_type"),
-            "must normalize cache.schedule_type to prevent cache_mode hash instability"
-        );
-        assert!(
-            has_blanked_config("user.sandcastle_alias"),
-            "must normalize user.sandcastle_alias to prevent cache_mode hash instability"
-        );
-        assert!(
-            has_blanked_config("cache.http_mode"),
-            "must normalize cache.http_mode to prevent cache_mode hash instability"
-        );
+            assert!(
+                has_blanked_config("cache.schedule_type"),
+                "{label} must normalize cache.schedule_type"
+            );
+            assert!(
+                has_blanked_config("user.sandcastle_alias"),
+                "{label} must normalize user.sandcastle_alias"
+            );
+            assert!(
+                has_blanked_config("cache.http_mode"),
+                "{label} must normalize cache.http_mode"
+            );
+        }
     }
 
     #[test]
