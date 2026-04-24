@@ -8,10 +8,16 @@
  * above-listed licenses.
  */
 
+use std::any::Any;
 use std::collections::HashSet;
 use std::hash::Hasher;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
 use std::str::FromStr;
 
+use anyhow::Context;
 use dashmap::DashMap;
 use dashmap::DashSet;
 use rayon::prelude::*;
@@ -19,6 +25,8 @@ use rustc_hash::FxHasher;
 use serde::Deserialize;
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
+use td_util::zstd::frame_worker_count;
+use td_util::zstd::zstd_encode_to_vec;
 
 use crate::types::Package;
 use crate::types::PatternType;
@@ -146,10 +154,191 @@ pub struct MinimizedBuckTarget {
     pub target_hash: TargetHash,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TargetGraph {
-    // We store BuckTargets as ids as a form of string interning
-    // These maps are used to convert Ids back to strings
+/// Single source of truth for `TargetGraph`'s on-disk field set. Generates
+/// the struct itself, the `FRAME_COUNT` constant, and the parallel framed
+/// `write_framed` / `read_framed` methods on `TargetGraph`. Each listed
+/// field becomes one independent zstd frame on disk; the macro emits the
+/// parallel encode jobs, parallel decode jobs, and the struct assembly.
+/// Adding/renaming/removing a field touches one place.
+macro_rules! define_target_graph_framed_io {
+    ($($field:ident: $ty:ty),* $(,)?) => {
+        #[derive(Debug, Serialize, Deserialize)]
+        pub struct TargetGraph {
+            $($field: $ty,)*
+        }
+
+        const FRAME_COUNT: usize = [$(stringify!($field)),*].len();
+
+        impl TargetGraph {
+            /// Serialize the graph to `writer` in the per-field framed format:
+            /// each DashMap field listed in the `define_target_graph_framed_io!`
+            /// invocation is bincode-serialized then zstd-compressed in parallel
+            /// into its own independent frame; frames are written back-to-back;
+            /// a fixed-size trailer at the end records per-frame compressed and
+            /// uncompressed lengths plus its own offset.
+            ///
+            /// Per-frame zstd workers self-throttle to the host: on a 192-core
+            /// machine each frame uses 8 worker threads; on a 30-core worker
+            /// each frame is single-threaded.
+            pub fn write_framed<W: Write>(&self, writer: &mut W) -> anyhow::Result<()> {
+                writer.write_all(&FRAME_MAGIC)?;
+                writer.write_all(&SCHEMA_VERSION.to_le_bytes())?;
+
+                let workers = frame_worker_count(FRAME_COUNT as u32);
+                let jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<(Vec<u8>, u64)> + Send + '_>> = vec![
+                    $(
+                        Box::new(move || -> anyhow::Result<(Vec<u8>, u64)> {
+                            let serialized = bincode_encode(&self.$field)
+                                .with_context(|| concat!("serialize ", stringify!($field)))?;
+                            let uncompressed_len = serialized.len() as u64;
+                            let compressed = zstd_encode_to_vec(&serialized, workers)
+                                .with_context(|| concat!("compress ", stringify!($field)))?;
+                            Ok((compressed, uncompressed_len))
+                        }) as _,
+                    )*
+                ];
+
+                let frames: Vec<(Vec<u8>, u64)> = jobs
+                    .into_par_iter()
+                    .map(|f| f())
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+
+                let mut compressed_lens = [0u64; FRAME_COUNT];
+                let mut uncompressed_lens = [0u64; FRAME_COUNT];
+                let mut trailer_offset: u64 = FRAME_HEADER_BYTES as u64;
+
+                for (i, (compressed, uncompressed_len)) in frames.into_iter().enumerate() {
+                    compressed_lens[i] = compressed.len() as u64;
+                    uncompressed_lens[i] = uncompressed_len;
+                    writer.write_all(&compressed)?;
+                    trailer_offset = trailer_offset
+                        .checked_add(compressed.len() as u64)
+                        .context("frame trailer offset overflow")?;
+                }
+
+                write_lengths(writer, &compressed_lens)?;
+                write_lengths(writer, &uncompressed_lens)?;
+                writer.write_all(&trailer_offset.to_le_bytes())?;
+                Ok(())
+            }
+
+            /// Deserialize a graph written by `write_framed`. Reads the trailer
+            /// to locate frames, then runs decompress + deserialize per frame
+            /// in parallel and assembles the result into a fresh `TargetGraph`.
+            pub fn read_framed<R: Read + Seek>(reader: &mut R) -> anyhow::Result<Self> {
+                let trailer_size = 2 * FRAME_LENGTHS_BYTES;
+                let min_size =
+                    (FRAME_HEADER_BYTES + trailer_size + FRAME_TRAILER_OFFSET_BYTES) as u64;
+                let file_size = reader.seek(SeekFrom::End(0))?;
+                if file_size < min_size {
+                    anyhow::bail!(
+                        "framed file too small ({file_size} bytes, need >= {min_size})"
+                    );
+                }
+
+                reader.seek(SeekFrom::Start(0))?;
+                let mut magic = [0u8; FRAME_MAGIC.len()];
+                reader.read_exact(&mut magic)?;
+                if magic != FRAME_MAGIC {
+                    anyhow::bail!(
+                        "framed file magic mismatch: expected {:?}, got {magic:?}",
+                        FRAME_MAGIC,
+                    );
+                }
+                let mut version_bytes = [0u8; FRAME_VERSION_BYTES];
+                reader.read_exact(&mut version_bytes)?;
+                let version = u32::from_le_bytes(version_bytes);
+                if version != SCHEMA_VERSION {
+                    anyhow::bail!(
+                        "framed file version mismatch: expected {SCHEMA_VERSION}, got {version}",
+                    );
+                }
+
+                reader.seek(SeekFrom::End(-(FRAME_TRAILER_OFFSET_BYTES as i64)))?;
+                let mut trailer_offset_bytes = [0u8; FRAME_TRAILER_OFFSET_BYTES];
+                reader.read_exact(&mut trailer_offset_bytes)?;
+                let trailer_offset = u64::from_le_bytes(trailer_offset_bytes);
+                let trailer_offset_lo = FRAME_HEADER_BYTES as u64;
+                let trailer_offset_hi =
+                    file_size - trailer_size as u64 - FRAME_TRAILER_OFFSET_BYTES as u64;
+                if trailer_offset < trailer_offset_lo || trailer_offset > trailer_offset_hi {
+                    anyhow::bail!(
+                        "framed file trailer_offset {trailer_offset} out of range [{trailer_offset_lo}, {trailer_offset_hi}]",
+                    );
+                }
+
+                reader.seek(SeekFrom::Start(trailer_offset))?;
+                let mut trailer_bytes = vec![0u8; trailer_size];
+                reader.read_exact(&mut trailer_bytes)?;
+                let compressed_lens = read_lengths(&trailer_bytes[..FRAME_LENGTHS_BYTES])
+                    .context("compressed_lens trailer")?;
+                let uncompressed_lens = read_lengths(&trailer_bytes[FRAME_LENGTHS_BYTES..])
+                    .context("uncompressed_lens trailer")?;
+
+                let frames_region_size = trailer_offset - FRAME_HEADER_BYTES as u64;
+                reader.seek(SeekFrom::Start(FRAME_HEADER_BYTES as u64))?;
+                let mut frame_buf = Vec::with_capacity(frames_region_size as usize);
+                reader
+                    .take(frames_region_size)
+                    .read_to_end(&mut frame_buf)
+                    .context("read frames")?;
+
+                let mut offsets = [0usize; FRAME_COUNT];
+                let mut acc: usize = 0;
+                for (i, &len) in compressed_lens.iter().enumerate() {
+                    offsets[i] = acc;
+                    acc = acc
+                        .checked_add(len as usize)
+                        .context("frame offset overflow on read")?;
+                }
+                if acc != frame_buf.len() {
+                    anyhow::bail!(
+                        "frame lengths ({acc}) do not span the frames region ({})",
+                        frame_buf.len(),
+                    );
+                }
+
+                let mut jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>> =
+                    Vec::with_capacity(FRAME_COUNT);
+                $({
+                    let i = jobs.len();
+                    let frame = &frame_buf[offsets[i]..offsets[i] + compressed_lens[i] as usize];
+                    let uncompressed_len = uncompressed_lens[i];
+                    jobs.push(Box::new(move || -> anyhow::Result<Box<dyn Any + Send>> {
+                        let decompressed = zstd::decode_all(frame)
+                            .with_context(|| concat!("decompress ", stringify!($field)))?;
+                        if decompressed.len() as u64 != uncompressed_len {
+                            anyhow::bail!(
+                                concat!(
+                                    "uncompressed len mismatch for ",
+                                    stringify!($field),
+                                    ": header={}, got={}"
+                                ),
+                                uncompressed_len,
+                                decompressed.len(),
+                            );
+                        }
+                        let v: $ty = bincode_decode(&decompressed)
+                            .with_context(|| concat!("deserialize ", stringify!($field)))?;
+                        Ok(Box::new(v) as Box<dyn Any + Send>)
+                    }) as Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>);
+                })*
+
+                let parts: Vec<Box<dyn Any + Send>> = jobs
+                    .into_par_iter()
+                    .map(|f| f())
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let mut iter = parts.into_iter();
+
+                Ok(TargetGraph {
+                    $($field: pop_part(&mut iter, stringify!($field)),)*
+                })
+            }
+        }
+    };
+}
+
+define_target_graph_framed_io! {
     target_id_to_label: IdDashMap<TargetId, String>,
     rule_type_id_to_string: IdDashMap<RuleTypeId, String>,
     oncall_id_to_string: IdDashMap<OncallId, String>,
@@ -159,36 +348,18 @@ pub struct TargetGraph {
     package_id_to_path: IdDashMap<PackageId, String>,
     file_id_to_path: IdDashMap<FileId, String>,
     ci_deps_pattern_id_to_string: IdDashMap<CiDepsPatternId, String>,
-
-    // Bidirectional dependency tracking
     target_id_to_rdeps: IdDashMap<TargetId, Vec<TargetId>>,
     target_id_to_deps: IdDashMap<TargetId, Vec<TargetId>>,
-
-    // Bidirectional file relationship tracking for BZL imports
     file_id_to_rdeps: IdDashMap<FileId, Vec<FileId>>,
     file_id_to_deps: IdDashMap<FileId, Vec<FileId>>,
-
-    // Package error tracking
     package_id_to_errors: IdDashMap<PackageId, Vec<String>>,
-
-    // Package to targets mapping
     package_id_to_targets: IdDashMap<PackageId, Vec<TargetId>>,
-
-    // CI pattern storage
     target_id_to_ci_srcs: IdDashMap<TargetId, Vec<GlobPatternId>>,
     target_id_to_ci_srcs_must_match: IdDashMap<TargetId, Vec<GlobPatternId>>,
-
-    // CI deps patterns storage
     target_id_to_ci_deps_package_patterns: IdDashMap<TargetId, Vec<CiDepsPatternId>>,
     target_id_to_ci_deps_recursive_patterns: IdDashMap<TargetId, Vec<CiDepsPatternId>>,
-
-    // Targets that have the uses_sudo label
     targets_with_sudo_label: IdDashSet<TargetId>,
-
-    // CI hint edge storage (separate from regular deps/rdeps)
-    // ci_hint → targets it affects (when ci_hint changes, these targets are impacted)
     ci_hint_to_affected: IdDashMap<TargetId, Vec<TargetId>>,
-    // target → CI hints that affect it (reverse lookup for cleanup)
     affected_to_ci_hints: IdDashMap<TargetId, Vec<TargetId>>,
 }
 
@@ -845,6 +1016,56 @@ impl TargetGraph {
     }
 }
 
+const FRAME_LENGTHS_BYTES: usize = FRAME_COUNT * std::mem::size_of::<u64>();
+const FRAME_TRAILER_OFFSET_BYTES: usize = std::mem::size_of::<u64>();
+
+const FRAME_MAGIC: [u8; 4] = *b"TGRF";
+const FRAME_VERSION_BYTES: usize = std::mem::size_of::<u32>();
+const FRAME_HEADER_BYTES: usize = FRAME_MAGIC.len() + FRAME_VERSION_BYTES;
+
+fn write_lengths<W: Write>(writer: &mut W, lengths: &[u64; FRAME_COUNT]) -> std::io::Result<()> {
+    for &len in lengths {
+        writer.write_all(&len.to_le_bytes())?;
+    }
+    Ok(())
+}
+
+fn read_lengths(bytes: &[u8]) -> anyhow::Result<[u64; FRAME_COUNT]> {
+    if bytes.len() != FRAME_LENGTHS_BYTES {
+        anyhow::bail!(
+            "expected {FRAME_LENGTHS_BYTES} bytes for frame lengths, got {}",
+            bytes.len()
+        );
+    }
+    let mut lengths = [0u64; FRAME_COUNT];
+    for (i, chunk) in bytes.chunks_exact(std::mem::size_of::<u64>()).enumerate() {
+        lengths[i] = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
+    }
+    Ok(lengths)
+}
+
+fn bincode_encode<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
+    bincode::serde::encode_to_vec(value, bincode::config::standard()).context("bincode encode")
+}
+
+fn bincode_decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<T> {
+    let (val, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+        .context("bincode decode")?;
+    Ok(val)
+}
+
+fn pop_part<T: 'static>(
+    iter: &mut std::vec::IntoIter<Box<dyn Any + Send>>,
+    what: &'static str,
+) -> T {
+    let part = iter
+        .next()
+        .unwrap_or_else(|| panic!("missing decoded frame for {what}"));
+    *part
+        .downcast()
+        .unwrap_or_else(|_| panic!("type mismatch for decoded frame {what}"))
+}
+
 impl Default for TargetGraph {
     fn default() -> Self {
         Self::new()
@@ -853,9 +1074,124 @@ impl Default for TargetGraph {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use rstest::rstest;
 
     use super::*;
+
+    fn build_distinguishing_graph() -> TargetGraph {
+        let graph = TargetGraph::new();
+        graph.store_target("//pkg:t0");
+        for i in 0..2 {
+            graph.store_rule_type(&format!("rule_{i}"));
+        }
+        for i in 0..3 {
+            graph.store_oncall(&format!("oncall_{i}"));
+        }
+        for i in 0..4 {
+            graph.store_label(&format!("label_{i}"));
+        }
+        for i in 0..5 {
+            graph.store_glob_pattern(&format!("glob/{i}/**"));
+        }
+        for i in 0..6 {
+            graph.store_package(&format!("pkg/{i}"));
+        }
+        for i in 0..7 {
+            graph.store_file(&format!("file/{i}.bzl"));
+        }
+        for i in 0..8 {
+            graph.store_ci_deps_pattern(&format!("dep_pat/{i}"));
+        }
+        graph
+    }
+
+    #[test]
+    fn write_framed_round_trips_distinguishing_counts() {
+        let graph = build_distinguishing_graph();
+
+        let mut buf = Vec::new();
+        graph.write_framed(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let loaded = TargetGraph::read_framed(&mut cursor).unwrap();
+
+        assert_eq!(loaded.targets_len(), 1);
+        assert_eq!(loaded.rule_types_len(), 2);
+        assert_eq!(loaded.oncalls_len(), 3);
+        assert_eq!(loaded.labels_len(), 4);
+        assert_eq!(loaded.glob_patterns_len(), 5);
+        assert_eq!(loaded.packages_len(), 6);
+        assert_eq!(loaded.files_len(), 7);
+        assert_eq!(loaded.ci_deps_patterns_len(), 8);
+    }
+
+    #[test]
+    fn write_framed_round_trips_through_tempfile() {
+        use std::fs::OpenOptions;
+        use std::io::BufWriter;
+
+        let graph = build_distinguishing_graph();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.bin");
+
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        let mut writer = BufWriter::new(file);
+        graph.write_framed(&mut writer).unwrap();
+        std::io::Write::flush(&mut writer).unwrap();
+        drop(writer);
+
+        let mut file = std::fs::File::open(&path).unwrap();
+        let loaded = TargetGraph::read_framed(&mut file).unwrap();
+
+        assert_eq!(loaded.targets_len(), 1);
+        assert_eq!(loaded.minimized_targets_len(), 0);
+        assert_eq!(loaded.ci_deps_patterns_len(), 8);
+    }
+
+    fn corrupt_to_too_small(_buf: Vec<u8>) -> Vec<u8> {
+        vec![0u8; 4]
+    }
+
+    fn corrupt_magic(mut buf: Vec<u8>) -> Vec<u8> {
+        buf[..4].fill(b'X');
+        buf
+    }
+
+    fn corrupt_version(mut buf: Vec<u8>) -> Vec<u8> {
+        buf[4..8].copy_from_slice(&SCHEMA_VERSION.wrapping_add(1).to_le_bytes());
+        buf
+    }
+
+    fn corrupt_trailer_offset(mut buf: Vec<u8>) -> Vec<u8> {
+        let len = buf.len();
+        buf[len - 8..].copy_from_slice(&(u64::MAX / 2).to_le_bytes());
+        buf
+    }
+
+    #[rstest]
+    #[case::too_small(corrupt_to_too_small, "framed file too small")]
+    #[case::wrong_magic(corrupt_magic, "framed file magic")]
+    #[case::wrong_version(corrupt_version, "framed file version")]
+    #[case::out_of_range_trailer_offset(corrupt_trailer_offset, "trailer_offset")]
+    fn read_framed_rejects(#[case] corrupt: fn(Vec<u8>) -> Vec<u8>, #[case] expected_err: &str) {
+        let graph = TargetGraph::new();
+        let mut buf = Vec::new();
+        graph.write_framed(&mut buf).unwrap();
+        let mut cursor = Cursor::new(corrupt(buf));
+        let err = TargetGraph::read_framed(&mut cursor).unwrap_err();
+        assert!(
+            format!("{err}").contains(expected_err),
+            "expected {expected_err:?}, got: {err}"
+        );
+    }
 
     #[test]
     fn test_target_id_creation() {

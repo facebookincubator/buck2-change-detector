@@ -25,7 +25,7 @@ thiserror = "1.0.36"
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1.22"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zstd = "0.12.3"
+zstd = { version = "0.13.3", features = ["experimental", "zstdmt"] }
 
 [dev-dependencies]
 rstest = "0.18"
