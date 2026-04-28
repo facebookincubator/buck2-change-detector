@@ -55,6 +55,26 @@ pub fn init_tracing_with_level(default_level: LevelFilter) {
         }
     }
 
+    install_stderr_layer(env_filter);
+}
+
+/// Set up tracing at exactly `default_level` for every target — no per-crate
+/// directive overrides. `RUST_LOG`, when set, fully overrides the default
+/// (matching `init_tracing_with_level`'s behavior).
+///
+/// Use this for callers (e.g. the `agent_interface` subcommands) that want
+/// their `-v` flag to mean "INFO everywhere" rather than "INFO plus a
+/// hardcoded set of crate=debug bumps".
+pub fn init_tracing_at_level(default_level: LevelFilter) {
+    let mut env_filter = EnvFilter::from_default_env();
+    if std::env::var_os("RUST_LOG").is_none() {
+        env_filter = env_filter.add_directive(default_level.into());
+    }
+
+    install_stderr_layer(env_filter);
+}
+
+fn install_stderr_layer(env_filter: EnvFilter) {
     let layer = tracing_subscriber::fmt::layer()
         .with_line_number(false)
         .with_file(false)

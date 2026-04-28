@@ -55,3 +55,40 @@ pub fn init_with_level(
     tracing::init_tracing_with_level(level);
     supertd_events::init(fb)
 }
+
+/// Initialize `tracing` at exactly `level` for every target (no per-crate
+/// directive overrides) and the `supertd_events` Scuba client. `RUST_LOG`, if
+/// set, fully overrides `level`.
+///
+/// Use this for callers that want their CLI verbosity flag to mean "this
+/// level everywhere" rather than "this level plus the hardcoded TD-crate
+/// debug bumps applied by `init_with_level`".
+///
+/// # Panics
+///
+/// Panics if environment variable `SUPERTD_SCUBA_LOGFILE` is set and the log
+/// file cannot be opened for writing.
+pub fn init_at_level(
+    fb: fbinit::FacebookInit,
+    level: tracing_subscriber::filter::LevelFilter,
+) -> supertd_events::ScubaClientGuard {
+    tracing::init_tracing_at_level(level);
+    supertd_events::init(fb)
+}
+
+/// Convenience wrapper around [`init_at_level`] that maps a clap-style
+/// `-v` count to a `LevelFilter`: `0` → `WARN` (the default), `1` → `INFO`,
+/// `2` → `DEBUG`, `3+` → `TRACE`. `RUST_LOG`, if set, fully overrides.
+pub fn init_from_verbose(
+    fb: fbinit::FacebookInit,
+    verbose: u8,
+) -> supertd_events::ScubaClientGuard {
+    use tracing_subscriber::filter::LevelFilter;
+    let level = match verbose {
+        0 => LevelFilter::WARN,
+        1 => LevelFilter::INFO,
+        2 => LevelFilter::DEBUG,
+        _ => LevelFilter::TRACE,
+    };
+    init_at_level(fb, level)
+}
