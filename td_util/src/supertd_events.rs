@@ -51,6 +51,7 @@ pub enum Event {
     XGBOOST_LASER_STAT,
     XGBOOST_PACKING_STAT,
     LLM_SELECT_SUCCESS,
+    SANITY_CHECK_SKIP,
 }
 
 #[derive(Debug)]
