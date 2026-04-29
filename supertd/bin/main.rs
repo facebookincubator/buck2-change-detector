@@ -71,10 +71,7 @@ enum Args {
 
 #[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
 pub async fn main(fb: FacebookInit) -> ExitCode {
-    let _guard = td_util::init(fb);
     init_logger_start_time();
-
-    info!("Supertd started");
 
     let mut command = Args::command();
     if std::env::var_os("SUPERTD_IGNORE_EXTRA_ARGUMENTS") == Some("1".into()) {
@@ -99,6 +96,21 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         }
         Ok(args) => args,
     };
+
+    // Initialize tracing after arg parsing so subcommands with their own
+    // verbosity flag (validate / select / execute) can pick the level. Other
+    // subcommands keep the workspace default (INFO + TD-crate debug bumps).
+    let _guard = match &args {
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::Validate(a) => td_util::init_from_verbose(fb, a.verbose),
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::Select(a) => td_util::init_from_verbose(fb, a.verbose),
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::Execute(a) => td_util::init_from_verbose(fb, a.verbose),
+        _ => td_util::init(fb),
+    };
+
+    info!("Supertd started");
 
     let ret = match args {
         Args::Audit(args) => audit::main(args),
