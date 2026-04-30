@@ -78,7 +78,7 @@ fn build_targets_command(
 }
 
 pub fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
-    build_targets_command(buck, isolation_dir, targets_arguments(), arguments)
+    build_targets_command(buck, isolation_dir, &targets_arguments(), arguments)
 }
 
 pub fn build_command_v2(
@@ -86,7 +86,7 @@ pub fn build_command_v2(
     isolation_dir: Option<String>,
     arguments: &[String],
 ) -> Command {
-    build_targets_command(buck, isolation_dir, targets_arguments_v2(), arguments)
+    build_targets_command(buck, isolation_dir, &targets_arguments_v2(), arguments)
 }
 
 /// This function runs the `buck2 targets` command, utilizing various arguments to optimize its behavior for BTD/Citadel.

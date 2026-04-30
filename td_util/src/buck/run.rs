@@ -172,9 +172,7 @@ impl Buck2 {
 
         let mut command = self.command();
         command
-            .arg("uquery")
-            .arg("--json")
-            .arg("owner(\"%s\")")
+            .args(owners_arguments())
             .arg(at_file)
             .args(extra_args);
         command.current_dir(self.root()?);
@@ -211,8 +209,8 @@ const HASH_NORMALIZED_CONFIGS: &[&str] = &[
     "--config=user.sandcastle=",
 ];
 
-pub fn targets_arguments() -> &'static [&'static str] {
-    &[
+pub fn targets_arguments() -> Vec<&'static str> {
+    const PREFIX: &[&str] = &[
         "targets",
         "--streaming",
         "--keep-going",
@@ -222,12 +220,20 @@ pub fn targets_arguments() -> &'static [&'static str] {
         "--output-attribute=^buck\\.|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|^remote_execution$|^tests$",
         "--imports",
         "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
-        "--config=cache.schedule_type=",
-        "--config=user.sandcastle_alias=",
-        "--config=cache.http_mode=",
-        "--config=user.schedule_type=",
-        "--config=user.sandcastle=",
-    ]
+    ];
+    [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
+}
+
+/// Static arguments for the `buck2 uquery owner(...)` invocation used by BTD.
+///
+/// Appends [`HASH_NORMALIZED_CONFIGS`] so the daemon's parse-time config
+/// snapshot matches [`targets_arguments`] / [`targets_arguments_v2`]. Without
+/// these blanks, alternating `targets` and `uquery owner(...)` calls inside
+/// the same daemon flip the env-derived `user.*` / `cache.*` keys back and
+/// forth, triggering buck2 `new_configs_used` warnings on every transition.
+pub fn owners_arguments() -> Vec<&'static str> {
+    const PREFIX: &[&str] = &["uquery", "--json", "owner(\"%s\")"];
+    [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
 }
 
 /// Optimized variant of `targets_arguments` for BTDv2/graph_compressor.
@@ -235,8 +241,8 @@ pub fn targets_arguments() -> &'static [&'static str] {
 /// Excludes `buck.inputs`, `tests`, and `remote_execution` from the output
 /// attributes since graph_compressor's `RawBuckTarget` does not use them.
 /// This avoids serializing large per-target input lists (~10% of output).
-pub fn targets_arguments_v2() -> &'static [&'static str] {
-    &[
+pub fn targets_arguments_v2() -> Vec<&'static str> {
+    const PREFIX: &[&str] = &[
         "targets",
         "--streaming",
         "--keep-going",
@@ -246,12 +252,8 @@ pub fn targets_arguments_v2() -> &'static [&'static str] {
         "--output-attribute=^buck\\.deps$|^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^buck\\.target_hash$|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$",
         "--imports",
         "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
-        "--config=cache.schedule_type=",
-        "--config=user.sandcastle_alias=",
-        "--config=cache.http_mode=",
-        "--config=user.schedule_type=",
-        "--config=user.sandcastle=",
-    ]
+    ];
+    [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
 }
 
 #[cfg(test)]
@@ -289,10 +291,11 @@ mod tests {
     }
 
     #[test]
-    fn targets_normalizes_buckconfig_for_cache_mode_stability() {
+    fn buck2_query_commands_normalize_buckconfig_for_cache_mode_stability() {
         for (label, args) in [
-            ("v1", targets_arguments() as &[&str]),
-            ("v2", targets_arguments_v2()),
+            ("targets v1", targets_arguments()),
+            ("targets v2", targets_arguments_v2()),
+            ("owners", owners_arguments()),
         ] {
             for entry in HASH_NORMALIZED_CONFIGS {
                 assert!(args.contains(entry), "{label} must include {entry}",);
