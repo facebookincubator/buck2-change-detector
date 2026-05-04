@@ -252,6 +252,11 @@ impl RootImpactKind {
         }
     }
 
+    /// True for Labels and PackageValues reasons.
+    pub const fn is_label_kind(self) -> bool {
+        matches!(self, Self::Labels | Self::PackageValues)
+    }
+
     /// Higher value wins when multiple reasons apply to the same target.
     pub const fn priority(self) -> u8 {
         match self {
