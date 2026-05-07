@@ -799,6 +799,22 @@ impl TargetGraph {
         self.targets_with_sudo_label.len()
     }
 
+    pub fn iter_targets_with_any_label(
+        &self,
+        label_ids: &IdHashSet<LabelId>,
+    ) -> impl Iterator<Item = TargetId> + '_ {
+        let label_ids = label_ids.clone();
+        self.minimized_targets.iter().filter_map(move |entry| {
+            let target_id = *entry.key();
+            let minimized = entry.value();
+            if minimized.labels.iter().any(|lid| label_ids.contains(lid)) {
+                Some(target_id)
+            } else {
+                None
+            }
+        })
+    }
+
     // Size analysis methods
     pub fn rdeps_len(&self) -> usize {
         self.target_id_to_rdeps.len()
