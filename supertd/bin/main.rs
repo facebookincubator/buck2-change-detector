@@ -67,6 +67,8 @@ enum Args {
     FilterVerifiables(filter_verifiables::Args),
     #[cfg(fbcode_build)]
     Summary(citrace_v2::cli::SummaryArgs),
+    #[cfg(fbcode_build)]
+    FilterUniverse(filter_universe::Args),
 }
 
 #[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
@@ -154,6 +156,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::FilterVerifiables(args) => filter_verifiables::main(args),
         #[cfg(fbcode_build)]
         Args::Summary(args) => citrace_v2::summary::run_summary(args),
+        #[cfg(fbcode_build)]
+        Args::FilterUniverse(args) => filter_universe::main(args),
     };
 
     match ret {
