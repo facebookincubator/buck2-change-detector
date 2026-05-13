@@ -127,6 +127,132 @@ where
         .collect::<anyhow::Result<Vec<T>>>()
 }
 
+/// Like [`read_reader_lines_parallel_bytes`], but decompresses the input in
+/// fixed-size chunks on a dedicated producer thread and parses each chunk's
+/// lines on a rayon worker pool, so decompression and parsing overlap.
+///
+/// Compared to the slurp-then-parse variant this:
+/// - bounds peak memory at roughly `chunk_size * channel_depth + |Vec<T>|`
+///   instead of the full decompressed size + `|Vec<T>|`, and
+/// - hides decompression latency behind parsing -- on workloads where the
+///   parser pool is the bottleneck, total wall time approaches
+///   `max(decompress_wall, parse_wall)` rather than their sum.
+///
+/// Each chunk's split-and-parse is sequential within the chunk (chunks are
+/// small enough that the per-chunk parallelism in
+/// [`read_reader_lines_parallel_bytes`] is unnecessary overhead), but
+/// chunks are parsed in parallel via [`ParallelBridge`].
+pub fn read_reader_lines_chunked_pipeline<R, T>(reader: R) -> anyhow::Result<Vec<T>>
+where
+    R: Read + Send,
+    T: for<'a> Deserialize<'a> + Send,
+{
+    /// Size of each decompressed chunk handed off to a parser worker. Sized
+    /// to keep the producer thread saturated without ballooning memory; one
+    /// chunk per in-flight parser plus a couple in-channel is the steady
+    /// state.
+    const CHUNK_SIZE: usize = 16 * 1024 * 1024;
+    /// Bounded so the decompressor blocks once parsers fall behind; keeps
+    /// peak memory at roughly `CHUNK_SIZE * (CHANNEL_DEPTH + worker_count)`.
+    const CHANNEL_DEPTH: usize = 8;
+
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(CHANNEL_DEPTH);
+
+    std::thread::scope(|s| {
+        let producer = s.spawn(move || -> anyhow::Result<()> {
+            let mut reader = reader;
+            let mut leftover: Vec<u8> = Vec::new();
+            loop {
+                // Each chunk is its own owned Vec so workers can move it across
+                // thread boundaries and drop it independently.
+                let mut buf = Vec::with_capacity(CHUNK_SIZE + leftover.len());
+                buf.extend_from_slice(&leftover);
+                leftover.clear();
+                let start = buf.len();
+                buf.resize(start + CHUNK_SIZE, 0);
+
+                let mut filled = 0;
+                while filled < CHUNK_SIZE {
+                    match reader.read(&mut buf[start + filled..]) {
+                        Ok(0) => break,
+                        Ok(n) => filled += n,
+                        Err(e) => {
+                            return Err(anyhow::Error::from(e).context(
+                                "Failed to read chunk during pipelined JSON-lines parsing",
+                            ));
+                        }
+                    }
+                }
+                buf.truncate(start + filled);
+
+                let at_eof = filled < CHUNK_SIZE;
+
+                if buf.is_empty() {
+                    return Ok(());
+                }
+
+                // If we filled the chunk, the last line probably spans the
+                // chunk boundary; carry the trailing partial line into the
+                // next chunk so each emitted chunk ends on a newline (or EOF).
+                if !at_eof {
+                    if let Some(last_nl) = buf.iter().rposition(|&b| b == b'\n') {
+                        leftover.extend_from_slice(&buf[last_nl + 1..]);
+                        buf.truncate(last_nl + 1);
+                    }
+                    // else: the entire chunk is one record with no newline.
+                    // Forward as-is; the parser will return an error if it's
+                    // truly malformed, but typically an oversized record just
+                    // means the next chunk will append more bytes -- not
+                    // representable in this design without unbounded buffering,
+                    // so accept the failure mode.
+                }
+
+                // Receiver dropped means consumers gave up (e.g. parse error).
+                if tx.send(buf).is_err() {
+                    return Ok(());
+                }
+
+                if at_eof {
+                    return Ok(());
+                }
+            }
+        });
+
+        let parsed: anyhow::Result<Vec<T>> = rx
+            .into_iter()
+            .par_bridge()
+            .flat_map_iter(|chunk| {
+                // Split + parse sequentially within a single chunk: the chunk is
+                // small (16 MB) so the rayon overhead of nested parallelism would
+                // dominate. Parallelism is across chunks, not within them.
+                chunk
+                    .split(|&b| b == b'\n')
+                    .filter(|line| !line.is_empty())
+                    .map(|line| {
+                        serde_json::from_slice::<T>(line).with_context(|| {
+                            format!("When parsing line: {}", String::from_utf8_lossy(line))
+                        })
+                    })
+                    // Materialise into a Vec so the closure no longer borrows
+                    // from `chunk` once we return; the chunk is dropped here.
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            })
+            .collect();
+
+        let producer_result = producer
+            .join()
+            .map_err(|_| anyhow::anyhow!("BTD chunk reader thread panicked"))?;
+
+        // Surface a parse failure first (it triggered the producer to stop), but
+        // if parsing succeeded ensure we still report any IO error from the
+        // producer.
+        let parsed = parsed?;
+        producer_result?;
+        Ok(parsed)
+    })
+}
+
 /// Read a file that consists of many JSON blobs, one per line.
 pub fn read_file_lines<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
     fn f<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
