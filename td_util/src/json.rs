@@ -108,6 +108,25 @@ pub fn read_reader_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
         .collect::<anyhow::Result<Vec<T>>>()
 }
 
+pub fn read_reader_lines_parallel_bytes<R, T>(mut reader: R) -> anyhow::Result<Vec<T>>
+where
+    R: Read + Send,
+    T: for<'a> Deserialize<'a> + Send,
+{
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .context("Failed to read input bytes for parallel JSON-lines parsing")?;
+    bytes
+        .par_split(|&b| b == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            serde_json::from_slice::<T>(line)
+                .with_context(|| format!("When parsing line: {}", String::from_utf8_lossy(line)))
+        })
+        .collect::<anyhow::Result<Vec<T>>>()
+}
+
 /// Read a file that consists of many JSON blobs, one per line.
 pub fn read_file_lines<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
     fn f<T: for<'a> Deserialize<'a>>(filename: &Path) -> anyhow::Result<Vec<T>> {
