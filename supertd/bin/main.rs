@@ -57,11 +57,11 @@ enum Args {
     Orchestrator(orchestrator::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     ProofStore(proof_store_cli::Args),
-    #[cfg(all(fbcode_build, target_os = "linux"))]
+    #[cfg(fbcode_build)]
     Select(select::Args),
-    #[cfg(all(fbcode_build, target_os = "linux"))]
+    #[cfg(fbcode_build)]
     Execute(execute::Args),
-    #[cfg(all(fbcode_build, target_os = "linux"))]
+    #[cfg(fbcode_build)]
     Validate(citadel_validate::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     FilterVerifiables(filter_verifiables::Args),
@@ -103,11 +103,11 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
     // verbosity flag (validate / select / execute) can pick the level. Other
     // subcommands keep the workspace default (INFO + TD-crate debug bumps).
     let _guard = match &args {
-        #[cfg(all(fbcode_build, target_os = "linux"))]
+        #[cfg(fbcode_build)]
         Args::Validate(a) => td_util::init_from_verbose(fb, a.verbose),
-        #[cfg(all(fbcode_build, target_os = "linux"))]
+        #[cfg(fbcode_build)]
         Args::Select(a) => td_util::init_from_verbose(fb, a.verbose),
-        #[cfg(all(fbcode_build, target_os = "linux"))]
+        #[cfg(fbcode_build)]
         Args::Execute(a) => td_util::init_from_verbose(fb, a.verbose),
         _ => td_util::init(fb),
     };
@@ -146,11 +146,11 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Orchestrator(args) => orchestrator::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::ProofStore(args) => proof_store_cli::main(fb, args).await,
-        #[cfg(all(fbcode_build, target_os = "linux"))]
+        #[cfg(fbcode_build)]
         Args::Select(args) => select::main(fb, args).await,
-        #[cfg(all(fbcode_build, target_os = "linux"))]
+        #[cfg(fbcode_build)]
         Args::Execute(args) => execute::main(fb, args).await,
-        #[cfg(all(fbcode_build, target_os = "linux"))]
+        #[cfg(fbcode_build)]
         Args::Validate(args) => citadel_validate::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::FilterVerifiables(args) => filter_verifiables::main(args),
