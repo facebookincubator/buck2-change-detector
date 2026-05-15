@@ -52,6 +52,28 @@ pub enum Event {
     XGBOOST_PACKING_STAT,
     LLM_SELECT_SUCCESS,
     SANITY_CHECK_SKIP,
+    // `supertd validate` (citadel-validate) lifecycle events. Emitted from
+    // `target_determinator/agent_interface/{validate,select,execute}/`.
+    CITADEL_VALIDATE_START,
+    /// Validate ran to completion AND all tests passed. Use this (not
+    /// `_FAILURE`) to count clean validate runs in Scuba.
+    CITADEL_VALIDATE_SUCCESS,
+    /// Validate ran to completion but at least one test failed. The `passed`
+    /// dimension is `false` and `targets_failed` is non-zero. Distinct from
+    /// `_FAILURE` (which is reserved for infra errors that prevented running).
+    CITADEL_VALIDATE_TESTS_FAILED,
+    /// Validate failed to run to completion (infra error: `sl status` failed,
+    /// `buck2 audit` failed, no output from execute, etc.). Test results
+    /// were not produced.
+    CITADEL_VALIDATE_FAILURE,
+    CITADEL_SELECT_SUCCESS,
+    CITADEL_SELECT_FAILURE,
+    CITADEL_EXECUTE_DONE,
+    CITADEL_EXECUTE_TARGET_DONE,
+    // Forward-declared for Step 4 of the supertd validate polish stack
+    // (selection cache). Not emitted yet.
+    CITADEL_SELECT_CACHE_HIT,
+    CITADEL_SELECT_CACHE_MISS,
 }
 
 #[derive(Debug)]
