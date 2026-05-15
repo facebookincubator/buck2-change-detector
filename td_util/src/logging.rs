@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::fmt::Display;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
@@ -45,4 +46,78 @@ pub fn rss_mb() -> u64 {
         })
         .map(|kb| kb / 1024)
         .unwrap_or(0)
+}
+
+/// Structured logging helpers for parallel pipelines.
+///
+/// Lines are formatted `[<role>] <action> <name>[ (<detail>)]` where `<role>`
+/// is `main` or `worker` and `<action>` is `spawn`/`start`/`done`/`join`/`info`.
+/// `Phase` logs `start`/`done`; `bg_spawn`/`bg_join`/`bg_info` log the rest.
+pub fn bg_spawn(name: &str) {
+    info!("[main] spawn {}", name);
+}
+
+pub fn bg_join(name: &str) {
+    info!("[main] join  {}", name);
+}
+
+pub fn bg_info(msg: impl Display) {
+    info!("[main] info  {}", msg);
+}
+
+/// RAII guard that logs `[role] start <name>` on construction and
+/// `[role] done <name> (<Yms>)` on Drop. Call [`Phase::done_with`] to log
+/// immediately with extra context (counts, stats) instead of at scope exit.
+#[must_use = "the Phase guard must be held for the duration of the work; \
+              dropping immediately logs `done` right after `start`"]
+pub struct Phase {
+    name: String,
+    role: &'static str,
+    /// `Some` until logged; `take()` by `done_with` or `Drop` to log exactly once.
+    start: Option<Instant>,
+}
+
+impl Phase {
+    pub fn main(name: impl Into<String>) -> Self {
+        Self::new(name.into(), "main")
+    }
+
+    pub fn worker(name: impl Into<String>) -> Self {
+        Self::new(name.into(), "worker")
+    }
+
+    fn new(name: String, role: &'static str) -> Self {
+        info!("[{}] start {}", role, name);
+        Self {
+            name,
+            role,
+            start: Some(Instant::now()),
+        }
+    }
+
+    /// Log `done` immediately with extra context. No-op if already logged.
+    pub fn done_with(&mut self, detail: impl Display) {
+        if let Some(start) = self.start.take() {
+            info!(
+                "[{}] done  {} ({}ms; {})",
+                self.role,
+                self.name,
+                start.elapsed().as_millis(),
+                detail,
+            );
+        }
+    }
+}
+
+impl Drop for Phase {
+    fn drop(&mut self) {
+        if let Some(start) = self.start.take() {
+            info!(
+                "[{}] done  {} ({}ms)",
+                self.role,
+                self.name,
+                start.elapsed().as_millis(),
+            );
+        }
+    }
 }
