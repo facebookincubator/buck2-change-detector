@@ -130,7 +130,19 @@ macro_rules! define_id_type {
                 Ok(Self(hasher.finish()))
             }
         }
+
+        impl ShardKey for $name {
+            fn shard_index(self, shard_count: usize) -> usize {
+                (self.0 as usize) % shard_count
+            }
+        }
     };
+}
+
+/// Routes id-keyed entries to one of `shard_count` shards by id-modulo. Stable
+/// across runs because every `Id` is a content-derived hash.
+pub trait ShardKey: Copy + Eq + std::hash::Hash {
+    fn shard_index(self, shard_count: usize) -> usize;
 }
 
 define_id_type!(TargetId);
@@ -145,6 +157,234 @@ define_id_type!(CiDepsPatternId);
 pub type IdDashMap<K, V> = DashMap<K, V, BuildNoHash>;
 pub type IdDashSet<K> = DashSet<K, BuildNoHash>;
 pub type IdHashSet<K> = HashSet<K, BuildNoHash>;
+
+const MAX_SHARDS: usize = 16;
+const TARGET_ENTRIES_PER_SHARD: usize = 1_500_000;
+
+/// Picks a shard count for a sharded field given its total entry count.
+/// Aims for ~1.5M entries per shard so per-frame zstd decompression stays
+/// roughly balanced; clamps between 1 and `MAX_SHARDS`.
+pub fn pick_shard_count(entry_count: usize) -> usize {
+    entry_count
+        .div_ceil(TARGET_ENTRIES_PER_SHARD)
+        .clamp(1, MAX_SHARDS)
+}
+
+/// Generic shard container: owns `Vec<S>` of length N where each `S` is the
+/// per-shard storage (e.g. `IdDashMap<K, V>` or `IdDashSet<K>`). Routing
+/// dispatches by `K::shard_index`. N can change over the field's lifetime via
+/// `reshard` — used at write time to match `pick_shard_count(field.len())`.
+///
+/// Serializes transparently as the inner storage type (a single combined
+/// `IdDashMap` or `IdDashSet`) rather than as `{"shards": [...]}`. This keeps
+/// the JSON output stable across resharding and matches the pre-sharded format
+/// so consumers (tests, debug tools) don't need to know about sharding. The
+/// framed binary format goes through `write_framed`/`read_framed` and bypasses
+/// these impls entirely.
+#[derive(Debug)]
+pub struct ShardedField<S> {
+    shards: Vec<S>,
+}
+
+impl<K, V> Serialize for ShardedField<IdDashMap<K, V>>
+where
+    K: Eq + std::hash::Hash + Serialize,
+    V: Serialize,
+{
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        use serde::ser::SerializeMap;
+        let total = self.shards.iter().map(|s| s.len()).sum();
+        let mut map = serializer.serialize_map(Some(total))?;
+        for shard in &self.shards {
+            for entry in shard.iter() {
+                map.serialize_entry(entry.key(), entry.value())?;
+            }
+        }
+        map.end()
+    }
+}
+
+impl<'de, K, V> Deserialize<'de> for ShardedField<IdDashMap<K, V>>
+where
+    K: Eq + std::hash::Hash + Deserialize<'de>,
+    V: Deserialize<'de>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let map = IdDashMap::<K, V>::deserialize(deserializer)?;
+        Ok(Self { shards: vec![map] })
+    }
+}
+
+impl<K> Serialize for ShardedField<IdDashSet<K>>
+where
+    K: Eq + std::hash::Hash + Serialize,
+{
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        use serde::ser::SerializeSeq;
+        let total = self.shards.iter().map(|s| s.len()).sum();
+        let mut seq = serializer.serialize_seq(Some(total))?;
+        for shard in &self.shards {
+            for entry in shard.iter() {
+                seq.serialize_element(&*entry)?;
+            }
+        }
+        seq.end()
+    }
+}
+
+impl<'de, K> Deserialize<'de> for ShardedField<IdDashSet<K>>
+where
+    K: Eq + std::hash::Hash + Deserialize<'de>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let set = IdDashSet::<K>::deserialize(deserializer)?;
+        Ok(Self { shards: vec![set] })
+    }
+}
+
+impl<S: Default> ShardedField<S> {
+    pub fn new(shard_count: usize) -> Self {
+        assert!(shard_count > 0, "shard_count must be positive");
+        Self {
+            shards: (0..shard_count).map(|_| S::default()).collect(),
+        }
+    }
+}
+
+impl<S> ShardedField<S> {
+    pub fn shard_count(&self) -> usize {
+        self.shards.len()
+    }
+
+    pub fn shards(&self) -> &[S] {
+        &self.shards
+    }
+
+    pub fn from_shards(shards: Vec<S>) -> Self {
+        assert!(!shards.is_empty(), "shards must be non-empty");
+        Self { shards }
+    }
+}
+
+impl<K: ShardKey, V> ShardedField<IdDashMap<K, V>> {
+    pub fn shard_for(&self, key: K) -> &IdDashMap<K, V> {
+        &self.shards[key.shard_index(self.shards.len())]
+    }
+
+    pub fn entry(&self, key: K) -> dashmap::mapref::entry::Entry<'_, K, V> {
+        self.shard_for(key).entry(key)
+    }
+
+    pub fn insert(&self, key: K, value: V) -> Option<V> {
+        self.shard_for(key).insert(key, value)
+    }
+
+    pub fn get(&self, key: &K) -> Option<dashmap::mapref::one::Ref<'_, K, V>> {
+        self.shard_for(*key).get(key)
+    }
+
+    pub fn get_mut(&self, key: &K) -> Option<dashmap::mapref::one::RefMut<'_, K, V>> {
+        self.shard_for(*key).get_mut(key)
+    }
+
+    pub fn remove(&self, key: &K) -> Option<(K, V)> {
+        self.shard_for(*key).remove(key)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.shard_for(*key).contains_key(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shards.iter().all(|s| s.is_empty())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, K, V>> {
+        self.shards.iter().flat_map(|s| s.iter())
+    }
+
+    pub fn iter_mut(
+        &self,
+    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMutMulti<'_, K, V>> {
+        self.shards.iter().flat_map(|s| s.iter_mut())
+    }
+
+    pub fn retain(&self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        for shard in &self.shards {
+            shard.retain(|k, v| f(k, v));
+        }
+    }
+
+    /// Redistribute entries into `target_n` shards by id-modulo. No-op if
+    /// already at the target count. Used at write time so each field's N
+    /// matches `pick_shard_count(self.len())` without forcing in-memory N
+    /// to be fixed at construction.
+    pub fn reshard(&mut self, target_n: usize) {
+        assert!(target_n > 0, "target_n must be positive");
+        if self.shards.len() == target_n {
+            return;
+        }
+        let new_shards: Vec<IdDashMap<K, V>> =
+            (0..target_n).map(|_| IdDashMap::default()).collect();
+        for shard in self.shards.drain(..) {
+            for (key, value) in shard.into_iter() {
+                let idx = key.shard_index(target_n);
+                new_shards[idx].insert(key, value);
+            }
+        }
+        self.shards = new_shards;
+    }
+}
+
+impl<K: ShardKey> ShardedField<IdDashSet<K>> {
+    pub fn shard_for(&self, key: K) -> &IdDashSet<K> {
+        &self.shards[key.shard_index(self.shards.len())]
+    }
+
+    pub fn insert(&self, key: K) -> bool {
+        self.shard_for(key).insert(key)
+    }
+
+    pub fn contains(&self, key: &K) -> bool {
+        self.shard_for(*key).contains(key)
+    }
+
+    pub fn remove(&self, key: &K) -> Option<K> {
+        self.shard_for(*key).remove(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shards.iter().all(|s| s.is_empty())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = dashmap::setref::multiple::RefMulti<'_, K>> {
+        self.shards.iter().flat_map(|s| s.iter())
+    }
+
+    /// See `ShardedField<IdDashMap<K, V>>::reshard`.
+    pub fn reshard(&mut self, target_n: usize) {
+        assert!(target_n > 0, "target_n must be positive");
+        if self.shards.len() == target_n {
+            return;
+        }
+        let new_shards: Vec<IdDashSet<K>> = (0..target_n).map(|_| IdDashSet::default()).collect();
+        for shard in self.shards.drain(..) {
+            for key in shard.into_iter() {
+                let idx = key.shard_index(target_n);
+                new_shards[idx].insert(key);
+            }
+        }
+        self.shards = new_shards;
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinimizedBuckTarget {
@@ -2260,5 +2500,112 @@ mod tests {
         graph.batch_update_rdeps(rdep_map(&[(dep, t1)]), rdep_map(&[]));
 
         assert_eq!(graph.get_rdeps(dep).unwrap(), vec![t1]);
+    }
+
+    #[rstest]
+    #[case::empty(0, 1)]
+    #[case::tiny(1, 1)]
+    #[case::just_under(1_499_999, 1)]
+    #[case::single_shard_boundary(1_500_000, 1)]
+    #[case::just_over(1_500_001, 2)]
+    #[case::four_shards(6_000_000, 4)]
+    #[case::eight_shards(12_000_000, 8)]
+    #[case::clamps_to_max(1_000_000_000, 16)]
+    fn pick_shard_count_picks_within_bounds(#[case] entries: usize, #[case] expected: usize) {
+        assert_eq!(pick_shard_count(entries), expected);
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    #[case(16)]
+    fn shard_index_stays_in_bounds(#[case] shard_count: usize) {
+        for raw_id in 0..1000u64 {
+            let target_id = TargetId(raw_id);
+            assert!(target_id.shard_index(shard_count) < shard_count);
+        }
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    #[case(8)]
+    fn sharded_field_routes_inserts_to_id_modulo_shard(#[case] shard_count: usize) {
+        let field: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(shard_count);
+        for raw_id in 0..200u64 {
+            let target_id = TargetId(raw_id);
+            field.insert(target_id, format!("v{raw_id}"));
+        }
+
+        for raw_id in 0..200u64 {
+            let target_id = TargetId(raw_id);
+            let expected_shard = target_id.shard_index(shard_count);
+            assert!(
+                field.shards()[expected_shard].contains_key(&target_id),
+                "id {raw_id} should be in shard {expected_shard}",
+            );
+            for (other_shard, shard) in field.shards().iter().enumerate() {
+                if other_shard != expected_shard {
+                    assert!(
+                        !shard.contains_key(&target_id),
+                        "id {raw_id} should NOT be in shard {other_shard}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    #[case(8)]
+    fn sharded_field_get_returns_inserted_values(#[case] shard_count: usize) {
+        let field: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(shard_count);
+        for raw_id in 0..50u64 {
+            field.insert(TargetId(raw_id), format!("v{raw_id}"));
+        }
+
+        for raw_id in 0..50u64 {
+            assert_eq!(
+                field.get(&TargetId(raw_id)).map(|v| v.clone()),
+                Some(format!("v{raw_id}"))
+            );
+        }
+        assert_eq!(field.len(), 50);
+        assert!(!field.is_empty());
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    #[case(8)]
+    fn sharded_field_round_trips_through_bincode(#[case] shard_count: usize) {
+        let original: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(shard_count);
+        for raw_id in 0..200u64 {
+            original.insert(TargetId(raw_id), format!("v{raw_id}"));
+        }
+
+        let encoded = bincode_encode(&original).unwrap();
+        let decoded: ShardedField<IdDashMap<TargetId, String>> = bincode_decode(&encoded).unwrap();
+
+        // Custom Deserialize collapses to a single shard regardless of how
+        // many shards the source had; the framed binary path preserves shard
+        // count separately via the wire-format header.
+        assert_eq!(decoded.shard_count(), 1);
+        assert_eq!(decoded.len(), 200);
+        for raw_id in 0..200u64 {
+            assert_eq!(
+                decoded.get(&TargetId(raw_id)).map(|v| v.clone()),
+                Some(format!("v{raw_id}"))
+            );
+        }
+    }
+
+    #[test]
+    fn sharded_field_new_with_zero_shards_panics() {
+        let result = std::panic::catch_unwind(|| {
+            let _: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(0);
+        });
+        assert!(result.is_err());
     }
 }
