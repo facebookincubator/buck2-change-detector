@@ -37,7 +37,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -395,81 +395,126 @@ pub struct MinimizedBuckTarget {
 }
 
 /// Single source of truth for `TargetGraph`'s on-disk field set. Generates
-/// the struct itself, the `FRAME_COUNT` constant, and the parallel framed
-/// `write_framed` / `read_framed` methods on `TargetGraph`. Each listed
-/// field becomes one independent zstd frame on disk; the macro emits the
-/// parallel encode jobs, parallel decode jobs, and the struct assembly.
-/// Adding/renaming/removing a field touches one place.
+/// the struct itself and the parallel framed `write_framed` / `read_framed`
+/// methods on `TargetGraph`. **Every** field is wrapped in `ShardedField`
+/// and split into N inner zstd frames on disk, where N is chosen per field
+/// at write time by `pick_shard_count(field.len())`. The wire-format header
+/// records the shard count for each field; a trailer at the end records
+/// per-frame compressed and uncompressed lengths plus its own offset.
+///
+/// Per-frame zstd workers self-throttle to the host: on a 192-core machine
+/// each frame uses 8 worker threads; on a 30-core worker each frame is
+/// single-threaded.
 macro_rules! define_target_graph_framed_io {
     ($($field:ident: $ty:ty),* $(,)?) => {
         #[derive(Debug, Serialize, Deserialize)]
         pub struct TargetGraph {
-            $($field: $ty,)*
+            $($field: ShardedField<$ty>,)*
         }
 
-        const FRAME_COUNT: usize = [$(stringify!($field)),*].len();
+        const NUM_FIELDS: usize = [$(stringify!($field)),*].len();
 
         impl TargetGraph {
-            /// Serialize the graph to `writer` in the per-field framed format:
-            /// each DashMap field listed in the `define_target_graph_framed_io!`
-            /// invocation is bincode-serialized then zstd-compressed in parallel
-            /// into its own independent frame; frames are written back-to-back;
-            /// a fixed-size trailer at the end records per-frame compressed and
-            /// uncompressed lengths plus its own offset.
-            ///
-            /// Per-frame zstd workers self-throttle to the host: on a 192-core
-            /// machine each frame uses 8 worker threads; on a 30-core worker
-            /// each frame is single-threaded.
+            /// Pick `pick_shard_count(field.len())` for every field. Cheap
+            /// when N is already correct. Call before `write_framed`.
+            pub fn reshard_for_write(&mut self) {
+                $(
+                    self.$field.reshard(pick_shard_count(self.$field.len()));
+                )*
+            }
+
+            /// Reshard every field to exactly `n` shards. Test-only helper for
+            /// exercising the N>1 framed-IO path without needing >1.5M entries.
+            #[cfg(test)]
+            pub fn reshard_all_to(&mut self, n: usize) {
+                $(
+                    self.$field.reshard(n);
+                )*
+            }
+
             pub fn write_framed<W: Write>(&self, writer: &mut W) -> anyhow::Result<()> {
                 writer.write_all(&FRAME_MAGIC)?;
                 writer.write_all(&SCHEMA_VERSION.to_le_bytes())?;
 
-                let workers = frame_worker_count(FRAME_COUNT as u32);
-                let jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<(Vec<u8>, u64)> + Send + '_>> = vec![
-                    $(
-                        Box::new(move || -> anyhow::Result<(Vec<u8>, u64)> {
-                            let serialized = bincode_encode(&self.$field)
-                                .with_context(|| concat!("serialize ", stringify!($field)))?;
+                let mut field_shard_counts: Vec<u32> = Vec::with_capacity(NUM_FIELDS);
+                $(
+                    field_shard_counts.push(self.$field.shard_count() as u32);
+                )*
+
+                writer.write_all(&(NUM_FIELDS as u32).to_le_bytes())?;
+                for &count in &field_shard_counts {
+                    writer.write_all(&count.to_le_bytes())?;
+                }
+
+                let total_frame_count: usize =
+                    field_shard_counts.iter().map(|&c| c as usize).sum::<usize>();
+                let workers = frame_worker_count(total_frame_count as u32);
+
+                let mut jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<(Vec<u8>, u64)> + Send + '_>> =
+                    Vec::with_capacity(total_frame_count);
+                $(
+                    for (shard_idx, shard) in self.$field.shards().iter().enumerate() {
+                        jobs.push(Box::new(move || -> anyhow::Result<(Vec<u8>, u64)> {
+                            let serialized = bincode_encode(shard).with_context(|| {
+                                format!(
+                                    "serialize {} shard {}",
+                                    stringify!($field),
+                                    shard_idx
+                                )
+                            })?;
                             let uncompressed_len = serialized.len() as u64;
                             let compressed = zstd_encode_to_vec(&serialized, workers)
-                                .with_context(|| concat!("compress ", stringify!($field)))?;
+                                .with_context(|| {
+                                    format!(
+                                        "compress {} shard {}",
+                                        stringify!($field),
+                                        shard_idx
+                                    )
+                                })?;
                             Ok((compressed, uncompressed_len))
-                        }) as _,
-                    )*
-                ];
+                        }) as _);
+                    }
+                )*
 
                 let frames: Vec<(Vec<u8>, u64)> = jobs
                     .into_par_iter()
                     .map(|f| f())
                     .collect::<anyhow::Result<Vec<_>>>()?;
 
-                let mut compressed_lens = [0u64; FRAME_COUNT];
-                let mut uncompressed_lens = [0u64; FRAME_COUNT];
-                let mut trailer_offset: u64 = FRAME_HEADER_BYTES as u64;
+                let header_bytes = header_size(NUM_FIELDS) as u64;
+                let mut compressed_lens: Vec<u64> = Vec::with_capacity(total_frame_count);
+                let mut uncompressed_lens: Vec<u64> = Vec::with_capacity(total_frame_count);
+                let mut trailer_offset: u64 = header_bytes;
 
-                for (i, (compressed, uncompressed_len)) in frames.into_iter().enumerate() {
-                    compressed_lens[i] = compressed.len() as u64;
-                    uncompressed_lens[i] = uncompressed_len;
+                for (compressed, uncompressed_len) in frames {
+                    compressed_lens.push(compressed.len() as u64);
+                    uncompressed_lens.push(uncompressed_len);
                     writer.write_all(&compressed)?;
                     trailer_offset = trailer_offset
                         .checked_add(compressed.len() as u64)
                         .context("frame trailer offset overflow")?;
                 }
 
-                write_lengths(writer, &compressed_lens)?;
-                write_lengths(writer, &uncompressed_lens)?;
+                writer.write_all(&(total_frame_count as u32).to_le_bytes())?;
+                for &len in &compressed_lens {
+                    writer.write_all(&len.to_le_bytes())?;
+                }
+                for &len in &uncompressed_lens {
+                    writer.write_all(&len.to_le_bytes())?;
+                }
                 writer.write_all(&trailer_offset.to_le_bytes())?;
                 Ok(())
             }
 
-            /// Deserialize a graph written by `write_framed`. Reads the trailer
-            /// to locate frames, then runs decompress + deserialize per frame
-            /// in parallel and assembles the result into a fresh `TargetGraph`.
+            /// Deserialize a graph written by `write_framed`. Reads the
+            /// header to discover each field's shard count, the trailer to
+            /// locate frame byte ranges, then decompresses + deserializes
+            /// per shard in parallel and assembles the result.
             pub fn read_framed<R: Read + Seek>(reader: &mut R) -> anyhow::Result<Self> {
-                let trailer_size = 2 * FRAME_LENGTHS_BYTES;
-                let min_size =
-                    (FRAME_HEADER_BYTES + trailer_size + FRAME_TRAILER_OFFSET_BYTES) as u64;
                 let file_size = reader.seek(SeekFrom::End(0))?;
+                let min_size = (header_size(NUM_FIELDS)
+                    + FRAME_COUNT_TRAILER_BYTES
+                    + FRAME_TRAILER_OFFSET_BYTES) as u64;
                 if file_size < min_size {
                     anyhow::bail!(
                         "framed file too small ({file_size} bytes, need >= {min_size})"
@@ -494,11 +539,38 @@ macro_rules! define_target_graph_framed_io {
                     );
                 }
 
+                let mut num_fields_bytes = [0u8; 4];
+                reader.read_exact(&mut num_fields_bytes)?;
+                let num_fields_in_file = u32::from_le_bytes(num_fields_bytes) as usize;
+                if num_fields_in_file != NUM_FIELDS {
+                    anyhow::bail!(
+                        "framed file num_fields mismatch: expected {NUM_FIELDS}, got {num_fields_in_file}",
+                    );
+                }
+
+                let mut field_shard_counts = Vec::with_capacity(NUM_FIELDS);
+                for _ in 0..NUM_FIELDS {
+                    let mut count_bytes = [0u8; 4];
+                    reader.read_exact(&mut count_bytes)?;
+                    let count = u32::from_le_bytes(count_bytes) as usize;
+                    if count == 0 || count > MAX_SHARDS {
+                        anyhow::bail!(
+                            "field shard count {count} out of range [1, {MAX_SHARDS}]",
+                        );
+                    }
+                    field_shard_counts.push(count);
+                }
+
+                let total_frame_count: usize = field_shard_counts.iter().sum();
+                let header_bytes = header_size(NUM_FIELDS) as u64;
+
                 reader.seek(SeekFrom::End(-(FRAME_TRAILER_OFFSET_BYTES as i64)))?;
                 let mut trailer_offset_bytes = [0u8; FRAME_TRAILER_OFFSET_BYTES];
                 reader.read_exact(&mut trailer_offset_bytes)?;
                 let trailer_offset = u64::from_le_bytes(trailer_offset_bytes);
-                let trailer_offset_lo = FRAME_HEADER_BYTES as u64;
+                let trailer_size =
+                    FRAME_COUNT_TRAILER_BYTES + TRAILER_BYTES_PER_FRAME * total_frame_count;
+                let trailer_offset_lo = header_bytes;
                 let trailer_offset_hi =
                     file_size - trailer_size as u64 - FRAME_TRAILER_OFFSET_BYTES as u64;
                 if trailer_offset < trailer_offset_lo || trailer_offset > trailer_offset_hi {
@@ -508,25 +580,36 @@ macro_rules! define_target_graph_framed_io {
                 }
 
                 reader.seek(SeekFrom::Start(trailer_offset))?;
-                let mut trailer_bytes = vec![0u8; trailer_size];
-                reader.read_exact(&mut trailer_bytes)?;
-                let compressed_lens = read_lengths(&trailer_bytes[..FRAME_LENGTHS_BYTES])
-                    .context("compressed_lens trailer")?;
-                let uncompressed_lens = read_lengths(&trailer_bytes[FRAME_LENGTHS_BYTES..])
-                    .context("uncompressed_lens trailer")?;
+                let mut count_bytes = [0u8; FRAME_COUNT_TRAILER_BYTES];
+                reader.read_exact(&mut count_bytes)?;
+                let trailer_total_frames = u32::from_le_bytes(count_bytes) as usize;
+                if trailer_total_frames != total_frame_count {
+                    anyhow::bail!(
+                        "framed file trailer total_frames mismatch: header implies {total_frame_count}, trailer says {trailer_total_frames}",
+                    );
+                }
+                let lengths_bytes = 2 * total_frame_count * std::mem::size_of::<u64>();
+                let mut lengths_buf = vec![0u8; lengths_bytes];
+                reader.read_exact(&mut lengths_buf)?;
+                let compressed_lens =
+                    read_dyn_lengths(&lengths_buf[..lengths_bytes / 2], total_frame_count)
+                        .context("compressed_lens trailer")?;
+                let uncompressed_lens =
+                    read_dyn_lengths(&lengths_buf[lengths_bytes / 2..], total_frame_count)
+                        .context("uncompressed_lens trailer")?;
 
-                let frames_region_size = trailer_offset - FRAME_HEADER_BYTES as u64;
-                reader.seek(SeekFrom::Start(FRAME_HEADER_BYTES as u64))?;
+                let frames_region_size = trailer_offset - header_bytes;
+                reader.seek(SeekFrom::Start(header_bytes))?;
                 let mut frame_buf = Vec::with_capacity(frames_region_size as usize);
                 reader
                     .take(frames_region_size)
                     .read_to_end(&mut frame_buf)
                     .context("read frames")?;
 
-                let mut offsets = [0usize; FRAME_COUNT];
+                let mut offsets = Vec::with_capacity(total_frame_count);
                 let mut acc: usize = 0;
-                for (i, &len) in compressed_lens.iter().enumerate() {
-                    offsets[i] = acc;
+                for &len in &compressed_lens {
+                    offsets.push(acc);
                     acc = acc
                         .checked_add(len as usize)
                         .context("frame offset overflow on read")?;
@@ -539,29 +622,43 @@ macro_rules! define_target_graph_framed_io {
                 }
 
                 let mut jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>> =
-                    Vec::with_capacity(FRAME_COUNT);
+                    Vec::with_capacity(total_frame_count);
+                let mut shard_counts_iter = field_shard_counts.iter();
                 $({
-                    let i = jobs.len();
-                    let frame = &frame_buf[offsets[i]..offsets[i] + compressed_lens[i] as usize];
-                    let uncompressed_len = uncompressed_lens[i];
-                    jobs.push(Box::new(move || -> anyhow::Result<Box<dyn Any + Send>> {
-                        let decompressed = zstd::decode_all(frame)
-                            .with_context(|| concat!("decompress ", stringify!($field)))?;
-                        if decompressed.len() as u64 != uncompressed_len {
-                            anyhow::bail!(
-                                concat!(
-                                    "uncompressed len mismatch for ",
+                    let shard_count = *shard_counts_iter
+                        .next()
+                        .expect("shard count for field");
+                    for shard_idx in 0..shard_count {
+                        let i = jobs.len();
+                        let frame = &frame_buf[offsets[i]..offsets[i] + compressed_lens[i] as usize];
+                        let uncompressed_len = uncompressed_lens[i];
+                        jobs.push(Box::new(move || -> anyhow::Result<Box<dyn Any + Send>> {
+                            let decompressed = zstd::decode_all(frame).with_context(|| {
+                                format!(
+                                    "decompress {} shard {}",
                                     stringify!($field),
-                                    ": header={}, got={}"
-                                ),
-                                uncompressed_len,
-                                decompressed.len(),
-                            );
-                        }
-                        let v: $ty = bincode_decode(&decompressed)
-                            .with_context(|| concat!("deserialize ", stringify!($field)))?;
-                        Ok(Box::new(v) as Box<dyn Any + Send>)
-                    }) as Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>);
+                                    shard_idx
+                                )
+                            })?;
+                            if decompressed.len() as u64 != uncompressed_len {
+                                anyhow::bail!(
+                                    "uncompressed len mismatch for {} shard {}: header={}, got={}",
+                                    stringify!($field),
+                                    shard_idx,
+                                    uncompressed_len,
+                                    decompressed.len(),
+                                );
+                            }
+                            let v: $ty = bincode_decode(&decompressed).with_context(|| {
+                                format!(
+                                    "deserialize {} shard {}",
+                                    stringify!($field),
+                                    shard_idx
+                                )
+                            })?;
+                            Ok(Box::new(v) as Box<dyn Any + Send>)
+                        }) as Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>);
+                    }
                 })*
 
                 let parts: Vec<Box<dyn Any + Send>> = jobs
@@ -570,8 +667,25 @@ macro_rules! define_target_graph_framed_io {
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 let mut iter = parts.into_iter();
 
+                let mut shard_counts_iter = field_shard_counts.iter();
+                $(
+                    let $field: ShardedField<$ty> = {
+                        let shard_count = *shard_counts_iter
+                            .next()
+                            .expect("shard count for field");
+                        let mut shards = Vec::with_capacity(shard_count);
+                        for _ in 0..shard_count {
+                            shards.push(pop_part::<$ty>(
+                                &mut iter,
+                                stringify!($field),
+                            ));
+                        }
+                        ShardedField::from_shards(shards)
+                    };
+                )*
+
                 Ok(TargetGraph {
-                    $($field: pop_part(&mut iter, stringify!($field)),)*
+                    $($field,)*
                 })
             }
         }
@@ -605,29 +719,32 @@ define_target_graph_framed_io! {
 
 impl TargetGraph {
     pub fn new() -> Self {
+        // Every field starts with a single shard; `reshard_for_write`
+        // (called from `serialize_graph_to_file`) reshards each field to
+        // `pick_shard_count(field.len())` before writing.
         Self {
-            target_id_to_label: IdDashMap::default(),
-            rule_type_id_to_string: IdDashMap::default(),
-            oncall_id_to_string: IdDashMap::default(),
-            label_id_to_string: IdDashMap::default(),
-            minimized_targets: IdDashMap::default(),
-            glob_pattern_id_to_string: IdDashMap::default(),
-            target_id_to_rdeps: IdDashMap::default(),
-            target_id_to_deps: IdDashMap::default(),
-            file_id_to_path: IdDashMap::default(),
-            file_id_to_rdeps: IdDashMap::default(),
-            file_id_to_deps: IdDashMap::default(),
-            package_id_to_path: IdDashMap::default(),
-            package_id_to_errors: IdDashMap::default(),
-            package_id_to_targets: IdDashMap::default(),
-            ci_deps_pattern_id_to_string: IdDashMap::default(),
-            target_id_to_ci_srcs: IdDashMap::default(),
-            target_id_to_ci_srcs_must_match: IdDashMap::default(),
-            target_id_to_ci_deps_package_patterns: IdDashMap::default(),
-            target_id_to_ci_deps_recursive_patterns: IdDashMap::default(),
-            targets_with_sudo_label: IdDashSet::default(),
-            ci_hint_to_affected: IdDashMap::default(),
-            affected_to_ci_hints: IdDashMap::default(),
+            target_id_to_label: ShardedField::new(1),
+            rule_type_id_to_string: ShardedField::new(1),
+            oncall_id_to_string: ShardedField::new(1),
+            label_id_to_string: ShardedField::new(1),
+            minimized_targets: ShardedField::new(1),
+            glob_pattern_id_to_string: ShardedField::new(1),
+            target_id_to_rdeps: ShardedField::new(1),
+            target_id_to_deps: ShardedField::new(1),
+            file_id_to_path: ShardedField::new(1),
+            file_id_to_rdeps: ShardedField::new(1),
+            file_id_to_deps: ShardedField::new(1),
+            package_id_to_path: ShardedField::new(1),
+            package_id_to_errors: ShardedField::new(1),
+            package_id_to_targets: ShardedField::new(1),
+            ci_deps_pattern_id_to_string: ShardedField::new(1),
+            target_id_to_ci_srcs: ShardedField::new(1),
+            target_id_to_ci_srcs_must_match: ShardedField::new(1),
+            target_id_to_ci_deps_package_patterns: ShardedField::new(1),
+            target_id_to_ci_deps_recursive_patterns: ShardedField::new(1),
+            targets_with_sudo_label: ShardedField::new(1),
+            ci_hint_to_affected: ShardedField::new(1),
+            affected_to_ci_hints: ShardedField::new(1),
         }
     }
 
@@ -1272,32 +1389,37 @@ impl TargetGraph {
     }
 }
 
-const FRAME_LENGTHS_BYTES: usize = FRAME_COUNT * std::mem::size_of::<u64>();
 const FRAME_TRAILER_OFFSET_BYTES: usize = std::mem::size_of::<u64>();
+const FRAME_COUNT_TRAILER_BYTES: usize = std::mem::size_of::<u32>();
+/// Each frame contributes one compressed length and one uncompressed length
+/// (both `u64`) to the trailer.
+const TRAILER_BYTES_PER_FRAME: usize = 2 * std::mem::size_of::<u64>();
 
 const FRAME_MAGIC: [u8; 4] = *b"TGRF";
 const FRAME_VERSION_BYTES: usize = std::mem::size_of::<u32>();
-const FRAME_HEADER_BYTES: usize = FRAME_MAGIC.len() + FRAME_VERSION_BYTES;
 
-fn write_lengths<W: Write>(writer: &mut W, lengths: &[u64; FRAME_COUNT]) -> std::io::Result<()> {
-    for &len in lengths {
-        writer.write_all(&len.to_le_bytes())?;
-    }
-    Ok(())
+/// Wire-format header layout:
+/// `[FRAME_MAGIC 4][SCHEMA_VERSION u32][num_sharded_fields u32]
+///  [shard_count u32 × num_sharded_fields]`
+const fn header_size(num_sharded_fields: usize) -> usize {
+    FRAME_MAGIC.len()
+        + FRAME_VERSION_BYTES
+        + std::mem::size_of::<u32>()
+        + num_sharded_fields * std::mem::size_of::<u32>()
 }
 
-fn read_lengths(bytes: &[u8]) -> anyhow::Result<[u64; FRAME_COUNT]> {
-    if bytes.len() != FRAME_LENGTHS_BYTES {
+fn read_dyn_lengths(bytes: &[u8], expected_count: usize) -> anyhow::Result<Vec<u64>> {
+    let expected_bytes = expected_count * std::mem::size_of::<u64>();
+    if bytes.len() != expected_bytes {
         anyhow::bail!(
-            "expected {FRAME_LENGTHS_BYTES} bytes for frame lengths, got {}",
+            "expected {expected_bytes} bytes for frame lengths, got {}",
             bytes.len()
         );
     }
-    let mut lengths = [0u64; FRAME_COUNT];
-    for (i, chunk) in bytes.chunks_exact(std::mem::size_of::<u64>()).enumerate() {
-        lengths[i] = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-    }
-    Ok(lengths)
+    Ok(bytes
+        .chunks_exact(std::mem::size_of::<u64>())
+        .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("8-byte chunk")))
+        .collect())
 }
 
 fn bincode_encode<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
@@ -1381,6 +1503,46 @@ mod tests {
         assert_eq!(loaded.packages_len(), 6);
         assert_eq!(loaded.files_len(), 7);
         assert_eq!(loaded.ci_deps_patterns_len(), 8);
+    }
+
+    #[test]
+    fn write_framed_round_trips_with_multi_shard_fields() {
+        let mut graph = build_distinguishing_graph();
+        graph.reshard_all_to(4);
+
+        let mut buf = Vec::new();
+        graph.write_framed(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let loaded = TargetGraph::read_framed(&mut cursor).unwrap();
+
+        assert_eq!(loaded.targets_len(), 1);
+        assert_eq!(loaded.rule_types_len(), 2);
+        assert_eq!(loaded.oncalls_len(), 3);
+        assert_eq!(loaded.labels_len(), 4);
+        assert_eq!(loaded.glob_patterns_len(), 5);
+        assert_eq!(loaded.packages_len(), 6);
+        assert_eq!(loaded.files_len(), 7);
+        assert_eq!(loaded.ci_deps_patterns_len(), 8);
+    }
+
+    #[test]
+    fn read_framed_rejects_shard_count_above_max() {
+        let graph = build_distinguishing_graph();
+        let mut buf = Vec::new();
+        graph.write_framed(&mut buf).unwrap();
+
+        // Overwrite the first field's shard count (right after magic + version
+        // + num_fields = 12 bytes) with MAX_SHARDS + 1.
+        let bad_count = (MAX_SHARDS as u32 + 1).to_le_bytes();
+        buf[12..16].copy_from_slice(&bad_count);
+
+        let mut cursor = Cursor::new(buf);
+        let err = TargetGraph::read_framed(&mut cursor).unwrap_err();
+        assert!(
+            err.to_string().contains("out of range"),
+            "expected out-of-range error, got: {err}",
+        );
     }
 
     #[test]
@@ -2588,9 +2750,6 @@ mod tests {
         let encoded = bincode_encode(&original).unwrap();
         let decoded: ShardedField<IdDashMap<TargetId, String>> = bincode_decode(&encoded).unwrap();
 
-        // Custom Deserialize collapses to a single shard regardless of how
-        // many shards the source had; the framed binary path preserves shard
-        // count separately via the wire-format header.
         assert_eq!(decoded.shard_count(), 1);
         assert_eq!(decoded.len(), 200);
         for raw_id in 0..200u64 {
