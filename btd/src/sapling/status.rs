@@ -113,7 +113,7 @@ pub fn read_status(path: &Path) -> anyhow::Result<Vec<Status<ProjectRelativePath
     )
 }
 
-fn parse_status(data: &str) -> anyhow::Result<Vec<Status<ProjectRelativePath>>> {
+pub fn parse_status(data: &str) -> anyhow::Result<Vec<Status<ProjectRelativePath>>> {
     data.lines()
         .map(Status::from_str)
         .collect::<anyhow::Result<Vec<_>>>()
