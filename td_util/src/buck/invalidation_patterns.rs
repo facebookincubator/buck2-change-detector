@@ -44,6 +44,9 @@ pub fn invalidates_graph(path: &CellPath) -> bool {
 /// graph structure but their impact can be determined incrementally.
 pub fn requires_graph_rerun(path: &CellPath) -> bool {
     let s = path.as_str();
+    if s.contains("buck2/tests") {
+        return false;
+    }
     s.starts_with("fbsource//tools/buck2-versions/")
         || s.to_ascii_lowercase().contains("third-party-buck")
 }
@@ -98,6 +101,10 @@ mod tests {
     #[case::buckconfig_not_rerun_only("fbsource//.buckconfig", false)]
     #[case::mode_dir_not_rerun_only("fbsource//fbcode/mode/dev", false)]
     #[case::regular_source_file("fbcode//some/path/main.cpp", false)]
+    #[case::buck2_tests_third_party_exempted(
+        "fbcode//buck2/tests/some_test/third-party-buck/foo",
+        false
+    )]
     fn detects_graph_rerun_changes(#[case] path: &str, #[case] expected: bool) {
         let cell_path = CellPath::new(path);
         assert_eq!(
