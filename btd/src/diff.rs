@@ -167,6 +167,35 @@ pub struct ImpactTraceData {
     /// labels that were removed from the target.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub removed_labels: Vec<Arc<String>>,
+    /// True iff BTD's combined BFS traversed at least one `ci_hint` or
+    /// `ci_deps` edge to reach this target. Older BTD outputs (no field)
+    /// deserialise to `false`; the value is omitted from the wire when
+    /// it's the default to keep the JSON quiet.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub via_hints: bool,
+    /// Per-trace divergence info from BTD's combined BFS. `Some` iff
+    /// the target was first reached by a hinted path AND later also by
+    /// a real-edge path (carries the real-edge reach: depth +
+    /// affected_dep). Older BTD outputs (no field) deserialise to
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub without_hints: Option<WithoutHintsImpactTrace>,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+/// Real-edge reach data attached to a BTD output entry when the combined
+/// BFS first reached the target via a hint but a real-edge path also
+/// reached it. Mirrors `btd_v2`'s per-trace `WithoutHintsImpactTrace`.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct WithoutHintsImpactTrace {
+    /// Depth of first real-edge reach.
+    pub depth: usize,
+    /// Target name of the real-edge parent that produced first reach.
+    pub affected_dep: Arc<String>,
 }
 
 impl ImpactTraceData {
@@ -182,6 +211,8 @@ impl ImpactTraceData {
             is_terminal: false,
             added_labels: vec![],
             removed_labels: vec![],
+            via_hints: false,
+            without_hints: None,
         }
     }
 
@@ -194,6 +225,8 @@ impl ImpactTraceData {
             is_terminal: false,
             added_labels: vec![],
             removed_labels: vec![],
+            via_hints: false,
+            without_hints: None,
         }
     }
 }
@@ -634,6 +667,8 @@ pub fn recursive_target_changes<'a>(
                     is_terminal: false,
                     added_labels: reason.added_labels.clone(),
                     removed_labels: reason.removed_labels.clone(),
+                    via_hints: reason.via_hints,
+                    without_hints: reason.without_hints.clone(),
                 };
                 for rdep in rdeps.get(&lbl.label()) {
                     match done.entry(rdep.label_key()) {
