@@ -26,6 +26,11 @@ pub enum Event {
     RANKER_SUCCESS,
     SCHEDULER_SUCCESS,
     SCHEDULER_FAILURE,
+    /// Per-phase timing breakdown for a scheduler run. Emitted alongside
+    /// `SCHEDULER_SUCCESS` so we can attribute scheduler duration to specific
+    /// sub-phases (job generation, decoration, serialization, sandcastle spawn,
+    /// skycastle spawn) instead of seeing only the aggregate.
+    SCHEDULER_PHASE_TIMING,
     TARGETS_SUCCESS,
     VERIFIABLE_MATCHER_SUCCESS,
     VERSE_SUCCESS,
