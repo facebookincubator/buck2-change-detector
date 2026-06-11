@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
 use tracing::warn;
@@ -62,7 +63,7 @@ impl RestrictedPaths {
             .into_iter()
             .map(|(path, acls)| RestrictedPath { path, acls })
             .collect();
-        entries.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
+        entries.sort_by_key(|e| Reverse(e.path.len()));
         Self { entries }
     }
 
@@ -71,7 +72,7 @@ impl RestrictedPaths {
     /// Entries are sorted longest-path-first so the most specific prefix is
     /// matched before broader ones.
     pub fn new_with_acls(mut entries: Vec<RestrictedPath>) -> Self {
-        entries.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
+        entries.sort_by_key(|e| Reverse(e.path.len()));
         Self { entries }
     }
 
