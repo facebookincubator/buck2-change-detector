@@ -128,7 +128,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::GraphCompressor(args) => graph_compressor::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::GraphFetch(args) => graph_fetch::main(args).await,
+        Args::GraphFetch(args) => graph_fetch::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::LogGraphCache(args) => td_util::btd_graph_cache::main(args),
         #[cfg(fbcode_build)]
