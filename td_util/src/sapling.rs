@@ -17,6 +17,7 @@
 
 use std::io::Write as _;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 use tempfile::NamedTempFile;
@@ -69,6 +70,14 @@ pub fn sl_log_timestamp(rev: &str) -> Option<i64> {
         "1",
     ])?;
     stdout.trim().parse::<i64>().ok()
+}
+
+/// The repository root (`sl root`), run in `cwd` (or the process working
+/// directory when `None`). The async counterpart to
+/// [`crate::project::get_repo_root`], for `tokio` callers.
+pub async fn repo_root(cwd: Option<&Path>) -> anyhow::Result<PathBuf> {
+    let stdout = run_sl_async(&["root"], cwd).await?;
+    Ok(PathBuf::from(stdout.trim()))
 }
 
 /// The current commit hash (`sl log -r . -T {node}`), run in `cwd` (or the
