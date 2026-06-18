@@ -31,6 +31,12 @@ pub enum Event {
     /// sub-phases (job generation, decoration, serialization, sandcastle spawn,
     /// skycastle spawn) instead of seeing only the aggregate.
     SCHEDULER_PHASE_TIMING,
+    /// Emitted once `schedule_jobs()` has attempted to schedule all jobs;
+    /// covers both the inline `schedule()` and `rehydrate()` paths (see the
+    /// `source` field) and reports how many jobs were actually scheduled.
+    /// Detects silent skips: `SCHEDULER_SUCCESS` with no `SCHEDULE_JOBS_FINISHED`
+    /// (or one with `scheduled_sandcastle_jobs == 0`).
+    SCHEDULE_JOBS_FINISHED,
     TARGETS_SUCCESS,
     VERIFIABLE_MATCHER_SUCCESS,
     VERSE_SUCCESS,
