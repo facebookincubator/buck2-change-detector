@@ -243,9 +243,16 @@ def test_run(patch_name: str) -> None:
         apply_patch_and_collect(env, paths, patch)
 
         btd_args = paths.btd_args()
+        # Selecting all targets on a buckconfig/mode change is now opt-in behind
+        # --buckconfig-select-all (default off). Pass it for the buckconfig case so
+        # this test keeps exercising the universal-fallback path end to end.
+        select_all_args = (
+            ["--buckconfig-select-all"] if patch_name == "buckconfig" else []
+        )
         run(
             env.btd,
             *btd_args,
+            *select_all_args,
             "--diff",
             paths.diff,
             "--json",
@@ -254,6 +261,7 @@ def test_run(patch_name: str) -> None:
         run(
             env.btd,
             *btd_args,
+            *select_all_args,
             "--universe",
             "root//...",
             "--buck",

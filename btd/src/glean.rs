@@ -17,6 +17,7 @@ use td_util_buck::types::RuleType;
 use td_util_buck::types::TargetLabelKeyRef;
 
 use crate::changes::Changes;
+use crate::diff::ImmediateChangeOptions;
 use crate::diff::ImpactTraceData;
 use crate::diff::immediate_target_changes;
 use crate::diff::recursive_target_changes;
@@ -37,14 +38,18 @@ pub fn glean_changes<'a>(
     changes: &Changes,
     depth: Option<usize>,
 ) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
+    let glean_options = ImmediateChangeOptions {
+        track_prelude_changes: true,
+        buckconfig_select_all: true,
+    };
     let header = immediate_target_changes(
         base,
         diff,
         &changes.filter_by_extension(|x| x == Some("h")),
-        true,
+        glean_options,
     );
     let header_rec = recursive_target_changes(diff, changes, &header, depth, |_| true);
-    let other = immediate_target_changes(base, diff, changes, true);
+    let other = immediate_target_changes(base, diff, changes, glean_options);
     let other_rec = recursive_target_changes(diff, changes, &other, depth, |x| !cxx_rule_type(x));
     merge(header_rec, other_rec)
 }

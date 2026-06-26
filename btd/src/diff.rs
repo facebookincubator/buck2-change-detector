@@ -305,19 +305,30 @@ impl RootImpactKind {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ImmediateChangeOptions {
+    pub track_prelude_changes: bool,
+    pub buckconfig_select_all: bool,
+}
+
 pub fn immediate_target_changes<'a>(
     base: &'a Targets,
     diff: &'a Targets,
     changes: &Changes,
-    track_prelude_changes: bool,
+    options: ImmediateChangeOptions,
 ) -> GraphImpact<'a> {
+    let ImmediateChangeOptions {
+        track_prelude_changes,
+        buckconfig_select_all,
+    } = options;
     // Newly-added buckconfig/mode files cannot affect existing targets — they didn't
     // exist in the base revision, so no target references them. Only modifications or
     // deletions of existing buckconfigs should trigger the universal fallback.
-    let has_buckconfig_change = changes.status_cell_paths().any(|s| match s {
-        Status::Modified(path) | Status::Removed(path) => is_buckconfig_change(path),
-        Status::Added(_) => false,
-    });
+    let has_buckconfig_change = buckconfig_select_all
+        && changes.status_cell_paths().any(|s| match s {
+            Status::Modified(path) | Status::Removed(path) => is_buckconfig_change(path),
+            Status::Added(_) => false,
+        });
     if has_buckconfig_change {
         let mut ret = GraphImpact::from_non_recursive(
             diff.targets()
@@ -820,7 +831,10 @@ mod tests {
                 Status::Added(file2),
                 Status::Removed(file3),
             ]),
-            false,
+            ImmediateChangeOptions {
+                track_prelude_changes: false,
+                buckconfig_select_all: false,
+            },
         );
         let recursive = res.recursive.map(|(x, _)| x.label().to_string());
         let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
@@ -853,7 +867,10 @@ mod tests {
             &base,
             &base,
             &Changes::testing(&[Status::Modified(file1), Status::Removed(file2)]),
-            false,
+            ImmediateChangeOptions {
+                track_prelude_changes: false,
+                buckconfig_select_all: true,
+            },
         );
         assert!(res.recursive.is_empty());
         let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
@@ -926,7 +943,10 @@ mod tests {
                 Status::Added(file2),
                 Status::Removed(file3),
             ]),
-            false,
+            ImmediateChangeOptions {
+                track_prelude_changes: false,
+                buckconfig_select_all: false,
+            },
         );
         let recursive = res.recursive.map(|(x, _)| x.label().to_string());
         let non_recursive = res.non_recursive.map(|(x, _)| x.label().to_string());
@@ -968,7 +988,10 @@ mod tests {
             &base,
             &base,
             &Changes::testing(&[Status::Modified(package)]),
-            false,
+            ImmediateChangeOptions {
+                track_prelude_changes: false,
+                buckconfig_select_all: false,
+            },
         );
         let mut res = res.recursive.map(|(x, _)| x.label().to_string());
         res.sort();
@@ -1263,7 +1286,10 @@ mod tests {
                     &targets,
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(file))]),
-                    check,
+                    ImmediateChangeOptions {
+                        track_prelude_changes: check,
+                        buckconfig_select_all: false
+                    },
                 )
                 .len(),
                 expect
@@ -1337,7 +1363,10 @@ mod tests {
                 &targets,
                 &targets,
                 &Changes::testing(&[Status::Modified(CellPath::new(file))]),
-                check,
+                ImmediateChangeOptions {
+                    track_prelude_changes: check,
+                    buckconfig_select_all: false,
+                },
             );
             assert_eq!(res.len(), expect);
         };
@@ -1403,7 +1432,10 @@ mod tests {
                     &targets,
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(file))]),
-                    check,
+                    ImmediateChangeOptions {
+                        track_prelude_changes: check,
+                        buckconfig_select_all: false
+                    },
                 )
                 .len(),
                 expect
@@ -1432,7 +1464,10 @@ mod tests {
                     &targets,
                     &targets,
                     &Changes::testing(&[Status::Modified(CellPath::new(&format!("root//{file}")))]),
-                    false,
+                    ImmediateChangeOptions {
+                        track_prelude_changes: false,
+                        buckconfig_select_all: false
+                    },
                 )
                 .len(),
                 expect
@@ -1457,7 +1492,16 @@ mod tests {
         })]);
         // The hash of the target doesn't change, but the package.value does
         assert_eq!(
-            immediate_target_changes(&before, &after, &Changes::testing(&[]), false).len(),
+            immediate_target_changes(
+                &before,
+                &after,
+                &Changes::testing(&[]),
+                ImmediateChangeOptions {
+                    track_prelude_changes: false,
+                    buckconfig_select_all: false
+                }
+            )
+            .len(),
             1
         );
     }
@@ -1480,7 +1524,15 @@ mod tests {
             }),
         ]);
         let changes = Changes::testing(&[Status::Modified(src)]);
-        let mut impact = immediate_target_changes(&targets, &targets, &changes, false);
+        let mut impact = immediate_target_changes(
+            &targets,
+            &targets,
+            &changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: false,
+                buckconfig_select_all: false,
+            },
+        );
         assert_eq!(impact.recursive.len(), 1);
 
         assert_eq!(
@@ -1691,7 +1743,15 @@ mod tests {
         let test_changes = create_buckconfig_changes();
 
         // Act
-        let result = immediate_target_changes(&test_targets, &test_targets, &test_changes, true);
+        let result = immediate_target_changes(
+            &test_targets,
+            &test_targets,
+            &test_changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: true,
+                buckconfig_select_all: true,
+            },
+        );
 
         // Verify
         let expected_target_names = vec!["a", "b", "d", "e", "g", "h"];
@@ -1722,7 +1782,15 @@ mod tests {
             )),
         ]);
 
-        let result = immediate_target_changes(&targets, &targets, &added_only_changes, true);
+        let result = immediate_target_changes(
+            &targets,
+            &targets,
+            &added_only_changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: true,
+                buckconfig_select_all: true,
+            },
+        );
 
         // No targets should be affected — the universal fallback should not fire,
         // and no other changes exist to trigger normal change detection.
@@ -1739,11 +1807,66 @@ mod tests {
             "fbsource//arvr/mode/android/apk/linux/dev-tsan",
         ))]);
 
-        let result = immediate_target_changes(&targets, &targets, &modified_changes, true);
+        let result = immediate_target_changes(
+            &targets,
+            &targets,
+            &modified_changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: true,
+                buckconfig_select_all: true,
+            },
+        );
 
         assert!(
             result.len() > 0,
             "Modified buckconfig changes should still trigger universal fallback"
+        );
+    }
+
+    #[test]
+    fn test_immediate_target_changes_buckconfig_select_all_opt_in() {
+        // With buckconfig_select_all = false (the default), a Modified buckconfig
+        // must NOT trigger the universal fallback. Only targets whose definitions
+        // actually changed get marked -- here base == diff and no source files
+        // changed, so nothing is affected.
+        let targets = Targets::new(vec![
+            create_buck_target("a", "cpp_binary", None, None, Some(&["dep1"])),
+            create_buck_target("b", "python_library", None, None, None),
+        ]);
+        let modified_changes = Changes::testing(&[Status::Modified(CellPath::new(
+            "fbsource//arvr/mode/android/apk/linux/dev-tsan",
+        ))]);
+
+        let off = immediate_target_changes(
+            &targets,
+            &targets,
+            &modified_changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: true,
+                buckconfig_select_all: false,
+            },
+        );
+        assert_eq!(
+            off.len(),
+            0,
+            "buckconfig_select_all=false must not trigger the universal fallback, \
+             but {} targets were marked as affected",
+            off.len()
+        );
+
+        // With buckconfig_select_all = true, the same change triggers the fallback.
+        let on = immediate_target_changes(
+            &targets,
+            &targets,
+            &modified_changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: true,
+                buckconfig_select_all: true,
+            },
+        );
+        assert!(
+            on.len() > 0,
+            "buckconfig_select_all=true should trigger the universal fallback"
         );
     }
 
@@ -1792,7 +1915,15 @@ mod tests {
         .unwrap();
 
         // Act
-        let result = immediate_target_changes(&test_targets, &test_targets, &test_changes, true);
+        let result = immediate_target_changes(
+            &test_targets,
+            &test_targets,
+            &test_changes,
+            ImmediateChangeOptions {
+                track_prelude_changes: true,
+                buckconfig_select_all: false,
+            },
+        );
 
         // Verify
         let expected_target_names = vec!["b", "c"];

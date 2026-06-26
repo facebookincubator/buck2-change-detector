@@ -120,6 +120,12 @@ pub struct Args {
     #[arg(long)]
     track_prelude_rule_changes: bool,
 
+    /// When a buckconfig/mode file change invalidates the graph, mark ALL
+    /// targets as affected. When unset (the default), only the
+    /// targets whose definitions actually changed are marked.
+    #[arg(long)]
+    buckconfig_select_all: bool,
+
     /// The command for running Buck
     #[arg(long, default_value = "buck2")]
     buck: String,
@@ -256,8 +262,17 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     });
 
     step("immediate changes");
-    let immediate =
-        diff::immediate_target_changes(&base, &diff, &changes, args.track_prelude_rule_changes);
+    // A buckconfig/mode change marks all targets affected only when
+    // --buckconfig-select-all is set
+    let immediate = diff::immediate_target_changes(
+        &base,
+        &diff,
+        &changes,
+        diff::ImmediateChangeOptions {
+            track_prelude_changes: args.track_prelude_rule_changes,
+            buckconfig_select_all: args.buckconfig_select_all,
+        },
+    );
 
     // Perform inline error validation when we're not collecting errors
     // for downstream reporting.
