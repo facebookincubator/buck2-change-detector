@@ -47,6 +47,8 @@ enum Args {
     #[cfg(fbcode_build)]
     Rerun(rerun::Args),
     #[cfg(fbcode_build)]
+    ResolveScope(resolve_scope::args::Args),
+    #[cfg(fbcode_build)]
     Scheduler(scheduler::Args),
     #[cfg(fbcode_build)]
     SchedulerRehydrate(scheduler::rehydrate::RehydrateArgs),
@@ -139,6 +141,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Ranker(args) => ranker::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::Rerun(args) => rerun::main(fb, args).await,
+        #[cfg(fbcode_build)]
+        Args::ResolveScope(args) => resolve_scope::main(args),
         #[cfg(fbcode_build)]
         Args::Scheduler(args) => scheduler::main(fb, args).await,
         #[cfg(fbcode_build)]
