@@ -89,6 +89,12 @@ impl TargetLabel {
     }
 }
 
+impl AsRef<str> for TargetLabel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 /// Equivalent to a `TargetLabel`, used to identify a label efficiently,
 /// including when produced by the `buck2 targets` JSON output.
 pub struct TargetLabelKey(Package, TargetName);

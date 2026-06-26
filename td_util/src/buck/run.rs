@@ -24,6 +24,7 @@ use crate::cells::CellInfo;
 use crate::types::CellPath;
 use crate::types::Package;
 use crate::types::ProjectRelativePath;
+use crate::types::TargetLabel;
 use crate::types::TargetPattern;
 
 /// A struct to represent running Buck2 commands.
@@ -161,23 +162,28 @@ impl Buck2 {
         with_command(command, |mut command| Ok(command.status()?.exit_ok()?))
     }
 
-    pub fn owners(
+    /// Run a `%s`-templated `buck2 uquery` whose per-line inputs are streamed
+    /// via an `@atfile`. Shared by [`owners`] and [`visibility_of_targets`]:
+    /// both build the same `command() + static args + @atfile + extra_args`
+    /// shape with explicit `current_dir(root)` and identical stderr-context
+    /// error handling. Streaming via the file (not inline CLI args) keeps large
+    /// input sets well under `ARG_MAX`.
+    fn uquery_with_atfile<T: AsRef<str>>(
         &mut self,
+        static_args: Vec<&str>,
+        items: &[T],
         extra_args: &[String],
-        changes: &[ProjectRelativePath],
+        log_label: &str,
     ) -> anyhow::Result<String> {
-        assert!(!changes.is_empty());
+        assert!(!items.is_empty());
 
-        let (_file, at_file) = create_at_file_arg(changes, "\n")?;
+        let (_file, at_file) = create_at_file_arg(items, "\n")?;
 
         let mut command = self.command();
-        command
-            .args(owners_arguments())
-            .arg(at_file)
-            .args(extra_args);
+        command.args(static_args).arg(at_file).args(extra_args);
         command.current_dir(self.root()?);
 
-        info!("Running owners query: {:?}", command);
+        info!("Running {log_label} query: {command:?}");
 
         let res = with_command(command, |mut command| {
             let res = command.output()?;
@@ -187,6 +193,29 @@ impl Buck2 {
             Ok(res)
         })?;
         Ok(String::from_utf8(res.stdout)?)
+    }
+
+    pub fn owners(
+        &mut self,
+        extra_args: &[String],
+        changes: &[ProjectRelativePath],
+    ) -> anyhow::Result<String> {
+        self.uquery_with_atfile(owners_arguments(), changes, extra_args, "owners")
+    }
+
+    /// Query `visibility` for a set of target labels. Returns target-keyed
+    /// JSON: `{"cell//pkg:target": {"visibility": ["..."]}, ...}`.
+    ///
+    /// Built as `buck2 uquery --json '%s' --output-attribute visibility @atfile`.
+    /// Buck expands `%s` per line of the atfile (the same mechanism [`owners`]
+    /// uses), so labels stream via a temp file rather than one CLI argument,
+    /// avoiding `ARG_MAX` on bulk-codemod diffs with tens of thousands of owners.
+    pub fn visibility_of_targets(
+        &mut self,
+        extra_args: &[String],
+        targets: &[TargetLabel],
+    ) -> anyhow::Result<String> {
+        self.uquery_with_atfile(visibility_arguments(), targets, extra_args, "visibility")
     }
 }
 
@@ -233,6 +262,16 @@ pub fn targets_arguments() -> Vec<&'static str> {
 /// forth, triggering buck2 `new_configs_used` warnings on every transition.
 pub fn owners_arguments() -> Vec<&'static str> {
     const PREFIX: &[&str] = &["uquery", "--json", "owner(\"%s\")"];
+    [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
+}
+
+/// Static arguments for the `buck2 uquery --output-attribute visibility`
+/// invocation. The `%s` is buck2's per-line template, expanded against the
+/// `@atfile` the caller appends (see [`visibility_of_targets`]). Appends
+/// [`HASH_NORMALIZED_CONFIGS`] for daemon-config consistency with the other
+/// queries (see [`owners_arguments`]).
+pub fn visibility_arguments() -> Vec<&'static str> {
+    const PREFIX: &[&str] = &["uquery", "--json", "%s", "--output-attribute", "visibility"];
     [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
 }
 
@@ -296,11 +335,25 @@ mod tests {
             ("targets v1", targets_arguments()),
             ("targets v2", targets_arguments_v2()),
             ("owners", owners_arguments()),
+            ("visibility", visibility_arguments()),
         ] {
             for entry in HASH_NORMALIZED_CONFIGS {
                 assert!(args.contains(entry), "{label} must include {entry}",);
             }
         }
+    }
+
+    #[test]
+    fn visibility_arguments_request_visibility_attribute() {
+        let args = visibility_arguments();
+        assert!(args.contains(&"uquery"));
+        assert!(args.contains(&"--json"));
+        assert!(args.contains(&"--output-attribute"));
+        assert!(args.contains(&"visibility"));
+        // `%s` is the per-line template buck2 expands against the @atfile the
+        // caller appends, so the helper scales to large target sets without
+        // hitting ARG_MAX.
+        assert!(args.contains(&"%s"));
     }
 
     #[test]
