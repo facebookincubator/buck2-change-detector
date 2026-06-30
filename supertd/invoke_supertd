@@ -3,7 +3,13 @@
 
 set -euo pipefail
 
-if [[ "${SANDCASTLE:-}" == "1" ]]; then
+if [[ -n "${SUPERTD_BINARY:-}" ]]; then
+    # Caller has injected a specific supertd binary (e.g. a Skycastle action
+    # with tools=[supertd_tool] exporting the resolved path). Use it directly
+    # and skip the fbpkg fetch.
+    echo "Using supertd binary from \$SUPERTD_BINARY: $SUPERTD_BINARY" 1>&2
+    SUPERTD="$SUPERTD_BINARY"
+elif [[ "${SANDCASTLE:-}" == "1" ]]; then
     # If running in Sandcastle, we need to download fbpkg.
     echo "Running in Sandcastle, fetching supertd fbpkg" 1>&2
     FETCH_FBPKG="$(hg root)/fbcode/target_determinator/supertd/fetch_supertd_fbpkg"
