@@ -47,6 +47,7 @@ use td_util::json;
 use td_util::logging::elapsed;
 use td_util::logging::step;
 use td_util::prelude::*;
+use td_util::vcs::Vcs;
 use td_util::workflow_error::WorkflowError;
 use td_util_buck::cells::CellInfo;
 use td_util_buck::run::Buck2;
@@ -57,6 +58,7 @@ use td_util_buck::types::TargetLabelKeyRef;
 use td_util_buck::types::TargetPattern;
 use tempfile::NamedTempFile;
 use thiserror::Error;
+use tracing::debug;
 use tracing::error;
 
 use crate::changes::Changes;
@@ -85,6 +87,11 @@ pub struct Args {
     /// File containing the output of `hg status` for the relevant diff.
     #[arg(long, value_name = "FILE")]
     changes: PathBuf,
+
+    /// VCS platform that produced the `--changes` file. Accepts `sapling`
+    /// (aliases `sl`, `hg`) or `git`; defaults to Sapling.
+    #[arg(long, default_value = "sapling")]
+    vcs: Vcs,
 
     /// File containing the JSON output from `buck2 targets` base the change.
     #[arg(long, value_name = "FILE")]
@@ -217,6 +224,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
     }
 
     step("reading changes");
+    debug!("Interpreting `--changes` as {:?} VCS output", args.vcs);
     let changes = Changes::new(&cells, read_status(&args.changes)?)?;
     step("reading base");
     let base = leak_targets(Targets::from_file(&args.base)?);
