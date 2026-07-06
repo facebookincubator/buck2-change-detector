@@ -60,6 +60,12 @@ pub enum Event {
     TENTING_SUCCESS,
     TENTING_SCS_CALL,
     XGBOOST_LASER_STAT,
+    /// Emitted when a Laser target-feature query returns per-key retryable
+    /// failures (timeout / transport / no-leaf). Previously these were
+    /// indistinguishable from genuine misses; this event makes them visible so
+    /// we can quantify how often Laser unhealthiness drives "no features"
+    /// packing decisions.
+    XGBOOST_LASER_TIMEOUT,
     XGBOOST_PACKING_STAT,
     LLM_SELECT_SUCCESS,
     SANITY_CHECK_SKIP,
