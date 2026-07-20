@@ -533,6 +533,12 @@ impl CellPath {
 )]
 pub struct Package(InternString);
 
+impl AsRef<str> for Package {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl Package {
     pub fn new(package: &str) -> Self {
         Self(InternString::new(package))

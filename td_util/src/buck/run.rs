@@ -162,13 +162,13 @@ impl Buck2 {
         with_command(command, |mut command| Ok(command.status()?.exit_ok()?))
     }
 
-    /// Run a `%s`-templated `buck2 uquery` whose per-line inputs are streamed
-    /// via an `@atfile`. Shared by [`owners`] and [`visibility_of_targets`]:
-    /// both build the same `command() + static args + @atfile + extra_args`
-    /// shape with explicit `current_dir(root)` and identical stderr-context
-    /// error handling. Streaming via the file (not inline CLI args) keeps large
-    /// input sets well under `ARG_MAX`.
-    fn uquery_with_atfile<T: AsRef<str>>(
+    /// Run a `buck2` subcommand whose per-line inputs stream via an `@atfile`,
+    /// with explicit `current_dir(root)` and stderr-context error handling.
+    /// Shared by [`owners`] / [`visibility_of_targets`] (uquery, `%s`-substituted
+    /// per atfile line) and [`audit_package_values`] (positional packages).
+    /// Streaming via the file (not inline CLI args) keeps large input sets well
+    /// under `ARG_MAX`.
+    fn run_with_atfile<T: AsRef<str>>(
         &mut self,
         static_args: Vec<&str>,
         items: &[T],
@@ -183,7 +183,7 @@ impl Buck2 {
         command.args(static_args).arg(at_file).args(extra_args);
         command.current_dir(self.root()?);
 
-        info!("Running {log_label} query: {command:?}");
+        info!("Running {log_label}: {command:?}");
 
         let res = with_command(command, |mut command| {
             let res = command.output()?;
@@ -200,7 +200,7 @@ impl Buck2 {
         extra_args: &[String],
         changes: &[ProjectRelativePath],
     ) -> anyhow::Result<String> {
-        self.uquery_with_atfile(owners_arguments(), changes, extra_args, "owners")
+        self.run_with_atfile(owners_arguments(), changes, extra_args, "owners query")
     }
 
     /// Query `visibility` for a set of target labels. Returns target-keyed
@@ -215,7 +215,30 @@ impl Buck2 {
         extra_args: &[String],
         targets: &[TargetLabel],
     ) -> anyhow::Result<String> {
-        self.uquery_with_atfile(visibility_arguments(), targets, extra_args, "visibility")
+        self.run_with_atfile(
+            visibility_arguments(),
+            targets,
+            extra_args,
+            "visibility query",
+        )
+    }
+
+    /// Read package values (including `visibility_cap`) for a set of packages.
+    /// Returns package-keyed JSON: `{"cell//pkg": {"visibility_cap": ...}, ...}`.
+    ///
+    /// Built as `buck2 audit package-values @atfile`; packages stream via the
+    /// atfile to stay under `ARG_MAX` on large changesets.
+    pub fn audit_package_values(
+        &mut self,
+        extra_args: &[String],
+        packages: &[Package],
+    ) -> anyhow::Result<String> {
+        self.run_with_atfile(
+            audit_package_values_arguments(),
+            packages,
+            extra_args,
+            "audit package-values",
+        )
     }
 }
 
@@ -237,6 +260,15 @@ const HASH_NORMALIZED_CONFIGS: &[&str] = &[
     "--config=user.schedule_type=",
     "--config=user.sandcastle=",
 ];
+
+/// Static arguments for `buck2 audit package-values`, which emits package-keyed
+/// JSON by default (it rejects `--json`). Uses `--reuse-current-config` and no
+/// hash-normalized configs: package values are static `PACKAGE`-file data,
+/// independent of the build configuration, so reusing the daemon's config avoids
+/// invalidating it.
+pub fn audit_package_values_arguments() -> Vec<&'static str> {
+    vec!["audit", "package-values", "--reuse-current-config"]
+}
 
 pub fn targets_arguments() -> Vec<&'static str> {
     const PREFIX: &[&str] = &[
