@@ -24,7 +24,6 @@ use crate::cells::CellInfo;
 use crate::types::CellPath;
 use crate::types::Package;
 use crate::types::ProjectRelativePath;
-use crate::types::TargetLabel;
 use crate::types::TargetPattern;
 
 /// A struct to represent running Buck2 commands.
@@ -164,10 +163,9 @@ impl Buck2 {
 
     /// Run a `buck2` subcommand whose per-line inputs stream via an `@atfile`,
     /// with explicit `current_dir(root)` and stderr-context error handling.
-    /// Shared by [`owners`] / [`visibility_of_targets`] (uquery, `%s`-substituted
-    /// per atfile line) and [`audit_package_values`] (positional packages).
-    /// Streaming via the file (not inline CLI args) keeps large input sets well
-    /// under `ARG_MAX`.
+    /// Shared by [`owners`] (uquery, `%s`-substituted per atfile line) and
+    /// [`audit_package_values`] (positional packages). Streaming via the file
+    /// (not inline CLI args) keeps large input sets well under `ARG_MAX`.
     fn run_with_atfile<T: AsRef<str>>(
         &mut self,
         static_args: Vec<&str>,
@@ -201,26 +199,6 @@ impl Buck2 {
         changes: &[ProjectRelativePath],
     ) -> anyhow::Result<String> {
         self.run_with_atfile(owners_arguments(), changes, extra_args, "owners query")
-    }
-
-    /// Query `visibility` for a set of target labels. Returns target-keyed
-    /// JSON: `{"cell//pkg:target": {"visibility": ["..."]}, ...}`.
-    ///
-    /// Built as `buck2 uquery --json '%s' --output-attribute visibility @atfile`.
-    /// Buck expands `%s` per line of the atfile (the same mechanism [`owners`]
-    /// uses), so labels stream via a temp file rather than one CLI argument,
-    /// avoiding `ARG_MAX` on bulk-codemod diffs with tens of thousands of owners.
-    pub fn visibility_of_targets(
-        &mut self,
-        extra_args: &[String],
-        targets: &[TargetLabel],
-    ) -> anyhow::Result<String> {
-        self.run_with_atfile(
-            visibility_arguments(),
-            targets,
-            extra_args,
-            "visibility query",
-        )
     }
 
     /// Read package values (including `visibility_cap`) for a set of packages.
@@ -297,16 +275,6 @@ pub fn owners_arguments() -> Vec<&'static str> {
     [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
 }
 
-/// Static arguments for the `buck2 uquery --output-attribute visibility`
-/// invocation. The `%s` is buck2's per-line template, expanded against the
-/// `@atfile` the caller appends (see [`visibility_of_targets`]). Appends
-/// [`HASH_NORMALIZED_CONFIGS`] for daemon-config consistency with the other
-/// queries (see [`owners_arguments`]).
-pub fn visibility_arguments() -> Vec<&'static str> {
-    const PREFIX: &[&str] = &["uquery", "--json", "%s", "--output-attribute", "visibility"];
-    [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
-}
-
 /// Optimized variant of `targets_arguments` for BTDv2/graph_compressor.
 ///
 /// Excludes `buck.inputs`, `tests`, and `remote_execution` from the output
@@ -367,25 +335,11 @@ mod tests {
             ("targets v1", targets_arguments()),
             ("targets v2", targets_arguments_v2()),
             ("owners", owners_arguments()),
-            ("visibility", visibility_arguments()),
         ] {
             for entry in HASH_NORMALIZED_CONFIGS {
                 assert!(args.contains(entry), "{label} must include {entry}",);
             }
         }
-    }
-
-    #[test]
-    fn visibility_arguments_request_visibility_attribute() {
-        let args = visibility_arguments();
-        assert!(args.contains(&"uquery"));
-        assert!(args.contains(&"--json"));
-        assert!(args.contains(&"--output-attribute"));
-        assert!(args.contains(&"visibility"));
-        // `%s` is the per-line template buck2 expands against the @atfile the
-        // caller appends, so the helper scales to large target sets without
-        // hitting ARG_MAX.
-        assert!(args.contains(&"%s"));
     }
 
     #[test]
