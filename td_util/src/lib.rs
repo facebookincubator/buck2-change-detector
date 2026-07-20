@@ -14,6 +14,7 @@ pub mod cli;
 pub mod command;
 pub mod executor;
 pub mod file_io;
+pub mod git;
 pub mod json;
 pub mod knobs;
 pub mod logging;
@@ -25,6 +26,7 @@ pub mod string;
 pub mod supertd_events;
 // @oss-disable: pub mod supertd_events_logger;
 pub mod tracing;
+pub mod vcs;
 pub mod workflow_error;
 pub mod zstd;
 

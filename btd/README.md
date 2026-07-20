@@ -22,8 +22,10 @@ Where:
 
 - `btd` is the binary. Within Meta a precompiled version of `btd` is available
   at `~/fbsource/tools/utd/btd/btd`.
-- `changes.txt` is the output of
-  `hg status --rev hash_before::hash_after -amr --root-relative`.
+- `changes.txt` is the list of changed files. On a Sapling/Mercurial repo it is
+  the output of `hg status --rev hash_before::hash_after -amr --root-relative`;
+  on a git repo it is the output of
+  `git diff --name-status hash_before hash_after`. See `--vcs` below.
 - `base.jsonl` is the output of `supertd targets cell//... --output base.jsonl`
   in the base state, before the changes. Pass `--dry-run` to see the `buck2`
   command that is equivalent to.
@@ -43,6 +45,17 @@ configuration with the flags:
 - `--config ~/data/config.json` is the output of `supertd audit config` in the
   root of the repo. If `--cells` is present but `--config` is absent then BTD
   will use the Buck2 default values for all `.buckconfig` settings.
+
+## Specifying the VCS (`--vcs`)
+
+The `--vcs` flag declares which version-control system produced the `--changes`
+file, so BTD interprets its status format correctly. It accepts:
+
+- `sapling` (aliases `sl`, `hg`) — the default. Parses `hg`/`sl status` output
+  (a status character, a space, then a root-relative path).
+- `git` — parses `git diff --name-status` output (tab-separated). Renames and
+  copies (`R100`/`C75`) are expanded to a remove of the old path plus an add of
+  the new one, so impact stays conservative.
 
 ## When to use BTD
 
