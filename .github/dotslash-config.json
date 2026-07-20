@@ -1,0 +1,25 @@
+{
+  "exclude-github-release-provider": true,
+  "outputs": {
+    "btd": {
+      "platforms": {
+        "linux-x86_64": {
+          "regex": "^btd-x86_64-unknown-linux-musl\\.tar\\.gz$",
+          "path": "btd"
+        },
+        "macos-aarch64": {
+          "regex": "^btd-aarch64-apple-darwin\\.tar\\.gz$",
+          "path": "btd"
+        },
+        "macos-x86_64": {
+          "regex": "^btd-x86_64-apple-darwin\\.tar\\.gz$",
+          "path": "btd"
+        },
+        "windows-x86_64": {
+          "regex": "^btd-x86_64-pc-windows-msvc\\.zip$",
+          "path": "btd.exe"
+        }
+      }
+    }
+  }
+}

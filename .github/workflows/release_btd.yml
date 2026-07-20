@@ -1,0 +1,164 @@
+name: Release btd
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-btd
+  cancel-in-progress: false
+
+jobs:
+  check_for_bi_monthly_release:
+    name: Check if a dated release is needed
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check_if_we_need_to_tag.outputs.new_tag }}
+    steps:
+      - id: get_date
+        name: Store date information
+        run: |
+          month=$(date -u +%Y-%m)
+          day=$(date -u +%d | sed 's/^0*//')
+          tag=$(date -u +%Y-%m-%d)
+          echo "month=$month" >> "$GITHUB_OUTPUT"
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - id: get_tags_count
+        name: Count dated tags already published this month
+        run: |
+          url="https://api.github.com/repos/$GITHUB_REPOSITORY/tags"
+          curl --retry 5 -fsSL "$url" -o tags.json
+          tags=$(jq -r ".[].name" tags.json)
+          tags_count=$(echo "$tags" | grep -c "^${{ steps.get_date.outputs.month }}" || true)
+          echo "tags_count=$tags_count" >> "$GITHUB_OUTPUT"
+      - id: check_if_we_need_to_tag
+        name: Check if we should publish a dated tag
+        run: |
+          tags_count=${{ steps.get_tags_count.outputs.tags_count }}
+          day=${{ steps.get_date.outputs.day }}
+          tag=${{ steps.get_date.outputs.tag }}
+
+          if (( day < 15 && tags_count < 1 )); then
+            echo "new_tag=${tag}" >> "$GITHUB_OUTPUT"
+          fi
+          if (( day >= 15 && tags_count < 2 )); then
+            echo "new_tag=${tag}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: btd-x86_64-unknown-linux-musl.tar.gz
+            artifact: btd-x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: btd-aarch64-apple-darwin.tar.gz
+            artifact: btd-aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: btd-x86_64-apple-darwin.tar.gz
+            artifact: btd-x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: btd-x86_64-pc-windows-msvc.zip
+            artifact: btd-x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-04-11
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: btd-release
+          key: ${{ matrix.target }}
+      - name: Install musl build tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Build btd
+        run: cargo build --release -p btd --target ${{ matrix.target }}
+      - name: Package btd
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/btd staging/
+          tar -czf ${{ matrix.archive }} -C staging btd
+      - name: Package btd
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging
+          Copy-Item "target/${{ matrix.target }}/release/btd.exe" -Destination staging/
+          Compress-Archive -Path staging/btd.exe -DestinationPath "${{ matrix.archive }}"
+      - name: Generate checksum
+        if: runner.os != 'Windows'
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          else
+            shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          fi
+      - name: Generate checksum
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.archive }}").Hash.ToLower()
+          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ASCII "${{ matrix.archive }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+
+  release_latest:
+    name: Release latest tag
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/publish_tag
+        with:
+          tag: latest
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  release_bi_monthly:
+    name: Release dated tag
+    needs:
+      - build
+      - check_for_bi_monthly_release
+    if: ${{ github.ref == 'refs/heads/main' && needs.check_for_bi_monthly_release.outputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/publish_tag
+        with:
+          tag: ${{ needs.check_for_bi_monthly_release.outputs.tag }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish DotSlash file
+        uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config: .github/dotslash-config.json
+          tag: ${{ needs.check_for_bi_monthly_release.outputs.tag }}
