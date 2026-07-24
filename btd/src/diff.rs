@@ -36,6 +36,13 @@ use crate::sapling::status::Status;
 
 const CI_DANGEROUSLY_SKIP_UPSTREAM_LABEL: &str = "ci:dangerously_skip_upstream";
 
+/// Opt-in label marking a target as terminal for `ci_srcs`/hint impact: its rdeps
+/// are not fanned out for those reasons (Hash/Package/Rule still propagate).
+const CI_TERMINAL_FOR_CI_SRCS_LABEL: &str = "ci:terminal-for-ci-srcs";
+
+/// JustKnob gating the terminal-for-ci-srcs rdeps barrier (T275166280); default off until ramped.
+pub const TERMINAL_FOR_CI_SRCS_KNOB: &str = "ci_efficiency/citadel:enable_terminal_for_ci_srcs";
+
 /// Given the state, which .bzl files have changed, either directly or by transitive dependencies
 fn changed_bzl_files<'a>(
     state: &'a Targets,
@@ -291,15 +298,20 @@ impl RootImpactKind {
     }
 
     /// Higher value wins when multiple reasons apply to the same target.
+    ///
+    /// `CiSrcs` is intentionally the lowest-priority recursive reason: the
+    /// `ci:terminal-for-ci-srcs` barrier stops rdep fan-out only for `CiSrcs`
+    /// impact, so any co-occurring Hash/Package/Rule reason must win to keep
+    /// propagating through the barrier.
     pub const fn priority(self) -> u8 {
         match self {
             Self::New | Self::Remove | Self::ManualForRerun => 7,
             Self::Inputs => 6,
             Self::Labels => 5,
             Self::Hash => 4,
-            Self::CiSrcs => 3,
-            Self::Package => 2,
-            Self::Rule => 1,
+            Self::Package => 3,
+            Self::Rule => 2,
+            Self::CiSrcs => 1,
             Self::PackageValues | Self::UniversalFile | Self::SelectAll => 0,
         }
     }
@@ -437,10 +449,12 @@ pub fn immediate_target_changes<'a>(
         // We prioritize source file to cover code changes (most relevant)
         // Then target-level changes detected via label changes - these are added to non_recursive
         // so they won't impact things that depend on them recursively.
-        // Then additional trigger conditions based on hash changes, CI sources, and package changes
-        // which are added to recursive and will impact dependent targets.
-        // Until rule-based matching, which is intentionally last because we can't infer true impact
-        // just from the parsed graph and must schedule at least analysis.
+        // Then additional trigger conditions based on hash and package changes,
+        // then rule-based matching (coarse: we can't infer true impact just from the
+        // parsed graph and must schedule at least analysis).
+        // `ci_srcs` is intentionally last (lowest priority): the `ci:terminal-for-ci-srcs`
+        // barrier stops rdep fan-out only for `CiSrcs` impact, so any co-occurring
+        // Hash/Package/Rule reason must win to keep propagating through the barrier.
         if let Some(reason) = change_inputs() {
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
@@ -460,9 +474,9 @@ pub fn immediate_target_changes<'a>(
                 },
             ));
         } else if let Some(reason) = change_hash()
-            .or_else(change_ci_srcs)
             .or_else(change_package)
             .or_else(change_rule)
+            .or_else(change_ci_srcs)
         {
             res.recursive
                 .push((target, ImpactTraceData::new(target, reason)));
@@ -557,6 +571,7 @@ pub fn recursive_target_changes<'a>(
     impact: &GraphImpact<'a>,
     depth: Option<usize>,
     follow_rule_type: impl Fn(&RuleType) -> bool,
+    barrier_enabled: bool,
 ) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     // Just an optimisation, but saves building the reverse mapping
     if impact.recursive.is_empty() && impact.removed.is_empty() {
@@ -668,6 +683,14 @@ pub fn recursive_target_changes<'a>(
 
         for (lbl, reason) in todo.iter().chain(todo_silent.iter()) {
             if lbl.labels.contains(CI_DANGEROUSLY_SKIP_UPSTREAM_LABEL) {
+                continue;
+            }
+            // Don't fan `ci_srcs`/hint impact past targets opted in via the terminal label;
+            // Hash/Package/Rule still propagate.
+            if barrier_enabled
+                && lbl.labels.contains(CI_TERMINAL_FOR_CI_SRCS_LABEL)
+                && (reason.root_cause_reason == RootImpactKind::CiSrcs || reason.via_hints)
+            {
                 continue;
             }
             if follow_rule_type(&lbl.rule_type) {
@@ -1017,7 +1040,8 @@ mod tests {
             non_recursive: vec![(diff.targets().next().unwrap(), ImpactTraceData::testing())],
             ..Default::default()
         };
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true);
+        let res =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true, true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -1048,7 +1072,8 @@ mod tests {
             non_recursive: vec![(diff.targets().nth(1).unwrap(), ImpactTraceData::testing())],
             ..Default::default()
         };
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true);
+        let res =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true, true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -1084,7 +1109,8 @@ mod tests {
             diff.targets().next().unwrap(),
             ImpactTraceData::testing(),
         )]);
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(3), |_| true);
+        let res =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(3), |_| true, true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -1128,7 +1154,8 @@ mod tests {
             )],
             ..Default::default()
         };
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true);
+        let res =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(2), |_| true, true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -1160,7 +1187,8 @@ mod tests {
             BuckTarget::testing("dep", "code//foo", "prelude//rules.bzl:cxx_library");
         let impact =
             GraphImpact::from_recursive(vec![(&change_target, ImpactTraceData::testing())]);
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true);
+        let res =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true, true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -1205,7 +1233,7 @@ mod tests {
         let impact =
             GraphImpact::from_recursive(vec![(&change_target, ImpactTraceData::testing())]);
         let changes = Changes::testing(&[Status::Modified(CellPath::new("foo//changed"))]);
-        let res = recursive_target_changes(&diff, &changes, &impact, Some(1), |_| true);
+        let res = recursive_target_changes(&diff, &changes, &impact, Some(1), |_| true, true);
         let res = res.map(|xs| {
             let mut xs = xs.map(|(x, _)| x.name.as_str());
             xs.sort();
@@ -1237,7 +1265,7 @@ mod tests {
                 .map(|x| (x, ImpactTraceData::testing()))
                 .collect(),
         );
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, None, |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, None, |_| true, true);
         let res = res.map(|xs| xs.map(|(x, _)| x.name.as_str()));
         assert_eq!(res, vec![vec!["a", "b"], vec!["c", "d"], vec![]]);
     }
@@ -1536,7 +1564,7 @@ mod tests {
         assert_eq!(impact.recursive.len(), 1);
 
         assert_eq!(
-            recursive_target_changes(&targets, &changes, &impact, None, |_| true)
+            recursive_target_changes(&targets, &changes, &impact, None, |_| true, true)
                 .iter()
                 .flatten()
                 .count(),
@@ -1547,7 +1575,7 @@ mod tests {
             ImpactTraceData::testing(),
         ));
         assert_eq!(
-            recursive_target_changes(&targets, &changes, &impact, None, |_| true)
+            recursive_target_changes(&targets, &changes, &impact, None, |_| true, true)
                 .iter()
                 .flatten()
                 .count(),
@@ -1575,7 +1603,8 @@ mod tests {
             diff.targets().next().unwrap(),
             ImpactTraceData::testing(),
         )]);
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, Some(3), |_| true);
+        let res =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(3), |_| true, true);
         assert_eq!(res[0].len(), 1);
         assert_eq!(res[1].len(), 1);
         assert_eq!(res[1][0].0.name, TargetName::new("baz"));
@@ -1608,8 +1637,14 @@ mod tests {
         let diff = Targets::new(entries);
 
         let check = |impact: &GraphImpact, depth: usize, expected: &[&str]| {
-            let res =
-                recursive_target_changes(&diff, &basic_changes(), impact, Some(depth), |_| true);
+            let res = recursive_target_changes(
+                &diff,
+                &basic_changes(),
+                impact,
+                Some(depth),
+                |_| true,
+                true,
+            );
             let mut terminal = res
                 .iter()
                 .flatten()
@@ -2075,10 +2110,239 @@ mod tests {
             diff.targets().next().unwrap(),
             ImpactTraceData::testing(),
         )]);
-        let res = recursive_target_changes(&diff, &basic_changes(), &impact, None, |_| true);
+        let res = recursive_target_changes(&diff, &basic_changes(), &impact, None, |_| true, true);
 
         assert_eq!(res[0].len(), 1);
         assert_eq!(res[0][0].0.name.as_str(), "a");
         assert!(res[1].is_empty());
+    }
+
+    /// Castle with an `sh_test` depending on it via a dep edge (the `$(location)` pattern).
+    fn castle_with_sh_test_rdep() -> Targets {
+        let pkg = Package::new("xplat//ci/lint_extra");
+        Targets::new(vec![
+            TargetsEntry::Target(BuckTarget {
+                ci_srcs: Box::new([Glob::new("xplat/ci/lint_extra/**")]),
+                labels: Labels::new(&["ci:terminal-for-ci-srcs"]),
+                ..BuckTarget::testing(
+                    "castleA",
+                    pkg.as_str(),
+                    "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl:ci_sandcastle",
+                )
+            }),
+            TargetsEntry::Target(BuckTarget {
+                deps: Box::new([pkg.join(&TargetName::new("castleA"))]),
+                ..BuckTarget::testing("sh_testA", pkg.as_str(), "prelude//rules.bzl:sh_test")
+            }),
+        ])
+    }
+
+    fn recursive_names_from_castle(reason: ImpactTraceData) -> Vec<String> {
+        let diff = castle_with_sh_test_rdep();
+        let castle = diff
+            .targets()
+            .find(|t| t.name.as_str() == "castleA")
+            .unwrap();
+        let impact = GraphImpact::from_recursive(vec![(castle, reason)]);
+        recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true, true)
+            .iter()
+            .flatten()
+            .map(|(t, _)| t.name.as_str().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn test_castle_hash_impact_triggers_sh_test_rdep() {
+        // Hash impact on a castle still fans out to its sh_test rdep (snapshot drift).
+        let castle = BuckTarget::testing(
+            "castleA",
+            "xplat//ci/lint_extra",
+            "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl:ci_sandcastle",
+        );
+        let names =
+            recursive_names_from_castle(ImpactTraceData::new(&castle, RootImpactKind::Hash));
+        assert!(
+            names.contains(&"castleA".to_owned()),
+            "castle itself should be reported, got {names:?}"
+        );
+        assert!(
+            names.contains(&"sh_testA".to_owned()),
+            "Hash impact on a castle must propagate to its sh_test rdep, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_castle_ci_srcs_impact_does_not_trigger_sh_test_rdep() {
+        // A `ci_srcs` match on a castle must NOT fan out to its sh_test rdep.
+        let castle = BuckTarget::testing(
+            "castleA",
+            "xplat//ci/lint_extra",
+            "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl:ci_sandcastle",
+        );
+        let names =
+            recursive_names_from_castle(ImpactTraceData::new(&castle, RootImpactKind::CiSrcs));
+        assert!(
+            names.contains(&"castleA".to_owned()),
+            "castle itself should still be reported, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"sh_testA".to_owned()),
+            "CiSrcs impact on a castle must NOT propagate to its sh_test rdep, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_castle_via_hints_impact_does_not_trigger_sh_test_rdep() {
+        // A hint-reached castle (`via_hints`) must not fan out to its rdeps, even with a Hash reason.
+        let castle = BuckTarget::testing(
+            "castleA",
+            "xplat//ci/lint_extra",
+            "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl:ci_sandcastle",
+        );
+        let reason = ImpactTraceData {
+            via_hints: true,
+            ..ImpactTraceData::new(&castle, RootImpactKind::Hash)
+        };
+        let names = recursive_names_from_castle(reason);
+        assert!(
+            !names.contains(&"sh_testA".to_owned()),
+            "hint-reached castle must NOT propagate to its sh_test rdep, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_castle_without_label_ci_srcs_still_triggers_sh_test_rdep() {
+        // The barrier is opt-in via label: a castle rule type WITHOUT `ci:terminal-for-ci-srcs`
+        // must still fan CiSrcs impact out to its rdeps.
+        let pkg = Package::new("xplat//ci/lint_extra");
+        let diff = Targets::new(vec![
+            TargetsEntry::Target(BuckTarget {
+                ci_srcs: Box::new([Glob::new("xplat/ci/lint_extra/**")]),
+                ..BuckTarget::testing(
+                    "castleA",
+                    pkg.as_str(),
+                    "fbsource//tools/target_determinator/macros/ci_sandcastle.bzl:ci_sandcastle",
+                )
+            }),
+            TargetsEntry::Target(BuckTarget {
+                deps: Box::new([pkg.join(&TargetName::new("castleA"))]),
+                ..BuckTarget::testing("sh_testA", pkg.as_str(), "prelude//rules.bzl:sh_test")
+            }),
+        ]);
+        let castle = diff
+            .targets()
+            .find(|t| t.name.as_str() == "castleA")
+            .unwrap();
+        let impact = GraphImpact::from_recursive(vec![(
+            castle,
+            ImpactTraceData::new(castle, RootImpactKind::CiSrcs),
+        )]);
+        let names: Vec<String> =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true, true)
+                .iter()
+                .flatten()
+                .map(|(t, _)| t.name.as_str().to_owned())
+                .collect();
+        assert!(
+            names.contains(&"sh_testA".to_owned()),
+            "an unlabeled castle must still propagate CiSrcs impact to its sh_test rdep, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_non_castle_ci_srcs_impact_still_triggers_rdep() {
+        // Barrier is opt-in via label: CiSrcs on an unlabeled non-castle still propagates to rdeps.
+        let pkg = Package::new("foo//bar");
+        let diff = Targets::new(vec![
+            TargetsEntry::Target(BuckTarget::testing(
+                "lib",
+                pkg.as_str(),
+                "prelude//rules.bzl:cxx_library",
+            )),
+            TargetsEntry::Target(BuckTarget {
+                deps: Box::new([pkg.join(&TargetName::new("lib"))]),
+                ..BuckTarget::testing("app", pkg.as_str(), "prelude//rules.bzl:cxx_binary")
+            }),
+        ]);
+        let lib = diff.targets().find(|t| t.name.as_str() == "lib").unwrap();
+        let impact = GraphImpact::from_recursive(vec![(
+            lib,
+            ImpactTraceData::new(lib, RootImpactKind::CiSrcs),
+        )]);
+        let names: Vec<String> =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true, true)
+                .iter()
+                .flatten()
+                .map(|(t, _)| t.name.as_str().to_owned())
+                .collect();
+        assert!(
+            names.contains(&"app".to_owned()),
+            "CiSrcs on a non-CI target must still propagate to rdeps, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_castle_barrier_disabled_by_gate_triggers_sh_test() {
+        // Gate off: barrier bypassed, so CiSrcs impact reaches the sh_test rdep (rollback behavior).
+        let diff = castle_with_sh_test_rdep();
+        let castle = diff
+            .targets()
+            .find(|t| t.name.as_str() == "castleA")
+            .unwrap();
+        let impact = GraphImpact::from_recursive(vec![(
+            castle,
+            ImpactTraceData::new(castle, RootImpactKind::CiSrcs),
+        )]);
+        let names: Vec<String> =
+            recursive_target_changes(&diff, &basic_changes(), &impact, Some(1), |_| true, false)
+                .iter()
+                .flatten()
+                .map(|(t, _)| t.name.as_str().to_owned())
+                .collect();
+        assert!(
+            names.contains(&"sh_testA".to_owned()),
+            "with the barrier gate OFF, CiSrcs impact must still reach the sh_test \
+             rdep, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_ci_srcs_loses_to_rule_change_so_barrier_still_propagates() {
+        // A castle opted into the `ci:terminal-for-ci-srcs` barrier that matches
+        // `ci_srcs` AND has a rule (bzl) change must be recorded as `Rule`, not
+        // `CiSrcs`: `ci_srcs` is the lowest-priority reason, so the barrier -- which
+        // stops fan-out only for `CiSrcs` impact -- does not mask the rule impact
+        // that still needs to propagate to rdeps.
+        let targets = Targets::new(vec![
+            TargetsEntry::Import(BuckImport {
+                file: CellPath::new("code//my_rules.bzl"),
+                imports: Box::new([]),
+                package: None,
+            }),
+            TargetsEntry::Target(BuckTarget {
+                ci_srcs: Box::new([Glob::new("test/*.txt")]),
+                labels: Labels::new(&[CI_TERMINAL_FOR_CI_SRCS_LABEL]),
+                ..BuckTarget::testing("castleA", "code//bar", "code//my_rules.bzl:my_rule")
+            }),
+        ]);
+        let res = immediate_target_changes(
+            &targets,
+            &targets,
+            &Changes::testing(&[
+                Status::Modified(CellPath::new("code//my_rules.bzl")),
+                Status::Modified(CellPath::new("root//test/foo.txt")),
+            ]),
+            ImmediateChangeOptions {
+                track_prelude_changes: false,
+                buckconfig_select_all: false,
+            },
+        );
+        assert_eq!(res.recursive.len(), 1);
+        assert_eq!(
+            res.recursive[0].1.root_cause_reason,
+            RootImpactKind::Rule,
+            "a `ci_srcs` match co-occurring with a rule change must record `Rule`, not \
+             `CiSrcs`, so the terminal-for-ci-srcs barrier keeps propagating it"
+        );
     }
 }

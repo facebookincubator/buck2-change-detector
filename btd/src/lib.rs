@@ -305,12 +305,20 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         )?;
     }
 
+    let barrier_enabled = td_util::knobs::check_boolean_knob(diff::TERMINAL_FOR_CI_SRCS_KNOB);
     let recursive = if args.glean {
         step("glean changes");
-        glean::glean_changes(&base, &diff, &changes, args.depth)
+        glean::glean_changes(&base, &diff, &changes, args.depth, barrier_enabled)
     } else {
         step("recursive changes");
-        diff::recursive_target_changes(&diff, &changes, &immediate, args.depth, |_| true)
+        diff::recursive_target_changes(
+            &diff,
+            &changes,
+            &immediate,
+            args.depth,
+            |_| true,
+            barrier_enabled,
+        )
     };
     let sudos = if args.propagate_uses_sudo {
         step("recursive sudo labels");

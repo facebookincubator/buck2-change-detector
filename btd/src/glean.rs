@@ -37,6 +37,7 @@ pub fn glean_changes<'a>(
     diff: &'a Targets,
     changes: &Changes,
     depth: Option<usize>,
+    barrier_enabled: bool,
 ) -> Vec<Vec<(&'a BuckTarget, ImpactTraceData)>> {
     let glean_options = ImmediateChangeOptions {
         track_prelude_changes: true,
@@ -48,9 +49,17 @@ pub fn glean_changes<'a>(
         &changes.filter_by_extension(|x| x == Some("h")),
         glean_options,
     );
-    let header_rec = recursive_target_changes(diff, changes, &header, depth, |_| true);
+    let header_rec =
+        recursive_target_changes(diff, changes, &header, depth, |_| true, barrier_enabled);
     let other = immediate_target_changes(base, diff, changes, glean_options);
-    let other_rec = recursive_target_changes(diff, changes, &other, depth, |x| !cxx_rule_type(x));
+    let other_rec = recursive_target_changes(
+        diff,
+        changes,
+        &other,
+        depth,
+        |x| !cxx_rule_type(x),
+        barrier_enabled,
+    );
     merge(header_rec, other_rec)
 }
 
@@ -131,6 +140,7 @@ mod tests {
                 Status::Modified(CellPath::new("root//test.h")),
             ]),
             None,
+            true,
         );
         let mut res = res.concat().map(|(x, _)| x.label());
         res.sort();
