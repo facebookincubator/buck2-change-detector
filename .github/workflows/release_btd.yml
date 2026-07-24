@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-04-11
+          toolchain: nightly-2026-05-22
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
