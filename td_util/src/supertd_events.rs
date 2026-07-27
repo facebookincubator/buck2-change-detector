@@ -20,6 +20,20 @@ pub use tracing;
 #[allow(non_camel_case_types)]
 pub enum Event {
     RUST_ORCHESTRATOR_START,
+    /// Terminal event for an inline orchestrator run (`supertd orchestrator`),
+    /// emitted from `orchestrator::main` on success. Carries the per-phase
+    /// wall-clock breakdown (setup, BTD, VerifiableMatcher, Ranker, Verse,
+    /// Scheduler) plus the total. This closes the gap where the inline path
+    /// previously emitted no per-component completion event: the
+    /// `BTD_SUCCESS`/`VERIFIABLE_MATCHER_SUCCESS`/`RANKER_SUCCESS`/`VERSE_SUCCESS`
+    /// events fire only from the individual CLI subcommands, not the inlined
+    /// calls (the scheduler's own `SCHEDULER_SUCCESS`/`SCHEDULER_PHASE_TIMING` do
+    /// still fire inline; join on `sandcastle_instance_id`).
+    INLINE_ORCHESTRATOR_SUCCESS,
+    /// Terminal event for an inline orchestrator run that failed in some phase.
+    /// Carries the same per-phase breakdown (phases not reached read 0, so the
+    /// failing phase is identifiable) plus the error.
+    INLINE_ORCHESTRATOR_FAILURE,
     BTD_SUCCESS,
     GRAPH_COMPRESSOR_SUCCESS,
     INVALID_TRIGGER,
