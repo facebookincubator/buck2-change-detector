@@ -9,9 +9,9 @@
  */
 
 //! Shared classifier of changed file paths that affect buck2 target graph
-//! correctness. Consumers: `btd_v2` for rerun-or-not decisions, and
-//! `graph_fetch` for cached-graph invalidation classification. Keeping the
-//! patterns here ensures the two consumers stay in lockstep.
+//! correctness. Keeping the patterns here lets consumers distinguish changes
+//! that require a full graph rerun from repository-wide inputs whose affected
+//! packages can be updated incrementally.
 
 use crate::types::CellPath;
 
@@ -48,7 +48,17 @@ pub fn requires_graph_rerun(path: &CellPath) -> bool {
         return false;
     }
     s.starts_with("fbsource//tools/buck2-versions/")
-        || s.to_ascii_lowercase().contains("third-party-buck")
+        || s.eq_ignore_ascii_case("fbcode//third-party-buck/config.py")
+        || s.eq_ignore_ascii_case("fbsource//fbcode/third-party-buck/config.py")
+}
+
+/// Whether a changed file belongs to Buck's third-party package tree.
+///
+/// TP2 packages can affect targets in every requested universe, but Buck can
+/// still re-query the changed packages incrementally.
+pub fn is_third_party_buck(path: &CellPath) -> bool {
+    let s = path.as_str();
+    !s.contains("buck2/tests") && s.to_ascii_lowercase().contains("third-party-buck")
 }
 
 #[cfg(test)]
@@ -95,9 +105,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::third_party_buck("fbsource//third-party-buck/platform/build", true)]
-    #[case::third_party_buck_uppercase("fbsource//Third-Party-Buck/platform", true)]
+    #[case::third_party_buck("fbsource//third-party-buck/platform/build", false)]
+    #[case::third_party_buck_uppercase("fbsource//Third-Party-Buck/platform", false)]
     #[case::buck2_versions("fbsource//tools/buck2-versions/stable", true)]
+    #[case::third_party_buck_config("fbcode//third-party-buck/config.py", true)]
+    #[case::third_party_buck_config_project_relative(
+        "fbsource//fbcode/third-party-buck/config.py",
+        true
+    )]
     #[case::buckconfig_not_rerun_only("fbsource//.buckconfig", false)]
     #[case::mode_dir_not_rerun_only("fbsource//fbcode/mode/dev", false)]
     #[case::regular_source_file("fbcode//some/path/main.cpp", false)]
@@ -111,6 +126,23 @@ mod tests {
             requires_graph_rerun(&cell_path),
             expected,
             "requires_graph_rerun({path}) should be {expected}",
+        );
+    }
+
+    #[rstest]
+    #[case::third_party_buck("fbsource//third-party-buck/platform/build", true)]
+    #[case::third_party_buck_uppercase("fbsource//Third-Party-Buck/platform", true)]
+    #[case::regular_source_file("fbcode//some/path/main.cpp", false)]
+    #[case::buck2_tests_third_party_exempted(
+        "fbcode//buck2/tests/some_test/third-party-buck/foo",
+        false
+    )]
+    fn detects_third_party_buck_changes(#[case] path: &str, #[case] expected: bool) {
+        let cell_path = CellPath::new(path);
+        assert_eq!(
+            is_third_party_buck(&cell_path),
+            expected,
+            "is_third_party_buck({path}) should be {expected}",
         );
     }
 }
