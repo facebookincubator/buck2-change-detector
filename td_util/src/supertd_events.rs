@@ -35,6 +35,7 @@ pub enum Event {
     /// failing phase is identifiable) plus the error.
     INLINE_ORCHESTRATOR_FAILURE,
     BTD_SUCCESS,
+    BTD_SCOPE_CREATED,
     GRAPH_COMPRESSOR_SUCCESS,
     INVALID_TRIGGER,
     RANKER_SUCCESS,
