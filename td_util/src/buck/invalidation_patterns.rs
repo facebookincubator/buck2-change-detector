@@ -15,18 +15,80 @@
 
 use crate::types::CellPath;
 
+const MODE_DIRECTORIES: &[&str] = &[
+    "fbsource//arvr/mode/",
+    "fbsource//fbandroid/mode/",
+    "fbsource//fbcode/mode/",
+    "fbsource//fbobjc/mode/",
+    "fbsource//xplat/mode/",
+];
+
+/// The graph refresh, target selection, and universe effects of a path change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphChangePolicy {
+    full_rerun: bool,
+    select_all: bool,
+    global: bool,
+}
+
+impl GraphChangePolicy {
+    /// Whether Buck must re-query the full requested universe.
+    pub fn requires_full_rerun(self) -> bool {
+        self.full_rerun
+    }
+
+    /// Whether every target should be reported as affected.
+    pub fn selects_all_targets(self) -> bool {
+        self.select_all
+    }
+
+    /// Whether the change can affect targets outside its requested universe.
+    pub fn crosses_universe_boundary(self) -> bool {
+        self.global
+    }
+
+    /// Whether the change crosses universes without requiring a full rerun.
+    pub fn is_incremental_across_universes(self) -> bool {
+        self.global && !self.full_rerun
+    }
+
+    /// Combines the effects of multiple changed paths.
+    pub fn combine(self, other: Self) -> Self {
+        Self {
+            full_rerun: self.full_rerun || other.full_rerun,
+            select_all: self.select_all || other.select_all,
+            global: self.global || other.global,
+        }
+    }
+}
+
+/// Classifies the graph effects of a single changed path.
+pub fn classify_graph_change(path: &CellPath) -> GraphChangePolicy {
+    let s = path.as_str();
+    if s.contains("buck2/tests") {
+        return GraphChangePolicy::default();
+    }
+
+    let select_all = invalidates_graph(path);
+    let requires_rerun = requires_graph_rerun(path);
+    let full_rerun = select_all || requires_rerun;
+    let global = requires_rerun
+        || is_third_party_buck(path)
+        || s.starts_with("fbsource//tools/buckconfigs/")
+        || (MODE_DIRECTORIES.iter().any(|prefix| s.starts_with(prefix))
+            && matches!(path.extension(), None | Some("buckconfig")));
+
+    GraphChangePolicy {
+        full_rerun,
+        select_all,
+        global,
+    }
+}
+
 /// Whether a changed file requires marking all targets as affected.
 /// Limited to buckconfig and mode directory changes that alter how every
 /// target in the repo is built.
 pub fn invalidates_graph(path: &CellPath) -> bool {
-    const MODE_DIRECTORIES: &[&str] = &[
-        "fbsource//arvr/mode/",
-        "fbsource//fbandroid/mode/",
-        "fbsource//fbcode/mode/",
-        "fbsource//fbobjc/mode/",
-        "fbsource//xplat/mode/",
-    ];
-
     let s = path.as_str();
 
     if s.contains("buck2/tests") {
@@ -144,5 +206,29 @@ mod tests {
             expected,
             "is_third_party_buck({path}) should be {expected}",
         );
+    }
+
+    #[rstest]
+    #[case::nested_buckconfig("fbcode//some/path/.buckconfig", true, true, false)]
+    #[case::mode_buckconfig("fbsource//arvr/mode/dv/dev.buckconfig", true, true, true)]
+    #[case::buck2_versions("fbsource//tools/buck2-versions/stable", true, false, true)]
+    #[case::third_party_buck("fbsource//third-party-buck/platform/build", false, false, true)]
+    #[case::third_party_buck_config("fbcode//third-party-buck/config.py", true, false, true)]
+    #[case::buck2_test(
+        "fbcode//buck2/tests/third-party-buck/.buckconfig",
+        false,
+        false,
+        false
+    )]
+    fn classifies_graph_change(
+        #[case] path: &str,
+        #[case] full_rerun: bool,
+        #[case] select_all: bool,
+        #[case] global: bool,
+    ) {
+        let policy = classify_graph_change(&CellPath::new(path));
+        assert_eq!(policy.requires_full_rerun(), full_rerun, "{path}");
+        assert_eq!(policy.selects_all_targets(), select_all, "{path}");
+        assert_eq!(policy.crosses_universe_boundary(), global, "{path}");
     }
 }
