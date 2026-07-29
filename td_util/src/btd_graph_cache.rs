@@ -12,10 +12,7 @@
 //!
 //! Reads the JSON metadata file produced by `supertd graph-fetch` (see
 //! `target_determinator/graph_fetch`) and logs it as a
-//! `BTD_GRAPH_CACHE_LOOKUP` event. During the migration the older PHP
-//! producer `BTDCachedGraphDownloaderScriptController.php` is still
-//! invoked when the `use_rust_graph_fetch` JK is false; both producers
-//! emit the same metadata shape.
+//! `BTD_GRAPH_CACHE_LOOKUP` event.
 
 use std::path::PathBuf;
 
@@ -27,7 +24,6 @@ use crate::workflow_error::WorkflowError;
 #[derive(Parser, Debug)]
 pub struct Args {
     /// Path to the metadata JSON file produced by `supertd graph-fetch`
-    /// (or the legacy PHP producer during the JK-gated cutover).
     #[arg(long)]
     pub metadata_file: PathBuf,
 }
