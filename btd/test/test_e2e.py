@@ -226,7 +226,6 @@ def get_patches() -> list[str]:
     return test_names
 
 
-# pyre-ignore[56]: Pyre cannot infer type for parametrize argument
 @pytest.mark.parametrize("patch_name", get_patches())
 def test_run(patch_name: str) -> None:
     env = EnvConfig.from_env()
