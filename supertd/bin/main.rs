@@ -33,7 +33,7 @@ enum Args {
     #[cfg(fbcode_build)]
     Citadel(verifiable_matcher::Args),
     #[cfg(fbcode_build)]
-    GraphCompressor(graph_compressor::Args),
+    GraphCompressor(target_graph_build::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     GraphFetch(graph_fetch::Args),
     #[cfg(fbcode_build)]
@@ -126,7 +126,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::Citadel(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
-        Args::GraphCompressor(args) => graph_compressor::main(args),
+        Args::GraphCompressor(args) => target_graph_build::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::GraphFetch(args) => graph_fetch::main(fb, args).await,
         #[cfg(fbcode_build)]
