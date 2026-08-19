@@ -118,7 +118,13 @@ pub async fn status_change(rev: &str, cwd: Option<&Path>) -> anyhow::Result<Vec<
 }
 
 /// Unified git-format diff for `files` between two revisions
-/// (`sl diff --rev BASE::DIFF --git <files>`).
+/// (`sl diff --rev BASE::DIFF --git --binary <files>`).
+///
+/// `--binary` is what makes the output a faithful record of the change: with
+/// it, a binary file's differing content is emitted as a `GIT binary patch`
+/// block, where plain `--git` prints only `Binary file <path> has changed`.
+/// That line is identical no matter what the new content is, so any consumer
+/// comparing two patches would read two different binaries as the same change.
 pub async fn diff_git(
     base: &str,
     diff: &str,
@@ -126,7 +132,7 @@ pub async fn diff_git(
     cwd: Option<&Path>,
 ) -> anyhow::Result<String> {
     let revset = format!("{base}::{diff}");
-    let mut args = vec!["diff", "--rev", revset.as_str(), "--git"];
+    let mut args = vec!["diff", "--rev", revset.as_str(), "--git", "--binary"];
     args.extend_from_slice(files);
     run_sl_async(&args, cwd).await
 }
