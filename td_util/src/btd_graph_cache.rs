@@ -11,7 +11,7 @@
 //! CLI command to log BTD graph cache lookup metadata to Scuba.
 //!
 //! Reads the JSON metadata file produced by `supertd graph-fetch` (see
-//! `target_determinator/graph_fetch`) and logs it as a
+//! `target_determinator/graph/fetch`) and logs it as a
 //! `BTD_GRAPH_CACHE_LOOKUP` event.
 
 use std::path::PathBuf;

@@ -35,7 +35,7 @@ enum Args {
     #[cfg(fbcode_build)]
     GraphCompressor(target_graph_build::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
-    GraphFetch(graph_fetch::Args),
+    GraphFetch(target_graph_fetch::Args),
     #[cfg(fbcode_build)]
     LogGraphCache(td_util::btd_graph_cache::Args),
     #[cfg(fbcode_build)]
@@ -128,7 +128,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::GraphCompressor(args) => target_graph_build::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::GraphFetch(args) => graph_fetch::main(fb, args).await,
+        Args::GraphFetch(args) => target_graph_fetch::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::LogGraphCache(args) => td_util::btd_graph_cache::main(args),
         #[cfg(fbcode_build)]
