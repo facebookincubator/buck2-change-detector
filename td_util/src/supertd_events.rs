@@ -39,6 +39,10 @@ pub enum Event {
     GRAPH_COMPRESSOR_SUCCESS,
     INVALID_TRIGGER,
     RANKER_SUCCESS,
+    /// Per-substep timing breakdown for one Ranker invocation. Substeps are
+    /// registered dynamically through `SubstepRecorder`, so new scoped work is
+    /// included without extending this event's fixed schema.
+    RANKER_SUBSTEP_TIMING,
     SCHEDULER_SUCCESS,
     SCHEDULER_FAILURE,
     /// Per-phase timing breakdown for a scheduler run. Emitted alongside
