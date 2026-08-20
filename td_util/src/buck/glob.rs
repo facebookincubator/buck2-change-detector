@@ -163,5 +163,30 @@ mod tests {
             "www/foo/bar/.llms/rules/.mvwa_integrity_config.md",
             false,
         );
+        // A literal final segment does not exempt the pattern from
+        // require_literal_leading_dot: the `**` still refuses to cross a
+        // dot-prefixed component, so the leaf never gets a chance to match.
+        many(&["www/**/BUCK"], "www/.llms/BUCK", false);
+        many(
+            &[
+                "www/**/BUCK",
+                "www/**/.*/**/BUCK",
+                "www/**/.*/**/.*/**/BUCK",
+            ],
+            "www/foo/.llms/.rules/BUCK",
+            true,
+        );
+        // Proof that the match above comes from the two-dot pattern, whose
+        // second and third `**` both consume zero components.
+        many(
+            &["www/**/BUCK", "www/**/.*/**/BUCK"],
+            "www/foo/.llms/.rules/BUCK",
+            false,
+        );
+        // The dot directory sitting directly under the base, so EVERY `**` in
+        // the pattern is driven to zero at once — including the leading one.
+        // The cases above all root at `www/foo/...`, which lets the leading
+        // `**` consume a real component, so none of them exercise this.
+        one("www/**/.*/**/BUCK", "www/.llms/BUCK", true);
     }
 }
