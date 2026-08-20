@@ -29,7 +29,7 @@ enum Args {
     Audit(audit::Args),
     Btd(btd::Args),
     #[cfg(fbcode_build)]
-    BtdV2(btd_v2::args::Args),
+    BtdV2(target_graph_select::args::Args),
     #[cfg(fbcode_build)]
     Citadel(verifiable_matcher::Args),
     #[cfg(fbcode_build)]
@@ -122,7 +122,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Audit(args) => audit::main(args),
         Args::Btd(args) => btd::main(args),
         #[cfg(fbcode_build)]
-        Args::BtdV2(args) => btd_v2::main(args),
+        Args::BtdV2(args) => target_graph_select::main(args),
         #[cfg(fbcode_build)]
         Args::Citadel(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
