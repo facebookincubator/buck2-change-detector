@@ -16,6 +16,7 @@ use std::process::Termination;
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
+use clap::Subcommand;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
 use td_util::logging::init_logger_start_time;
@@ -34,6 +35,11 @@ enum Args {
     Citadel(verifiable_matcher::Args),
     #[cfg(fbcode_build)]
     GraphCompressor(target_graph_build::Args),
+    #[cfg(fbcode_build)]
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommand,
+    },
     #[cfg(all(fbcode_build, target_os = "linux"))]
     GraphFetch(target_graph_fetch::Args),
     #[cfg(fbcode_build)]
@@ -73,6 +79,32 @@ enum Args {
     LocalValidationFilter(local_validation_filter::Args),
     #[cfg(fbcode_build)]
     Summary(citrace_v2::cli::SummaryArgs),
+}
+
+#[cfg(fbcode_build)]
+#[derive(Subcommand)]
+enum GraphCommand {
+    Build(target_graph_build::Args),
+    #[cfg(target_os = "linux")]
+    Fetch(target_graph_fetch::Args),
+    #[cfg(target_os = "linux")]
+    Prepare(target_graph_prepare::Args),
+    Select(target_graph_select::args::Args),
+}
+
+#[cfg(fbcode_build)]
+async fn run_graph(
+    fb: FacebookInit,
+    command: GraphCommand,
+) -> Result<(), td_util::workflow_error::WorkflowError> {
+    match command {
+        GraphCommand::Build(args) => target_graph_build::main(args),
+        #[cfg(target_os = "linux")]
+        GraphCommand::Fetch(args) => target_graph_fetch::main(fb, args).await,
+        #[cfg(target_os = "linux")]
+        GraphCommand::Prepare(args) => target_graph_prepare::main(fb, args).await,
+        GraphCommand::Select(args) => target_graph_select::main(args),
+    }
 }
 
 #[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
@@ -122,13 +154,15 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Audit(args) => audit::main(args),
         Args::Btd(args) => btd::main(args),
         #[cfg(fbcode_build)]
-        Args::BtdV2(args) => target_graph_select::main(args),
+        Args::BtdV2(args) => run_graph(fb, GraphCommand::Select(args)).await,
         #[cfg(fbcode_build)]
         Args::Citadel(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
-        Args::GraphCompressor(args) => target_graph_build::main(args),
+        Args::GraphCompressor(args) => run_graph(fb, GraphCommand::Build(args)).await,
+        #[cfg(fbcode_build)]
+        Args::Graph { command } => run_graph(fb, command).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::GraphFetch(args) => target_graph_fetch::main(fb, args).await,
+        Args::GraphFetch(args) => run_graph(fb, GraphCommand::Fetch(args)).await,
         #[cfg(fbcode_build)]
         Args::LogGraphCache(args) => td_util::btd_graph_cache::main(args),
         #[cfg(fbcode_build)]
@@ -201,5 +235,29 @@ mod tests {
             }
         }
         check(&mut Args::command());
+    }
+
+    #[cfg(fbcode_build)]
+    #[test]
+    fn graph_commands_are_grouped_with_compatibility_aliases() {
+        let command = Args::command();
+        let graph = command.find_subcommand("graph").unwrap();
+        let nested = graph
+            .get_subcommands()
+            .map(|command| command.get_name())
+            .collect::<Vec<_>>();
+
+        assert!(nested.contains(&"build"));
+        assert!(nested.contains(&"select"));
+        #[cfg(target_os = "linux")]
+        assert!(nested.contains(&"fetch"));
+        #[cfg(target_os = "linux")]
+        assert!(nested.contains(&"prepare"));
+
+        for alias in ["btd-v2", "graph-compressor"] {
+            assert!(command.find_subcommand(alias).is_some());
+        }
+        #[cfg(target_os = "linux")]
+        assert!(command.find_subcommand("graph-fetch").is_some());
     }
 }
