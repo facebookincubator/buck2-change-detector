@@ -34,6 +34,9 @@ pub enum Event {
     /// Carries the same per-phase breakdown (phases not reached read 0, so the
     /// failing phase is identifiable) plus the error.
     INLINE_ORCHESTRATOR_FAILURE,
+    /// Emitted once unified base-graph preparation has produced a valid graph
+    /// and any requested structured metadata. Failures emit no success event.
+    BTD_BASE_GRAPH_PREPARATION_SUCCESS,
     BTD_SUCCESS,
     BTD_SCOPE_CREATED,
     GRAPH_COMPRESSOR_SUCCESS,
