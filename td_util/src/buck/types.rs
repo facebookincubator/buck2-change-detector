@@ -770,12 +770,23 @@ impl Glob {
 pub enum PatternType {
     Package,
     Recursive,
+    /// Recursive, and additionally covering cells whose roots lie beneath the
+    /// directory (`PACKAGE` file semantics: a `PACKAGE` file applies to
+    /// everything physically beneath it, cells included). Buck target
+    /// patterns stop at cell boundaries, so this cannot be expressed as a
+    /// single pattern; it must be lowered to one `Recursive` pattern per
+    /// covered cell before querying.
+    RecursiveAcrossCells,
 }
 
 impl PatternType {
-    /// Merge two pattern types: Recursive wins (superset of Package)
+    /// Merge two pattern types: the wider pattern wins
+    /// (`RecursiveAcrossCells` ⊃ `Recursive` ⊃ `Package`)
     pub fn merge(self, other: Self) -> Self {
         match (self, other) {
+            (Self::RecursiveAcrossCells, _) | (_, Self::RecursiveAcrossCells) => {
+                Self::RecursiveAcrossCells
+            }
             (Self::Recursive, _) | (_, Self::Recursive) => Self::Recursive,
             (Self::Package, Self::Package) => Self::Package,
         }
@@ -788,7 +799,10 @@ impl Package {
 
         match pattern_type {
             PatternType::Package => TargetPattern::new(&format!("{}:", package_path)),
-            PatternType::Recursive => {
+            // The `RecursiveAcrossCells` pattern covers only this cell here:
+            // no single Buck pattern can cross a cell boundary, so the cells
+            // beneath need their own patterns.
+            PatternType::Recursive | PatternType::RecursiveAcrossCells => {
                 let is_cell_root = package_path.ends_with("//");
                 let recursive_suffix = if is_cell_root { "..." } else { "/..." };
                 TargetPattern::new(&format!("{}{}", package_path, recursive_suffix))
@@ -832,6 +846,32 @@ mod tests {
         );
         assert_eq!(
             cell_root.to_target_pattern(PatternType::Recursive).as_str(),
+            "fbcode//..."
+        );
+    }
+
+    #[test]
+    fn test_pattern_type_merge_widest_wins() {
+        use PatternType::*;
+        assert_eq!(Package.merge(Package), Package);
+        assert_eq!(Package.merge(Recursive), Recursive);
+        assert_eq!(Recursive.merge(Package), Recursive);
+        assert_eq!(Recursive.merge(RecursiveAcrossCells), RecursiveAcrossCells);
+        assert_eq!(RecursiveAcrossCells.merge(Package), RecursiveAcrossCells);
+    }
+
+    #[test]
+    fn test_recursive_across_cells_pattern_covers_own_cell() {
+        assert_eq!(
+            Package::new("fbcode//foo")
+                .to_target_pattern(PatternType::RecursiveAcrossCells)
+                .as_str(),
+            "fbcode//foo/..."
+        );
+        assert_eq!(
+            Package::new("fbcode//")
+                .to_target_pattern(PatternType::RecursiveAcrossCells)
+                .as_str(),
             "fbcode//..."
         );
     }
