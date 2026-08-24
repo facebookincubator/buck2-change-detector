@@ -73,12 +73,17 @@ pub fn frame_worker_counts_with_callers(
     }
 
     // Multithreaded zstd workers run in addition to each Rayon caller. Reserve
-    // those callers and give every active frame the same bounded worker count.
+    // those callers, then distribute the remaining worker slots evenly across
+    // frames so integer division does not leave usable capacity idle.
     let max_workers = max_workers.clamp(1, ZSTD_MAX_WORKERS);
     let worker_budget = rayon_threads
         .saturating_sub(frames)
         .min(frames.saturating_mul(max_workers));
-    vec![worker_budget / frames; frames as usize]
+    let workers_per_frame = worker_budget / frames;
+    let frames_with_extra_worker = worker_budget % frames;
+    (0..frames)
+        .map(|frame| workers_per_frame + u32::from(frame < frames_with_extra_worker))
+        .collect()
 }
 
 /// Compress `input` into a self-contained zstd frame at the default
@@ -134,8 +139,8 @@ mod tests {
     #[rstest]
     #[case(0, 16, 2, vec![])]
     #[case(4, 4, 2, vec![0; 4])]
-    #[case(4, 7, 2, vec![0; 4])]
-    #[case(4, 10, 2, vec![1; 4])]
+    #[case(4, 7, 2, vec![1, 1, 1, 0])]
+    #[case(4, 10, 2, vec![2, 2, 1, 1])]
     #[case(16, 316, 2, vec![2; 16])]
     fn frame_worker_counts_follow_the_supplied_budget(
         #[case] frames: u32,
