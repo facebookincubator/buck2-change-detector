@@ -60,6 +60,27 @@ pub fn frame_worker_count(frames: u32) -> u32 {
     (cores / frames.max(1)).clamp(1, ZSTD_MAX_WORKERS)
 }
 
+/// Worker counts for a bounded set of Rayon frame tasks. Reserves one caller
+/// thread per active frame and distributes the remaining Rayon budget across
+/// the frames. A zero entry selects zstd's single-threaded mode for that frame.
+pub fn frame_worker_counts_with_callers(
+    frames: u32,
+    rayon_threads: u32,
+    max_workers: u32,
+) -> Vec<u32> {
+    if frames == 0 {
+        return Vec::new();
+    }
+
+    // Multithreaded zstd workers run in addition to each Rayon caller. Reserve
+    // those callers and give every active frame the same bounded worker count.
+    let max_workers = max_workers.clamp(1, ZSTD_MAX_WORKERS);
+    let worker_budget = rayon_threads
+        .saturating_sub(frames)
+        .min(frames.saturating_mul(max_workers));
+    vec![worker_budget / frames; frames as usize]
+}
+
 /// Compress `input` into a self-contained zstd frame at the default
 /// compression level. When `workers > 1`, uses the multithreaded zstd
 /// encoder; when `workers == 1`, uses the single-threaded `encode_all`
@@ -81,6 +102,8 @@ pub fn zstd_encode_to_vec(input: &[u8], workers: u32) -> anyhow::Result<Vec<u8>>
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -106,5 +129,23 @@ mod tests {
         assert!(frame_worker_count(22) >= 1);
         assert!(frame_worker_count(22) <= ZSTD_MAX_WORKERS);
         assert_eq!(frame_worker_count(u32::MAX), 1);
+    }
+
+    #[rstest]
+    #[case(0, 16, 2, vec![])]
+    #[case(4, 4, 2, vec![0; 4])]
+    #[case(4, 7, 2, vec![0; 4])]
+    #[case(4, 10, 2, vec![1; 4])]
+    #[case(16, 316, 2, vec![2; 16])]
+    fn frame_worker_counts_follow_the_supplied_budget(
+        #[case] frames: u32,
+        #[case] rayon_threads: u32,
+        #[case] max_workers: u32,
+        #[case] expected: Vec<u32>,
+    ) {
+        assert_eq!(
+            frame_worker_counts_with_callers(frames, rayon_threads, max_workers),
+            expected
+        );
     }
 }

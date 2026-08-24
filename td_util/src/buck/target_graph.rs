@@ -25,7 +25,7 @@ use rustc_hash::FxHasher;
 use serde::Deserialize;
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
-use td_util::zstd::frame_worker_count;
+use td_util::zstd::frame_worker_counts_with_callers;
 
 use crate::types::Package;
 use crate::types::PatternType;
@@ -159,6 +159,11 @@ pub type IdHashSet<K> = HashSet<K, BuildNoHash>;
 
 const MAX_SHARDS: usize = 16;
 const TARGET_ENTRIES_PER_SHARD: usize = 1_500_000;
+/// Bound compressed frames retained before they are written. Sixteen keeps
+/// enough independent frames in flight for parallel compression while
+/// preventing the complete multi-gigabyte output from accumulating in RAM.
+const FRAME_COMPRESSION_BATCH_SIZE: usize = 16;
+const FRAME_COMPRESSION_MAX_ZSTD_WORKERS: u32 = 2;
 
 /// Picks a shard count for a sharded field given its total entry count.
 /// Aims for ~1.5M entries per shard so per-frame zstd decompression stays
@@ -401,9 +406,8 @@ pub struct MinimizedBuckTarget {
 /// records the shard count for each field; a trailer at the end records
 /// per-frame compressed and uncompressed lengths plus its own offset.
 ///
-/// Per-frame zstd workers self-throttle to the host: on a 192-core machine
-/// each frame uses 8 worker threads; on a 30-core worker each frame is
-/// single-threaded.
+/// Per-frame zstd workers divide the Rayon thread budget across the active
+/// batch while reserving each frame's caller thread.
 macro_rules! define_target_graph_framed_io {
     ($($field:ident: $ty:ty),* $(,)?) => {
         #[derive(Debug, Serialize, Deserialize)]
@@ -447,13 +451,13 @@ macro_rules! define_target_graph_framed_io {
 
                 let total_frame_count: usize =
                     field_shard_counts.iter().map(|&c| c as usize).sum::<usize>();
-                let workers = frame_worker_count(total_frame_count as u32);
-
-                let mut jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<(Vec<u8>, u64)> + Send + '_>> =
-                    Vec::with_capacity(total_frame_count);
+                let rayon_threads = rayon::current_num_threads();
+                let mut jobs: Vec<
+                    Box<dyn FnOnce(u32) -> anyhow::Result<(Vec<u8>, u64)> + Send + '_>,
+                > = Vec::with_capacity(total_frame_count);
                 $(
                     for (shard_idx, shard) in self.$field.shards().iter().enumerate() {
-                        jobs.push(Box::new(move || -> anyhow::Result<(Vec<u8>, u64)> {
+                        jobs.push(Box::new(move |workers| -> anyhow::Result<(Vec<u8>, u64)> {
                             bincode_encode_compressed(shard, workers).with_context(|| {
                                 format!(
                                     "serialize and compress {} shard {}",
@@ -465,23 +469,39 @@ macro_rules! define_target_graph_framed_io {
                     }
                 )*
 
-                let frames: Vec<(Vec<u8>, u64)> = jobs
-                    .into_par_iter()
-                    .map(|f| f())
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-
                 let header_bytes = header_size(NUM_FIELDS) as u64;
                 let mut compressed_lens: Vec<u64> = Vec::with_capacity(total_frame_count);
                 let mut uncompressed_lens: Vec<u64> = Vec::with_capacity(total_frame_count);
                 let mut trailer_offset: u64 = header_bytes;
 
-                for (compressed, uncompressed_len) in frames {
-                    compressed_lens.push(compressed.len() as u64);
-                    uncompressed_lens.push(uncompressed_len);
-                    writer.write_all(&compressed)?;
-                    trailer_offset = trailer_offset
-                        .checked_add(compressed.len() as u64)
-                        .context("frame trailer offset overflow")?;
+                let mut remaining_jobs = jobs.into_iter();
+                loop {
+                    let batch: Vec<_> = remaining_jobs
+                        .by_ref()
+                        .take(FRAME_COMPRESSION_BATCH_SIZE)
+                        .collect();
+                    if batch.is_empty() {
+                        break;
+                    }
+                    let worker_counts = frame_worker_counts_with_callers(
+                        batch.len() as u32,
+                        rayon_threads as u32,
+                        FRAME_COMPRESSION_MAX_ZSTD_WORKERS,
+                    );
+                    let frames: Vec<(Vec<u8>, u64)> = batch
+                        .into_par_iter()
+                        .zip(worker_counts.into_par_iter())
+                        .map(|(f, workers)| f(workers))
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+
+                    for (compressed, uncompressed_len) in frames {
+                        compressed_lens.push(compressed.len() as u64);
+                        uncompressed_lens.push(uncompressed_len);
+                        writer.write_all(&compressed)?;
+                        trailer_offset = trailer_offset
+                            .checked_add(compressed.len() as u64)
+                            .context("frame trailer offset overflow")?;
+                    }
                 }
 
                 writer.write_all(&(total_frame_count as u32).to_le_bytes())?;
@@ -1426,7 +1446,9 @@ fn bincode_encode_compressed<T: Serialize>(
 
     let mut encoder = zstd::Encoder::new(Vec::new(), zstd::DEFAULT_COMPRESSION_LEVEL)
         .context("zstd::Encoder::new")?;
-    if workers > 1 {
+    // zstd uses zero for single-threaded mode and positive values for the
+    // number of background compression workers.
+    if workers > 0 {
         encoder
             .multithread(workers)
             .context("zstd encoder.multithread")?;
