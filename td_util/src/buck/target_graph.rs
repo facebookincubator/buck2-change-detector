@@ -26,7 +26,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
 use td_util::zstd::frame_worker_count;
-use td_util::zstd::zstd_encode_to_vec;
 
 use crate::types::Package;
 use crate::types::PatternType;
@@ -455,23 +454,13 @@ macro_rules! define_target_graph_framed_io {
                 $(
                     for (shard_idx, shard) in self.$field.shards().iter().enumerate() {
                         jobs.push(Box::new(move || -> anyhow::Result<(Vec<u8>, u64)> {
-                            let serialized = bincode_encode(shard).with_context(|| {
+                            bincode_encode_compressed(shard, workers).with_context(|| {
                                 format!(
-                                    "serialize {} shard {}",
+                                    "serialize and compress {} shard {}",
                                     stringify!($field),
                                     shard_idx
                                 )
-                            })?;
-                            let uncompressed_len = serialized.len() as u64;
-                            let compressed = zstd_encode_to_vec(&serialized, workers)
-                                .with_context(|| {
-                                    format!(
-                                        "compress {} shard {}",
-                                        stringify!($field),
-                                        shard_idx
-                                    )
-                                })?;
-                            Ok((compressed, uncompressed_len))
+                            })
                         }) as _);
                     }
                 )*
@@ -1422,8 +1411,37 @@ fn read_dyn_lengths(bytes: &[u8], expected_count: usize) -> anyhow::Result<Vec<u
         .collect())
 }
 
+#[cfg(test)]
 fn bincode_encode<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     bincode::serde::encode_to_vec(value, bincode::config::standard()).context("bincode encode")
+}
+
+fn bincode_encode_compressed<T: Serialize>(
+    value: &T,
+    workers: u32,
+) -> anyhow::Result<(Vec<u8>, u64)> {
+    // Bincode emits many small writes. Buffer them before zstd so streaming
+    // does not trade the eliminated frame allocation for encoder call overhead.
+    const BUFFER_SIZE: usize = 1024 * 1024;
+
+    let mut encoder = zstd::Encoder::new(Vec::new(), zstd::DEFAULT_COMPRESSION_LEVEL)
+        .context("zstd::Encoder::new")?;
+    if workers > 1 {
+        encoder
+            .multithread(workers)
+            .context("zstd encoder.multithread")?;
+    }
+    let mut writer = std::io::BufWriter::with_capacity(BUFFER_SIZE, encoder);
+    let uncompressed_len =
+        bincode::serde::encode_into_std_write(value, &mut writer, bincode::config::standard())
+            .context("bincode encode into zstd writer")?;
+    writer.flush().context("flush bincode compression buffer")?;
+    let encoder = writer
+        .into_inner()
+        .map_err(|error| error.into_error())
+        .context("finish bincode compression buffer")?;
+    let compressed = encoder.finish().context("zstd encoder finish")?;
+    Ok((compressed, uncompressed_len as u64))
 }
 
 fn bincode_decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<T> {
@@ -2751,6 +2769,29 @@ mod tests {
         let decoded: ShardedField<IdDashMap<TargetId, String>> = bincode_decode(&encoded).unwrap();
 
         assert_eq!(decoded.shard_count(), 1);
+        assert_eq!(decoded.len(), 200);
+        for raw_id in 0..200u64 {
+            assert_eq!(
+                decoded.get(&TargetId(raw_id)).map(|v| v.clone()),
+                Some(format!("v{raw_id}"))
+            );
+        }
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    fn sharded_field_round_trips_through_streaming_compression(#[case] workers: u32) {
+        let original: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(4);
+        for raw_id in 0..200u64 {
+            original.insert(TargetId(raw_id), format!("v{raw_id}"));
+        }
+
+        let (compressed, uncompressed_len) = bincode_encode_compressed(&original, workers).unwrap();
+        let encoded = zstd::decode_all(&compressed[..]).unwrap();
+        let decoded: ShardedField<IdDashMap<TargetId, String>> = bincode_decode(&encoded).unwrap();
+
+        assert_eq!(uncompressed_len, encoded.len() as u64);
         assert_eq!(decoded.len(), 200);
         for raw_id in 0..200u64 {
             assert_eq!(
