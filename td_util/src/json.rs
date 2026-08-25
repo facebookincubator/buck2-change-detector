@@ -18,6 +18,7 @@ use std::io::Read;
 use std::io::Write;
 use std::io::{self};
 use std::path::Path;
+use std::sync::Mutex;
 
 use anyhow::Context;
 use itertools::Itertools;
@@ -127,130 +128,246 @@ where
         .collect::<anyhow::Result<Vec<T>>>()
 }
 
-/// Like [`read_reader_lines_parallel_bytes`], but decompresses the input in
-/// fixed-size chunks on a dedicated producer thread and parses each chunk's
-/// lines on a rayon worker pool, so decompression and parsing overlap.
+/// Like [`read_reader_lines_parallel_bytes`], but reads the input in
+/// fixed-size chunks and parses each one on the rayon pool, so reading (and
+/// decompression) overlaps with parsing.
 ///
 /// Compared to the slurp-then-parse variant this:
-/// - bounds peak memory at roughly `chunk_size * channel_depth + |Vec<T>|`
-///   instead of the full decompressed size + `|Vec<T>|`, and
-/// - hides decompression latency behind parsing -- on workloads where the
-///   parser pool is the bottleneck, total wall time approaches
-///   `max(decompress_wall, parse_wall)` rather than their sum.
+/// - bounds peak memory at a fixed multiple of the chunk size rather than
+///   the full decompressed size, and
+/// - hides read latency behind parsing -- on workloads where the parser pool
+///   is the bottleneck, total wall time approaches `max(read_wall,
+///   parse_wall)` rather than their sum.
 ///
-/// Each chunk's split-and-parse is sequential within the chunk (chunks are
-/// small enough that the per-chunk parallelism in
-/// [`read_reader_lines_parallel_bytes`] is unnecessary overhead), but
-/// chunks are parsed in parallel via [`ParallelBridge`].
+/// Records come back in arbitrary order. Use
+/// [`read_file_lines_parallel_ordered`] if order matters.
 pub fn read_reader_lines_chunked_pipeline<R, T>(reader: R) -> anyhow::Result<Vec<T>>
 where
     R: Read + Send,
     T: for<'a> Deserialize<'a> + Send,
 {
-    /// Size of each decompressed chunk handed off to a parser worker. Sized
-    /// to keep the producer thread saturated without ballooning memory; one
-    /// chunk per in-flight parser plus a couple in-channel is the steady
-    /// state.
+    let per_chunk = map_reader_chunks_pipeline(reader, |chunk| {
+        json_lines(chunk)
+            .map(|line| {
+                serde_json::from_slice::<T>(line).with_context(|| {
+                    format!("When parsing line: {}", String::from_utf8_lossy(line))
+                })
+            })
+            .collect::<anyhow::Result<Vec<T>>>()
+    })?;
+    // `flatten().collect()` cannot size the result from a nested iterator, so
+    // it grows by doubling and reallocates its way through every record. The
+    // chunk lengths are already known here.
+    let mut records = Vec::with_capacity(per_chunk.iter().map(Vec::len).sum());
+    for chunk in per_chunk {
+        records.extend(chunk);
+    }
+    Ok(records)
+}
+
+/// The non-empty lines of a chunk passed to [`map_reader_chunks_pipeline`].
+fn json_lines(chunk: &[u8]) -> impl Iterator<Item = &[u8]> {
+    chunk.split(|&b| b == b'\n').filter(|line| !line.is_empty())
+}
+
+/// Chunk-level form of [`read_reader_lines_chunked_pipeline`]: one result
+/// per newline-terminated chunk, in arbitrary order. The calling thread reads
+/// and hands each chunk to the pool as its own task.
+///
+/// Errors if a single record does not fit in a chunk, since there is no way
+/// to hand a reducing closure half a record without it quietly counting the
+/// halves as two.
+fn map_reader_chunks_pipeline<R, T, F>(reader: R, per_chunk: F) -> anyhow::Result<Vec<T>>
+where
+    R: Read + Send,
+    T: Send,
+    F: Fn(&[u8]) -> anyhow::Result<T> + Sync,
+{
+    /// Buffer size, so one less than this is the longest record readable.
     const CHUNK_SIZE: usize = 16 * 1024 * 1024;
-    /// Bounded so the decompressor blocks once parsers fall behind; keeps
-    /// peak memory at roughly `CHUNK_SIZE * (CHANNEL_DEPTH + worker_count)`.
-    const CHANNEL_DEPTH: usize = 8;
+    /// Peak memory is `CHUNK_SIZE * BUFFERS_PER_THREAD * threads`.
+    const BUFFERS_PER_THREAD: usize = 2;
 
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(CHANNEL_DEPTH);
+    map_reader_chunks_sized(reader, CHUNK_SIZE, BUFFERS_PER_THREAD, per_chunk)
+}
 
-    std::thread::scope(|s| {
-        let producer = s.spawn(move || -> anyhow::Result<()> {
-            let mut reader = reader;
-            let mut leftover: Vec<u8> = Vec::new();
-            loop {
-                // Each chunk is its own owned Vec so workers can move it across
-                // thread boundaries and drop it independently.
-                let mut buf = Vec::with_capacity(CHUNK_SIZE + leftover.len());
-                buf.extend_from_slice(&leftover);
-                leftover.clear();
-                let start = buf.len();
-                buf.resize(start + CHUNK_SIZE, 0);
+/// A chunk buffer on loan to a task. Returning it on drop rather than at the
+/// end of the task keeps an unwind from leaking it, which would eventually
+/// wedge the reader in the backpressure loop instead of propagating the panic.
+struct Recycled<'a> {
+    buf: Option<Vec<u8>>,
+    free_tx: &'a std::sync::mpsc::SyncSender<Vec<u8>>,
+}
 
-                let mut filled = 0;
-                while filled < CHUNK_SIZE {
-                    match reader.read(&mut buf[start + filled..]) {
-                        Ok(0) => break,
-                        Ok(n) => filled += n,
-                        Err(e) => {
-                            return Err(anyhow::Error::from(e).context(
-                                "Failed to read chunk during pipelined JSON-lines parsing",
-                            ));
+impl Recycled<'_> {
+    fn bytes(&self) -> &[u8] {
+        self.buf.as_deref().expect("buffer is taken only on drop")
+    }
+}
+
+impl Drop for Recycled<'_> {
+    fn drop(&mut self) {
+        if let Some(buf) = self.buf.take() {
+            let _ = self.free_tx.try_send(buf);
+        }
+    }
+}
+
+fn map_reader_chunks_sized<R, T, F>(
+    reader: R,
+    chunk_size: usize,
+    buffers_per_thread: usize,
+    per_chunk: F,
+) -> anyhow::Result<Vec<T>>
+where
+    R: Read + Send,
+    T: Send,
+    F: Fn(&[u8]) -> anyhow::Result<T> + Sync,
+{
+    let max_buffers = rayon::current_num_threads().max(1) * buffers_per_thread;
+    // Holds every buffer that can exist, so handing one back never fails.
+    let (free_tx, free_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(max_buffers);
+    let mut allocated = 0usize;
+
+    let parsed: Mutex<Vec<T>> = Mutex::new(Vec::new());
+    let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
+
+    // Not `scope`, which would run this blocking read loop on a pool worker
+    // the tasks it feeds are waiting for.
+    rayon::in_place_scope(|scope| -> anyhow::Result<()> {
+        let mut reader = reader;
+        let mut leftover: Vec<u8> = Vec::new();
+        let (parsed, failed, free_tx, per_chunk) = (&parsed, &failed, &free_tx, &per_chunk);
+        loop {
+            if failed
+                .lock()
+                .expect("chunk-parse mutex should not be poisoned")
+                .is_some()
+            {
+                return Ok(());
+            }
+            let mut buf = match free_rx.try_recv().ok() {
+                Some(buf) => buf,
+                None if allocated < max_buffers => {
+                    allocated += 1;
+                    vec![0u8; chunk_size]
+                }
+                // Backpressure. Yield rather than block: the tasks that
+                // return buffers need a worker to run on, and this thread
+                // may be the last one.
+                None => loop {
+                    if let Ok(buf) = free_rx.try_recv() {
+                        break buf;
+                    }
+                    match rayon::yield_now() {
+                        Some(rayon::Yield::Executed) => {}
+                        Some(rayon::Yield::Idle) => std::thread::yield_now(),
+                        // Not a pool thread, so blocking costs the pool nothing.
+                        None => {
+                            break free_rx
+                                .recv()
+                                .map_err(|_| anyhow::anyhow!("free list closed during read"))?;
+                        }
+                    }
+                },
+            };
+            // The leftover eats into this chunk rather than extending the
+            // buffer past `chunk_size`, so the longest readable record does
+            // not depend on where the previous one happened to end.
+            let start = leftover.len();
+            buf[..start].copy_from_slice(&leftover);
+            leftover.clear();
+
+            let mut filled = 0;
+            while start + filled < buf.len() {
+                match reader.read(&mut buf[start + filled..]) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) => {
+                        return Err(anyhow::Error::from(e)
+                            .context("Failed to read chunk during pipelined JSON-lines parsing"));
+                    }
+                }
+            }
+            let mut at_eof = start + filled < buf.len();
+            let mut valid = start + filled;
+            if valid == 0 {
+                return Ok(());
+            }
+
+            // Carry the trailing partial line into the next chunk, so every
+            // chunk handed to a task ends on a newline or EOF.
+            if !at_eof {
+                match buf[..valid].iter().rposition(|&b| b == b'\n') {
+                    Some(last_nl) => {
+                        leftover.extend_from_slice(&buf[last_nl + 1..valid]);
+                        valid = last_nl + 1;
+                    }
+                    // No newline in a full buffer is either an oversized
+                    // record or a final record ending on the boundary. A
+                    // short read separates those everywhere else, but this
+                    // read was not short, so ask for one more byte.
+                    None => {
+                        let mut probe = [0u8; 1];
+                        match reader.read(&mut probe) {
+                            Ok(0) => at_eof = true,
+                            Ok(_) => {
+                                return Err(anyhow::anyhow!(
+                                    "record does not fit in a {chunk_size} byte chunk: read {valid} bytes with no newline"
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(anyhow::Error::from(e).context(
+                                    "Failed to read chunk during pipelined JSON-lines parsing",
+                                ));
+                            }
                         }
                     }
                 }
-                buf.truncate(start + filled);
-
-                let at_eof = filled < CHUNK_SIZE;
-
-                if buf.is_empty() {
-                    return Ok(());
-                }
-
-                // If we filled the chunk, the last line probably spans the
-                // chunk boundary; carry the trailing partial line into the
-                // next chunk so each emitted chunk ends on a newline (or EOF).
-                if !at_eof {
-                    if let Some(last_nl) = buf.iter().rposition(|&b| b == b'\n') {
-                        leftover.extend_from_slice(&buf[last_nl + 1..]);
-                        buf.truncate(last_nl + 1);
-                    }
-                    // else: the entire chunk is one record with no newline.
-                    // Forward as-is; the parser will return an error if it's
-                    // truly malformed, but typically an oversized record just
-                    // means the next chunk will append more bytes -- not
-                    // representable in this design without unbounded buffering,
-                    // so accept the failure mode.
-                }
-
-                // Receiver dropped means consumers gave up (e.g. parse error).
-                if tx.send(buf).is_err() {
-                    return Ok(());
-                }
-
-                if at_eof {
-                    return Ok(());
-                }
             }
-        });
 
-        let parsed: anyhow::Result<Vec<T>> = rx
-            .into_iter()
-            .par_bridge()
-            .flat_map_iter(|chunk| {
-                // Split + parse sequentially within a single chunk: the chunk is
-                // small (16 MB) so the rayon overhead of nested parallelism would
-                // dominate. Parallelism is across chunks, not within them.
-                chunk
-                    .split(|&b| b == b'\n')
-                    .filter(|line| !line.is_empty())
-                    .map(|line| {
-                        serde_json::from_slice::<T>(line).with_context(|| {
-                            format!("When parsing line: {}", String::from_utf8_lossy(line))
-                        })
-                    })
-                    // Materialise into a Vec so the closure no longer borrows
-                    // from `chunk` once we return; the chunk is dropped here.
-                    .collect::<Vec<_>>()
-                    .into_iter()
-            })
-            .collect();
+            scope.spawn(move |_| {
+                let buf = Recycled {
+                    buf: Some(buf),
+                    free_tx,
+                };
+                match per_chunk(&buf.bytes()[..valid]) {
+                    Ok(value) => parsed
+                        .lock()
+                        .expect("chunk-parse mutex should not be poisoned")
+                        .push(value),
+                    // First error wins; later ones are usually the same
+                    // cause seen by a sibling chunk.
+                    Err(e) => {
+                        let mut slot = failed
+                            .lock()
+                            .expect("chunk-parse mutex should not be poisoned");
+                        if slot.is_none() {
+                            *slot = Some(e);
+                        }
+                    }
+                }
+            });
 
-        let producer_result = producer
-            .join()
-            .map_err(|_| anyhow::anyhow!("BTD chunk reader thread panicked"))?;
+            if at_eof {
+                return Ok(());
+            }
+        }
+    })?;
 
-        // Surface a parse failure first (it triggered the producer to stop), but
-        // if parsing succeeded ensure we still report any IO error from the
-        // producer.
-        let parsed = parsed?;
-        producer_result?;
-        Ok(parsed)
-    })
+    if let Some(e) = failed
+        .lock()
+        .expect("chunk-parse mutex should not be poisoned")
+        .take()
+    {
+        return Err(e);
+    }
+    let out = std::mem::take(
+        &mut *parsed
+            .lock()
+            .expect("chunk-parse mutex should not be poisoned"),
+    );
+    Ok(out)
 }
 
 /// Read a file that consists of many JSON blobs, one per line.
@@ -319,6 +436,8 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
+    use crate::json::json_lines;
+    use crate::json::map_reader_chunks_sized;
     use crate::json::read_file_lines;
     use crate::json::read_file_lines_parallel;
     use crate::json::read_file_lines_parallel_ordered;
@@ -378,5 +497,178 @@ mod tests {
         assert!(read_file_lines_parallel::<i32>(file.path()).is_err());
         assert!(read_file_lines_parallel_ordered::<i32>(file.path()).is_err());
         assert!(read_file_lines::<i32>(file.path()).is_err());
+    }
+
+    #[test]
+    fn backpressure_path_does_not_deadlock() {
+        let input: Vec<u8> = (0..20_000)
+            .flat_map(|i| format!("{{\"n\":{i}}}\n").into_bytes())
+            .collect();
+        let counted = map_reader_chunks_sized(input.as_slice(), 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap();
+        assert_eq!(counted.iter().sum::<usize>(), 20_000);
+    }
+
+    #[test]
+    fn records_survive_chunk_seams() {
+        let input: Vec<u8> = (0..5_000u64)
+            .flat_map(|i| format!("{{\"n\":{i}}}\n").into_bytes())
+            .collect();
+        let mut seen: Vec<u64> = map_reader_chunks_sized(input.as_slice(), 64, 1, |chunk| {
+            json_lines(chunk)
+                .map(|line| {
+                    let v: serde_json::Value = serde_json::from_slice(line)?;
+                    Ok(v["n"].as_u64().expect("n is a number"))
+                })
+                .collect::<anyhow::Result<Vec<u64>>>()
+        })
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .collect();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..5_000u64).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    fn per_chunk_error_surfaces_without_hanging() {
+        let input: Vec<u8> = (0..5_000u64)
+            .flat_map(|i| format!("{{\"n\":{i}}}\n").into_bytes())
+            .collect();
+        let err = map_reader_chunks_sized(input.as_slice(), 64, 1, |chunk| {
+            if json_lines(chunk).any(|line| line.contains(&b'7')) {
+                anyhow::bail!("boom");
+            }
+            anyhow::Ok(0usize)
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("boom"), "got: {err}");
+    }
+
+    #[test]
+    fn empty_input_yields_nothing() {
+        let counted = map_reader_chunks_sized(&b""[..], 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap();
+        assert_eq!(counted.iter().sum::<usize>(), 0);
+    }
+
+    #[test]
+    fn final_record_without_trailing_newline_is_read() {
+        let counted = map_reader_chunks_sized(&b"{\"n\":1}\n{\"n\":2}"[..], 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap();
+        assert_eq!(counted.iter().sum::<usize>(), 2);
+    }
+
+    #[test]
+    fn record_ending_exactly_on_the_chunk_boundary_is_read() {
+        let record = format!("{{\"n\":\"{}\"}}", "x".repeat(55));
+        assert_eq!(record.len() + 1, 64);
+        let input = format!("{record}\n{record}\n");
+        let counted = map_reader_chunks_sized(input.as_bytes(), 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap();
+        assert_eq!(counted.iter().sum::<usize>(), 2);
+    }
+
+    #[test]
+    fn unterminated_final_record_filling_the_chunk_exactly_is_read() {
+        let record = format!("{{\"n\":\"{}\"}}", "x".repeat(56));
+        assert_eq!(record.len(), 64);
+        let counted = map_reader_chunks_sized(record.as_bytes(), 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap();
+        assert_eq!(counted.iter().sum::<usize>(), 1);
+    }
+
+    #[test]
+    fn record_leaving_no_room_for_its_newline_is_an_error() {
+        let record = format!("{{\"n\":\"{}\"}}", "x".repeat(56));
+        assert_eq!(record.len(), 64);
+        let input = format!("{record}\n");
+        let err = map_reader_chunks_sized(input.as_bytes(), 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("does not fit in a 64 byte chunk"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn unterminated_final_record_one_byte_over_the_chunk_is_an_error() {
+        let record = format!("{{\"n\":\"{}\"}}", "x".repeat(57));
+        assert_eq!(record.len(), 65);
+        let err = map_reader_chunks_sized(record.as_bytes(), 64, 1, |chunk| {
+            anyhow::Ok(json_lines(chunk).count())
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("does not fit in a 64 byte chunk"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn the_record_limit_does_not_depend_on_alignment() {
+        let long = format!("{{\"n\":\"{}\"}}", "x".repeat(92));
+        assert_eq!(long.len(), 100);
+        let tail: String = (0..50).map(|i| format!("{{\"n\":{i}}}\n")).collect();
+        let alone = format!("{long}\n{tail}");
+        let after_a_short_line = format!("{{\"n\":1}}\n{long}\n{tail}");
+        for (label, input) in [
+            ("alone", &alone),
+            ("after a short line", &after_a_short_line),
+        ] {
+            let got = map_reader_chunks_sized(input.as_bytes(), 64, 1, |chunk| {
+                anyhow::Ok(json_lines(chunk).count())
+            });
+            assert!(
+                got.is_err(),
+                "{label}: expected the 100 byte record to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_panicking_chunk_propagates_rather_than_wedging_the_reader() {
+        let input: Vec<u8> = (0..5_000)
+            .flat_map(|i| format!("{{\"n\":{i}}}\n").into_bytes())
+            .collect();
+        let panicked = std::panic::catch_unwind(|| {
+            map_reader_chunks_sized(input.as_slice(), 64, 1, |_| -> anyhow::Result<usize> {
+                panic!("boom")
+            })
+        });
+        assert!(panicked.is_err(), "expected the panic to propagate");
+    }
+
+    #[test]
+    fn concurrent_readers_on_a_full_pool_do_not_deadlock() {
+        let input: Vec<u8> = (0..20_000)
+            .flat_map(|i| format!("{{\"n\":{i}}}\n").into_bytes())
+            .collect();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        let read = || {
+            map_reader_chunks_sized(input.as_slice(), 64, 1, |chunk| {
+                anyhow::Ok(json_lines(chunk).count())
+            })
+            .unwrap()
+            .iter()
+            .sum::<usize>()
+        };
+        let (a, b) = pool.install(|| rayon::join(read, read));
+        assert_eq!((a, b), (20_000, 20_000));
     }
 }
