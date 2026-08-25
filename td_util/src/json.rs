@@ -166,7 +166,7 @@ where
 }
 
 /// The non-empty lines of a chunk passed to [`map_reader_chunks_pipeline`].
-fn json_lines(chunk: &[u8]) -> impl Iterator<Item = &[u8]> {
+pub fn json_lines(chunk: &[u8]) -> impl Iterator<Item = &[u8]> {
     chunk.split(|&b| b == b'\n').filter(|line| !line.is_empty())
 }
 
@@ -177,7 +177,7 @@ fn json_lines(chunk: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// Errors if a single record does not fit in a chunk, since there is no way
 /// to hand a reducing closure half a record without it quietly counting the
 /// halves as two.
-fn map_reader_chunks_pipeline<R, T, F>(reader: R, per_chunk: F) -> anyhow::Result<Vec<T>>
+pub fn map_reader_chunks_pipeline<R, T, F>(reader: R, per_chunk: F) -> anyhow::Result<Vec<T>>
 where
     R: Read + Send,
     T: Send,
