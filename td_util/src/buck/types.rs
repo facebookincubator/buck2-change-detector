@@ -14,7 +14,6 @@ use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
 
-use parse_display::Display;
 use serde::Deserialize;
 use serde::Serialize;
 use td_util::string::InternString;
@@ -29,7 +28,7 @@ use crate::labels::Labels;
     Hash,
     PartialEq,
     Eq,
-    Display,
+    parse_display::Display,
     Deserialize,
     Serialize,
     PartialOrd,
@@ -116,7 +115,16 @@ impl<'a> TargetLabelKeyRef<'a> {
 }
 
 /// Example: `fbcode//buck2:` or `fbcode//buck2/...`
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Display, Deserialize, Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    parse_display::Display,
+    Deserialize,
+    Serialize
+)]
 pub struct TargetPattern(String);
 
 impl TargetPattern {
@@ -327,7 +335,7 @@ impl TargetName {
 }
 
 /// Example: `fbcode` in `fbcode//buck2:buck2`
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Display)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, parse_display::Display)]
 pub struct CellName(String);
 
 impl CellName {
@@ -351,7 +359,16 @@ impl CellName {
 pub const PACKAGE_FILE_NAMES: &[&str] = &["PACKAGE", "BUCK_TREE"];
 
 /// Example: `fbcode//buck2/TARGETS`
-#[derive(Debug, Hash, PartialEq, Eq, Deserialize, Serialize, Clone, Display)]
+#[derive(
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    Deserialize,
+    Serialize,
+    Clone,
+    parse_display::Display
+)]
 pub struct CellPath(InternString);
 
 impl CellPath {
@@ -522,7 +539,7 @@ impl CellPath {
 #[derive(
     Clone,
     Debug,
-    Display,
+    parse_display::Display,
     PartialEq,
     Eq,
     PartialOrd,
@@ -662,7 +679,16 @@ impl TargetHash {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Display, Deserialize, Serialize)]
+#[derive(
+    Clone,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    parse_display::Display,
+    Deserialize,
+    Serialize
+)]
 pub struct ProjectRelativePath(String);
 
 impl ProjectRelativePath {
@@ -745,7 +771,16 @@ pub enum GlobInclusion {
 
 /// Example: `fbcode/buck2/**` or `**/*.java`.
 /// May start with `!` to indicate negation.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Display, Deserialize, Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    parse_display::Display,
+    Deserialize,
+    Serialize
+)]
 pub struct Glob(String);
 
 impl Glob {

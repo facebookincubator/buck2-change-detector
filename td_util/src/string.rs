@@ -16,7 +16,6 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use equivalent::Equivalent;
-use parse_display::Display;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -30,7 +29,7 @@ static INTERNER: Interner<StrData> = Interner::new();
 
 /// An interned string whose contents are stored only once.
 // Eq/PartialEq are OK, because they short-circuit on the hash
-#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Display)]
+#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord, parse_display::Display)]
 pub struct InternString(Intern<StrData>);
 
 impl fmt::Debug for InternString {
@@ -87,7 +86,7 @@ impl Default for InternString {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, parse_display::Display)]
 struct Key<T>(T);
 
 impl<'a> Hash for Key<&'a str> {

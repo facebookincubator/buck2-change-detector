@@ -22,14 +22,13 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use clap::ValueEnum;
-use parse_display::Display;
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(
     ValueEnum,
     Debug,
-    Display,
+    parse_display::Display,
     Clone,
     Copy,
     PartialEq,
