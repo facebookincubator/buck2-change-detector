@@ -207,23 +207,6 @@ impl CellInfo {
         }
     }
 
-    /// The cells whose root directory lies strictly beneath `dir` — the cells
-    /// that a `PACKAGE` file in `dir` applies to beyond `dir`'s own cell.
-    pub fn cells_under<'a>(
-        &'a self,
-        dir: &ProjectRelativePath,
-    ) -> impl Iterator<Item = (&'a CellName, &'a ProjectRelativePath)> + 'a {
-        let dir = dir.as_str().trim_end_matches('/').to_owned();
-        self.paths
-            .iter()
-            .filter(move |(_, path)| match path.as_str().strip_prefix(&dir) {
-                Some(rest) if dir.is_empty() => !rest.is_empty(),
-                Some(rest) => rest.starts_with('/'),
-                None => false,
-            })
-            .map(|(name, path)| (name, path))
-    }
-
     pub fn unresolve(&self, path: &ProjectRelativePath) -> anyhow::Result<CellPath> {
         // because we know self.paths has the longest match first, we just find the first match
         for (cell, prefix) in &self.paths {
@@ -282,35 +265,6 @@ mod tests {
         testcase(&cells, "root//file.txt", "file.txt");
 
         assert!(cells.resolve(&CellPath::new("missing//foo.txt")).is_err());
-    }
-
-    #[test]
-    fn test_cells_under() {
-        let value = serde_json::json!(
-            {
-                "root": "/repo",
-                "fbcode": "/repo/fbcode",
-                "prelude": "/repo/fbcode/prelude",
-                "foo": "/repo/foo",
-            }
-        );
-        let cells = CellInfo::parse(&value.to_string()).unwrap();
-
-        let under = |dir: &str| {
-            let mut names = cells
-                .cells_under(&ProjectRelativePath::new(dir))
-                .map(|(name, _)| name.to_string())
-                .collect::<Vec<_>>();
-            names.sort();
-            names
-        };
-
-        assert_eq!(under(""), vec!["fbcode", "foo", "prelude"]);
-        assert_eq!(under("fbcode"), vec!["prelude"]);
-        assert_eq!(under("fbcode/"), vec!["prelude"]);
-        assert_eq!(under("fbcode/prelude"), Vec::<String>::new());
-        assert_eq!(under("fb"), Vec::<String>::new());
-        assert_eq!(under("foo"), Vec::<String>::new());
     }
 
     #[test]
