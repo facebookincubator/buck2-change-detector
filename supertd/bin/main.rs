@@ -70,6 +70,8 @@ enum Args {
     #[cfg(fbcode_build)]
     Validate(citadel_validate::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
+    VersionDelta(version_delta::step::Args),
+    #[cfg(all(fbcode_build, target_os = "linux"))]
     FilterVerifiables(filter_verifiables::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     LocalValidationFilter(local_validation_filter::Args),
@@ -166,6 +168,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Execute(args) => execute::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::Validate(args) => citadel_validate::main(fb, args).await,
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::VersionDelta(args) => version_delta::step::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::FilterVerifiables(args) => filter_verifiables::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]

@@ -137,6 +137,39 @@ pub async fn diff_git(
     run_sl_async(&args, cwd).await
 }
 
+/// Raw `sl status --rev A --rev B -amr --root-relative`: the tree difference
+/// between two commits' manifests (two `--rev` flags), unlike
+/// [`status_range`]'s `A::B` range form. This is the inter-run changeset
+/// shape: the two run commits sit on different heads, so a range revset
+/// between them is not what BTD needs.
+pub async fn status_between(a: &str, b: &str, cwd: Option<&Path>) -> anyhow::Result<String> {
+    run_sl_async(
+        &["status", "--rev", a, "--rev", b, "-amr", "--root-relative"],
+        cwd,
+    )
+    .await
+}
+
+/// The commit's public ancestor (`max(public() & ::rev)`): for a rebased
+/// diff run, its rebase target. Errors when the revision does not resolve,
+/// which for a another run's commit usually means it was never pulled; see
+/// [`pull_commit`].
+pub async fn public_ancestor(rev: &str, cwd: Option<&Path>) -> anyhow::Result<String> {
+    let revset = format!("max(public() & ::{rev})");
+    let stdout = run_sl_async(&["log", "-r", &revset, "-T", "{node}"], cwd).await?;
+    let node = stdout.trim();
+    if node.is_empty() {
+        anyhow::bail!("no public ancestor for {rev}");
+    }
+    Ok(node.to_owned())
+}
+
+/// `sl pull -r <rev>`: make another run's commit resolvable locally. Cheap
+/// when the commit is already present; a real fetch when it is not.
+pub async fn pull_commit(rev: &str, cwd: Option<&Path>) -> anyhow::Result<()> {
+    run_sl_async(&["pull", "-r", rev], cwd).await.map(|_| ())
+}
+
 /// Write the changeset between two revisions to a fresh `NamedTempFile`, the
 /// shape BTD consumes (`--changes`). Convenience over [`status_range`].
 pub async fn changeset_tempfile(
