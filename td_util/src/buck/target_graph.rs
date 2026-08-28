@@ -164,6 +164,10 @@ const TARGET_ENTRIES_PER_SHARD: usize = 1_500_000;
 /// preventing the complete multi-gigabyte output from accumulating in RAM.
 const FRAME_COMPRESSION_BATCH_SIZE: usize = 16;
 const FRAME_COMPRESSION_MAX_ZSTD_WORKERS: u32 = 2;
+/// Bound frames read and decoded concurrently, so peak memory during
+/// `read_framed` holds one batch of compressed frames instead of the whole
+/// frames region.
+const FRAME_DECODE_BATCH_SIZE: usize = 16;
 
 /// Picks a shard count for a sharded field given its total entry count.
 /// Aims for ~1.5M entries per shard so per-frame zstd decompression stays
@@ -619,40 +623,27 @@ macro_rules! define_target_graph_framed_io {
                         .context("uncompressed_lens trailer")?;
 
                 let frames_region_size = trailer_offset - header_bytes;
-                reader.seek(SeekFrom::Start(header_bytes))?;
-                let mut frame_buf = Vec::with_capacity(frames_region_size as usize);
-                reader
-                    .take(frames_region_size)
-                    .read_to_end(&mut frame_buf)
-                    .context("read frames")?;
-
-                let mut offsets = Vec::with_capacity(total_frame_count);
-                let mut acc: usize = 0;
-                for &len in &compressed_lens {
-                    offsets.push(acc);
-                    acc = acc
-                        .checked_add(len as usize)
-                        .context("frame offset overflow on read")?;
-                }
-                if acc != frame_buf.len() {
+                let total_compressed: u64 = compressed_lens.iter().try_fold(0u64, |acc, &len| {
+                    acc.checked_add(len).context("frame offset overflow on read")
+                })?;
+                if total_compressed != frames_region_size {
                     anyhow::bail!(
-                        "frame lengths ({acc}) do not span the frames region ({})",
-                        frame_buf.len(),
+                        "frame lengths ({total_compressed}) do not span the frames region ({frames_region_size})",
                     );
                 }
+                reader.seek(SeekFrom::Start(header_bytes))?;
 
-                let mut jobs: Vec<Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>> =
-                    Vec::with_capacity(total_frame_count);
+                let mut jobs: Vec<
+                    Box<dyn FnOnce(&[u8]) -> anyhow::Result<Box<dyn Any + Send>> + Send>,
+                > = Vec::with_capacity(total_frame_count);
                 let mut shard_counts_iter = field_shard_counts.iter();
                 $({
                     let shard_count = *shard_counts_iter
                         .next()
                         .expect("shard count for field");
                     for shard_idx in 0..shard_count {
-                        let i = jobs.len();
-                        let frame = &frame_buf[offsets[i]..offsets[i] + compressed_lens[i] as usize];
-                        let uncompressed_len = uncompressed_lens[i];
-                        jobs.push(Box::new(move || -> anyhow::Result<Box<dyn Any + Send>> {
+                        let uncompressed_len = uncompressed_lens[jobs.len()];
+                        jobs.push(Box::new(move |frame: &[u8]| -> anyhow::Result<Box<dyn Any + Send>> {
                             let v: $ty = bincode_decode_compressed(frame, uncompressed_len)
                                 .with_context(|| {
                                     format!(
@@ -662,14 +653,47 @@ macro_rules! define_target_graph_framed_io {
                                     )
                                 })?;
                             Ok(Box::new(v) as Box<dyn Any + Send>)
-                        }) as Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>);
+                        }) as Box<dyn FnOnce(&[u8]) -> anyhow::Result<Box<dyn Any + Send>> + Send>);
                     }
                 })*
 
-                let parts: Vec<Box<dyn Any + Send>> = jobs
-                    .into_par_iter()
-                    .map(|f| f())
-                    .collect::<anyhow::Result<Vec<_>>>()?;
+                // Read and decode frames in bounded batches so peak memory
+                // holds one batch of compressed bytes rather than the whole
+                // frames region. Frames are contiguous, so each batch is a
+                // single sequential read.
+                let mut parts: Vec<Box<dyn Any + Send>> = Vec::with_capacity(total_frame_count);
+                let mut batch_start = 0usize;
+                let mut jobs_iter = jobs.into_iter();
+                while batch_start < total_frame_count {
+                    let batch_end =
+                        (batch_start + FRAME_DECODE_BATCH_SIZE).min(total_frame_count);
+                    let batch_bytes: usize = compressed_lens[batch_start..batch_end]
+                        .iter()
+                        .map(|&len| len as usize)
+                        .sum();
+                    let mut batch_buf = vec![0u8; batch_bytes];
+                    reader
+                        .read_exact(&mut batch_buf)
+                        .context("read frame batch")?;
+
+                    let mut batch: Vec<(
+                        Box<dyn FnOnce(&[u8]) -> anyhow::Result<Box<dyn Any + Send>> + Send>,
+                        &[u8],
+                    )> = Vec::with_capacity(batch_end - batch_start);
+                    let mut offset = 0usize;
+                    for i in batch_start..batch_end {
+                        let len = compressed_lens[i] as usize;
+                        let job = jobs_iter.next().expect("job for frame");
+                        batch.push((job, &batch_buf[offset..offset + len]));
+                        offset += len;
+                    }
+                    let decoded: Vec<Box<dyn Any + Send>> = batch
+                        .into_par_iter()
+                        .map(|(f, frame)| f(frame))
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    parts.extend(decoded);
+                    batch_start = batch_end;
+                }
                 let mut iter = parts.into_iter();
 
                 let mut shard_counts_iter = field_shard_counts.iter();
