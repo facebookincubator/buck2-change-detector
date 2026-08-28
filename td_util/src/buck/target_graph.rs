@@ -653,29 +653,14 @@ macro_rules! define_target_graph_framed_io {
                         let frame = &frame_buf[offsets[i]..offsets[i] + compressed_lens[i] as usize];
                         let uncompressed_len = uncompressed_lens[i];
                         jobs.push(Box::new(move || -> anyhow::Result<Box<dyn Any + Send>> {
-                            let decompressed = zstd::decode_all(frame).with_context(|| {
-                                format!(
-                                    "decompress {} shard {}",
-                                    stringify!($field),
-                                    shard_idx
-                                )
-                            })?;
-                            if decompressed.len() as u64 != uncompressed_len {
-                                anyhow::bail!(
-                                    "uncompressed len mismatch for {} shard {}: header={}, got={}",
-                                    stringify!($field),
-                                    shard_idx,
-                                    uncompressed_len,
-                                    decompressed.len(),
-                                );
-                            }
-                            let v: $ty = bincode_decode(&decompressed).with_context(|| {
-                                format!(
-                                    "deserialize {} shard {}",
-                                    stringify!($field),
-                                    shard_idx
-                                )
-                            })?;
+                            let v: $ty = bincode_decode_compressed(frame, uncompressed_len)
+                                .with_context(|| {
+                                    format!(
+                                        "decompress and deserialize {} shard {}",
+                                        stringify!($field),
+                                        shard_idx
+                                    )
+                                })?;
                             Ok(Box::new(v) as Box<dyn Any + Send>)
                         }) as Box<dyn FnOnce() -> anyhow::Result<Box<dyn Any + Send>> + Send>);
                     }
@@ -1477,9 +1462,56 @@ fn bincode_encode_compressed<T: Serialize>(
     Ok((compressed, uncompressed_len as u64))
 }
 
+#[cfg(test)]
 fn bincode_decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<T> {
     let (val, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
         .context("bincode decode")?;
+    Ok(val)
+}
+
+/// Decode a bincode value directly from a zstd-compressed byte slice.
+/// Streaming the decompressed bytes into the decoder avoids materializing
+/// them; with many frames decoded in parallel, buffering every frame's
+/// decompressed contents dominates peak memory during graph load.
+/// `expected_len` is the decompressed length recorded in the frame trailer;
+/// a mismatch means the frame is corrupt or was produced by a different
+/// writer than the trailer claims. The `take` bound also means bincode can
+/// never read past the trailer's declared length, no matter how corrupt the
+/// stream contents are.
+fn bincode_decode_compressed<T: serde::de::DeserializeOwned>(
+    compressed: &[u8],
+    expected_len: u64,
+) -> anyhow::Result<T> {
+    // bincode issues many small reads; buffer between it and the zstd
+    // decoder so each read does not pay a decompression call. The slice is
+    // already `BufRead`, so `with_buffer` skips the extra `BufReader` that
+    // `Decoder::new` would insert around it.
+    const BUFFER_SIZE: usize = 1024 * 1024;
+
+    let decoder = zstd::Decoder::with_buffer(compressed).context("zstd::Decoder::with_buffer")?;
+    let mut reader = std::io::BufReader::with_capacity(BUFFER_SIZE, decoder).take(expected_len);
+    let val = bincode::serde::decode_from_std_read(&mut reader, bincode::config::standard())
+        .context("bincode decode from zstd stream")?;
+    if reader.limit() != 0 {
+        anyhow::bail!(
+            "uncompressed len mismatch: trailer={expected_len}, decoded={}",
+            expected_len - reader.limit(),
+        );
+    }
+    // The value consumed exactly `expected_len` bytes, so the stream must
+    // end here: bincode stops at end-of-value, so trailing bytes inside the
+    // frame (or a second concatenated zstd frame) would otherwise pass
+    // undetected; the eager decode-all path rejected those. `read_exact`
+    // retries `Interrupted` and never returns a spurious zero-length read:
+    // success means trailing bytes exist, `UnexpectedEof` is a clean end.
+    let mut probe = [0u8; 1];
+    match reader.into_inner().read_exact(&mut probe) {
+        Ok(()) => {
+            anyhow::bail!("trailing bytes after decoded value: trailer={expected_len}")
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
+        Err(e) => return Err(e).context("probe for trailing bytes"),
+    }
     Ok(val)
 }
 
@@ -2832,6 +2864,86 @@ mod tests {
                 Some(format!("v{raw_id}"))
             );
         }
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    fn sharded_field_round_trips_through_streaming_decode(#[case] workers: u32) {
+        let original: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(4);
+        for raw_id in 0..200u64 {
+            original.insert(TargetId(raw_id), format!("v{raw_id}"));
+        }
+
+        let (compressed, uncompressed_len) = bincode_encode_compressed(&original, workers).unwrap();
+        let decoded: ShardedField<IdDashMap<TargetId, String>> =
+            bincode_decode_compressed(&compressed, uncompressed_len).unwrap();
+
+        assert_eq!(decoded.len(), 200);
+        for raw_id in 0..200u64 {
+            assert_eq!(
+                decoded.get(&TargetId(raw_id)).map(|v| v.clone()),
+                Some(format!("v{raw_id}"))
+            );
+        }
+    }
+
+    /// Each case corrupts a well-formed `(compressed frame, trailer length)`
+    /// pair in a different way; every corruption must be rejected.
+    #[rstest]
+    #[case::wrong_uncompressed_len(
+        |encoded: &[u8]| {
+            let compressed =
+                zstd::encode_all(encoded, zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+            (compressed, encoded.len() as u64 + 1)
+        },
+        "uncompressed len mismatch"
+    )]
+    #[case::trailing_bytes_in_frame(
+        // Garbage after the encoded value inside the frame; bincode stops
+        // at end-of-value, so only the trailing-bytes probe can catch this.
+        |encoded: &[u8]| {
+            let mut padded = encoded.to_vec();
+            padded.extend_from_slice(&[0xAA; 8]);
+            let compressed =
+                zstd::encode_all(&padded[..], zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+            (compressed, encoded.len() as u64)
+        },
+        "trailing bytes"
+    )]
+    #[case::concatenated_zstd_frames(
+        // A second zstd frame after the value's frame; the streaming
+        // decoder reads across frame boundaries on demand, so the probe
+        // must pull and reject it.
+        |encoded: &[u8]| {
+            let mut compressed =
+                zstd::encode_all(encoded, zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+            let second_frame =
+                zstd::encode_all(&[0xBBu8; 16][..], zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+            compressed.extend_from_slice(&second_frame);
+            (compressed, encoded.len() as u64)
+        },
+        "trailing bytes"
+    )]
+    fn streaming_decode_rejects_corrupt_frames(
+        #[case] corrupt: fn(&[u8]) -> (Vec<u8>, u64),
+        #[case] expected_err: &str,
+    ) {
+        let original: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(1);
+        original.insert(TargetId(7), "v7".to_owned());
+        let encoded = bincode_encode(&original).unwrap();
+
+        let (compressed, claimed_len) = corrupt(&encoded);
+        let err = bincode_decode_compressed::<ShardedField<IdDashMap<TargetId, String>>>(
+            &compressed,
+            claimed_len,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains(expected_err),
+            "expected {expected_err:?} in error: {err:#}"
+        );
     }
 
     #[test]
