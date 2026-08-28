@@ -164,10 +164,6 @@ const TARGET_ENTRIES_PER_SHARD: usize = 1_500_000;
 /// preventing the complete multi-gigabyte output from accumulating in RAM.
 const FRAME_COMPRESSION_BATCH_SIZE: usize = 16;
 const FRAME_COMPRESSION_MAX_ZSTD_WORKERS: u32 = 2;
-/// Bound frames read and decoded concurrently, so peak memory during
-/// `read_framed` holds one batch of compressed frames instead of the whole
-/// frames region.
-const FRAME_DECODE_BATCH_SIZE: usize = 16;
 
 /// Picks a shard count for a sharded field given its total entry count.
 /// Aims for ~1.5M entries per shard so per-frame zstd decompression stays
@@ -522,8 +518,12 @@ macro_rules! define_target_graph_framed_io {
             /// Deserialize a graph written by `write_framed`. Reads the
             /// header to discover each field's shard count, the trailer to
             /// locate frame byte ranges, then decompresses + deserializes
-            /// per shard in parallel and assembles the result.
-            pub fn read_framed<R: Read + Seek>(reader: &mut R) -> anyhow::Result<Self> {
+            /// per shard in parallel and assembles the result. Each frame is
+            /// streamed via positioned reads of its own byte range, so the
+            /// compressed bytes stay file-backed (reclaimable page cache)
+            /// instead of being copied into anonymous memory.
+            pub fn read_framed(file: &std::fs::File) -> anyhow::Result<Self> {
+                let mut reader = file;
                 let file_size = reader.seek(SeekFrom::End(0))?;
                 let min_size = (header_size(NUM_FIELDS)
                     + FRAME_COUNT_TRAILER_BYTES
@@ -631,10 +631,9 @@ macro_rules! define_target_graph_framed_io {
                         "frame lengths ({total_compressed}) do not span the frames region ({frames_region_size})",
                     );
                 }
-                reader.seek(SeekFrom::Start(header_bytes))?;
 
                 let mut jobs: Vec<
-                    Box<dyn FnOnce(&[u8]) -> anyhow::Result<Box<dyn Any + Send>> + Send>,
+                    Box<dyn FnOnce(FrameByteRange<'_>) -> anyhow::Result<Box<dyn Any + Send>> + Send>,
                 > = Vec::with_capacity(total_frame_count);
                 let mut shard_counts_iter = field_shard_counts.iter();
                 $({
@@ -643,7 +642,7 @@ macro_rules! define_target_graph_framed_io {
                         .expect("shard count for field");
                     for shard_idx in 0..shard_count {
                         let uncompressed_len = uncompressed_lens[jobs.len()];
-                        jobs.push(Box::new(move |frame: &[u8]| -> anyhow::Result<Box<dyn Any + Send>> {
+                        jobs.push(Box::new(move |frame: FrameByteRange<'_>| -> anyhow::Result<Box<dyn Any + Send>> {
                             let v: $ty = bincode_decode_compressed(frame, uncompressed_len)
                                 .with_context(|| {
                                     format!(
@@ -653,47 +652,30 @@ macro_rules! define_target_graph_framed_io {
                                     )
                                 })?;
                             Ok(Box::new(v) as Box<dyn Any + Send>)
-                        }) as Box<dyn FnOnce(&[u8]) -> anyhow::Result<Box<dyn Any + Send>> + Send>);
+                        }) as Box<dyn FnOnce(FrameByteRange<'_>) -> anyhow::Result<Box<dyn Any + Send>> + Send>);
                     }
                 })*
 
-                // Read and decode frames in bounded batches so peak memory
-                // holds one batch of compressed bytes rather than the whole
-                // frames region. Frames are contiguous, so each batch is a
-                // single sequential read.
-                let mut parts: Vec<Box<dyn Any + Send>> = Vec::with_capacity(total_frame_count);
-                let mut batch_start = 0usize;
-                let mut jobs_iter = jobs.into_iter();
-                while batch_start < total_frame_count {
-                    let batch_end =
-                        (batch_start + FRAME_DECODE_BATCH_SIZE).min(total_frame_count);
-                    let batch_bytes: usize = compressed_lens[batch_start..batch_end]
-                        .iter()
-                        .map(|&len| len as usize)
-                        .sum();
-                    let mut batch_buf = vec![0u8; batch_bytes];
-                    reader
-                        .read_exact(&mut batch_buf)
-                        .context("read frame batch")?;
-
-                    let mut batch: Vec<(
-                        Box<dyn FnOnce(&[u8]) -> anyhow::Result<Box<dyn Any + Send>> + Send>,
-                        &[u8],
-                    )> = Vec::with_capacity(batch_end - batch_start);
-                    let mut offset = 0usize;
-                    for i in batch_start..batch_end {
-                        let len = compressed_lens[i] as usize;
-                        let job = jobs_iter.next().expect("job for frame");
-                        batch.push((job, &batch_buf[offset..offset + len]));
-                        offset += len;
-                    }
-                    let decoded: Vec<Box<dyn Any + Send>> = batch
-                        .into_par_iter()
-                        .map(|(f, frame)| f(frame))
-                        .collect::<anyhow::Result<Vec<_>>>()?;
-                    parts.extend(decoded);
-                    batch_start = batch_end;
+                // Decode every frame in parallel, each job streaming its own
+                // byte range of the file through positioned reads
+                // (`read_exact_at` never touches a shared cursor). The
+                // compressed bytes are served from the page cache and only
+                // a small streaming buffer per frame is ever resident, so
+                // no bounded batching is needed to cap anonymous memory.
+                let mut pairs: Vec<(
+                    Box<dyn FnOnce(FrameByteRange<'_>) -> anyhow::Result<Box<dyn Any + Send>> + Send>,
+                    FrameByteRange<'_>,
+                )> = Vec::with_capacity(total_frame_count);
+                let mut frame_start = header_bytes;
+                for (i, job) in jobs.into_iter().enumerate() {
+                    let len = compressed_lens[i];
+                    pairs.push((job, FrameByteRange::new(file, frame_start, len)));
+                    frame_start += len;
                 }
+                let parts: Vec<Box<dyn Any + Send>> = pairs
+                    .into_par_iter()
+                    .map(|(f, frame)| f(frame))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
                 let mut iter = parts.into_iter();
 
                 let mut shard_counts_iter = field_shard_counts.iter();
@@ -1493,26 +1475,62 @@ fn bincode_decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> anyhow::Resul
     Ok(val)
 }
 
-/// Decode a bincode value directly from a zstd-compressed byte slice.
-/// Streaming the decompressed bytes into the decoder avoids materializing
-/// them; with many frames decoded in parallel, buffering every frame's
-/// decompressed contents dominates peak memory during graph load.
+/// One frame's byte range in a framed graph file. Reads go through
+/// positioned I/O (`read_at`/`seek_read`), so every frame can be read in
+/// parallel with no shared cursor and no shared buffer; the compressed
+/// bytes are served from the page cache rather than copied into a
+/// process-owned buffer up front.
+struct FrameByteRange<'a> {
+    file: &'a std::fs::File,
+    pos: u64,
+    end: u64,
+}
+
+impl<'a> FrameByteRange<'a> {
+    fn new(file: &'a std::fs::File, start: u64, len: u64) -> Self {
+        Self {
+            file,
+            pos: start,
+            end: start + len,
+        }
+    }
+}
+
+impl Read for FrameByteRange<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = usize::try_from(self.end - self.pos).unwrap_or(usize::MAX);
+        if remaining == 0 {
+            return Ok(0);
+        }
+        let want = buf.len().min(remaining);
+        #[cfg(unix)]
+        let n = std::os::unix::fs::FileExt::read_at(self.file, &mut buf[..want], self.pos)?;
+        #[cfg(windows)]
+        let n = std::os::windows::fs::FileExt::seek_read(self.file, &mut buf[..want], self.pos)?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+/// Decode a bincode value by streaming a zstd-compressed byte source
+/// through the decoder, so neither the compressed frame nor its
+/// decompressed bytes are ever materialized; with many frames decoded in
+/// parallel, buffering every frame's contents dominates peak memory during
+/// graph load.
 /// `expected_len` is the decompressed length recorded in the frame trailer;
 /// a mismatch means the frame is corrupt or was produced by a different
 /// writer than the trailer claims. The `take` bound also means bincode can
 /// never read past the trailer's declared length, no matter how corrupt the
 /// stream contents are.
 fn bincode_decode_compressed<T: serde::de::DeserializeOwned>(
-    compressed: &[u8],
+    compressed: impl Read,
     expected_len: u64,
 ) -> anyhow::Result<T> {
     // bincode issues many small reads; buffer between it and the zstd
-    // decoder so each read does not pay a decompression call. The slice is
-    // already `BufRead`, so `with_buffer` skips the extra `BufReader` that
-    // `Decoder::new` would insert around it.
+    // decoder so each read does not pay a decompression call.
     const BUFFER_SIZE: usize = 1024 * 1024;
 
-    let decoder = zstd::Decoder::with_buffer(compressed).context("zstd::Decoder::with_buffer")?;
+    let decoder = zstd::Decoder::new(compressed).context("zstd::Decoder::new")?;
     let mut reader = std::io::BufReader::with_capacity(BUFFER_SIZE, decoder).take(expected_len);
     let val = bincode::serde::decode_from_std_read(&mut reader, bincode::config::standard())
         .context("bincode decode from zstd stream")?;
@@ -1559,7 +1577,6 @@ impl Default for TargetGraph {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
 
     use rstest::rstest;
 
@@ -1592,6 +1609,14 @@ mod tests {
         graph
     }
 
+    /// Write framed bytes to an anonymous tempfile and read them back;
+    /// `read_framed` uses positioned reads, so tests must go through a real file.
+    fn read_framed_bytes(bytes: &[u8]) -> anyhow::Result<TargetGraph> {
+        let mut tmp = tempfile::tempfile().unwrap();
+        tmp.write_all(bytes).unwrap();
+        TargetGraph::read_framed(&tmp)
+    }
+
     #[test]
     fn write_framed_round_trips_distinguishing_counts() {
         let graph = build_distinguishing_graph();
@@ -1599,8 +1624,7 @@ mod tests {
         let mut buf = Vec::new();
         graph.write_framed(&mut buf).unwrap();
 
-        let mut cursor = Cursor::new(buf);
-        let loaded = TargetGraph::read_framed(&mut cursor).unwrap();
+        let loaded = read_framed_bytes(&buf).unwrap();
 
         assert_eq!(loaded.targets_len(), 1);
         assert_eq!(loaded.rule_types_len(), 2);
@@ -1620,8 +1644,7 @@ mod tests {
         let mut buf = Vec::new();
         graph.write_framed(&mut buf).unwrap();
 
-        let mut cursor = Cursor::new(buf);
-        let loaded = TargetGraph::read_framed(&mut cursor).unwrap();
+        let loaded = read_framed_bytes(&buf).unwrap();
 
         assert_eq!(loaded.targets_len(), 1);
         assert_eq!(loaded.rule_types_len(), 2);
@@ -1644,8 +1667,7 @@ mod tests {
         let bad_count = (MAX_SHARDS as u32 + 1).to_le_bytes();
         buf[12..16].copy_from_slice(&bad_count);
 
-        let mut cursor = Cursor::new(buf);
-        let err = TargetGraph::read_framed(&mut cursor).unwrap_err();
+        let err = read_framed_bytes(&buf).unwrap_err();
         assert!(
             err.to_string().contains("out of range"),
             "expected out-of-range error, got: {err}",
@@ -1673,8 +1695,8 @@ mod tests {
         std::io::Write::flush(&mut writer).unwrap();
         drop(writer);
 
-        let mut file = std::fs::File::open(&path).unwrap();
-        let loaded = TargetGraph::read_framed(&mut file).unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        let loaded = TargetGraph::read_framed(&file).unwrap();
 
         assert_eq!(loaded.targets_len(), 1);
         assert_eq!(loaded.minimized_targets_len(), 0);
@@ -1710,8 +1732,7 @@ mod tests {
         let graph = TargetGraph::new();
         let mut buf = Vec::new();
         graph.write_framed(&mut buf).unwrap();
-        let mut cursor = Cursor::new(corrupt(buf));
-        let err = TargetGraph::read_framed(&mut cursor).unwrap_err();
+        let err = read_framed_bytes(&corrupt(buf)).unwrap_err();
         assert!(
             format!("{err}").contains(expected_err),
             "expected {expected_err:?}, got: {err}"
@@ -2901,7 +2922,7 @@ mod tests {
 
         let (compressed, uncompressed_len) = bincode_encode_compressed(&original, workers).unwrap();
         let decoded: ShardedField<IdDashMap<TargetId, String>> =
-            bincode_decode_compressed(&compressed, uncompressed_len).unwrap();
+            bincode_decode_compressed(compressed.as_slice(), uncompressed_len).unwrap();
 
         assert_eq!(decoded.len(), 200);
         for raw_id in 0..200u64 {
@@ -2959,7 +2980,7 @@ mod tests {
 
         let (compressed, claimed_len) = corrupt(&encoded);
         let err = bincode_decode_compressed::<ShardedField<IdDashMap<TargetId, String>>>(
-            &compressed,
+            compressed.as_slice(),
             claimed_len,
         )
         .unwrap_err();
@@ -2986,7 +3007,7 @@ mod tests {
         bytes.extend_from_slice(&[0u8; 4]);
         bytes.extend_from_slice(&100u64.to_le_bytes());
 
-        let err = TargetGraph::read_framed(&mut std::io::Cursor::new(bytes)).unwrap_err();
+        let err = read_framed_bytes(&bytes).unwrap_err();
         assert!(
             err.to_string().contains("too small"),
             "unexpected error: {err:#}"
