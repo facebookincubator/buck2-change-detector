@@ -16,7 +16,6 @@ use std::process::Termination;
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
-use clap::Subcommand;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
 use td_util::logging::init_logger_start_time;
@@ -30,18 +29,15 @@ enum Args {
     Audit(audit::Args),
     Btd(btd::Args),
     #[cfg(fbcode_build)]
-    BtdV2(target_graph_select::args::Args),
+    BtdV2(target_graph::select::args::Args),
     #[cfg(fbcode_build)]
     Citadel(verifiable_matcher::Args),
     #[cfg(fbcode_build)]
-    GraphCompressor(target_graph_build::Args),
+    GraphCompressor(target_graph::build::Args),
     #[cfg(fbcode_build)]
-    Graph {
-        #[command(subcommand)]
-        command: GraphCommand,
-    },
+    Graph(target_graph::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
-    GraphFetch(target_graph_fetch::Args),
+    GraphFetch(target_graph::fetch::Args),
     #[cfg(fbcode_build)]
     LogGraphCache(td_util::btd_graph_cache::Args),
     #[cfg(fbcode_build)]
@@ -79,32 +75,6 @@ enum Args {
     LocalValidationFilter(local_validation_filter::Args),
     #[cfg(fbcode_build)]
     Summary(citrace_v2::cli::SummaryArgs),
-}
-
-#[cfg(fbcode_build)]
-#[derive(Subcommand)]
-enum GraphCommand {
-    Build(target_graph_build::Args),
-    #[cfg(target_os = "linux")]
-    Fetch(target_graph_fetch::Args),
-    #[cfg(target_os = "linux")]
-    Prepare(target_graph_prepare::Args),
-    Select(target_graph_select::args::Args),
-}
-
-#[cfg(fbcode_build)]
-async fn run_graph(
-    fb: FacebookInit,
-    command: GraphCommand,
-) -> Result<(), td_util::workflow_error::WorkflowError> {
-    match command {
-        GraphCommand::Build(args) => target_graph_build::main(args),
-        #[cfg(target_os = "linux")]
-        GraphCommand::Fetch(args) => target_graph_fetch::main(fb, args).await,
-        #[cfg(target_os = "linux")]
-        GraphCommand::Prepare(args) => target_graph_prepare::main(fb, args).await,
-        GraphCommand::Select(args) => target_graph_select::main(args),
-    }
 }
 
 #[fbinit::main(set_var = "OMP_NUM_THREADS=1")]
@@ -154,15 +124,17 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Audit(args) => audit::main(args),
         Args::Btd(args) => btd::main(args),
         #[cfg(fbcode_build)]
-        Args::BtdV2(args) => run_graph(fb, GraphCommand::Select(args)).await,
+        Args::BtdV2(args) => target_graph::run(fb, target_graph::Command::Select(args)).await,
         #[cfg(fbcode_build)]
         Args::Citadel(args) => verifiable_matcher::main(args).await,
         #[cfg(fbcode_build)]
-        Args::GraphCompressor(args) => run_graph(fb, GraphCommand::Build(args)).await,
+        Args::GraphCompressor(args) => {
+            target_graph::run(fb, target_graph::Command::Build(args)).await
+        }
         #[cfg(fbcode_build)]
-        Args::Graph { command } => run_graph(fb, command).await,
+        Args::Graph(args) => target_graph::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::GraphFetch(args) => run_graph(fb, GraphCommand::Fetch(args)).await,
+        Args::GraphFetch(args) => target_graph::run(fb, target_graph::Command::Fetch(args)).await,
         #[cfg(fbcode_build)]
         Args::LogGraphCache(args) => td_util::btd_graph_cache::main(args),
         #[cfg(fbcode_build)]
