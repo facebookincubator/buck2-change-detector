@@ -579,6 +579,17 @@ macro_rules! define_target_graph_framed_io {
                 let trailer_offset = u64::from_le_bytes(trailer_offset_bytes);
                 let trailer_size =
                     FRAME_COUNT_TRAILER_BYTES + TRAILER_BYTES_PER_FRAME * total_frame_count;
+                // The up-front min_size check cannot account for the
+                // per-frame trailer entries (the shard counts are only known
+                // now), so re-check before subtracting to keep the bound
+                // arithmetic from underflowing on a truncated file.
+                let needed =
+                    header_bytes + trailer_size as u64 + FRAME_TRAILER_OFFSET_BYTES as u64;
+                if file_size < needed {
+                    anyhow::bail!(
+                        "framed file too small for {total_frame_count} frames ({file_size} bytes, need >= {needed})",
+                    );
+                }
                 let trailer_offset_lo = header_bytes;
                 let trailer_offset_hi =
                     file_size - trailer_size as u64 - FRAME_TRAILER_OFFSET_BYTES as u64;
@@ -2821,6 +2832,29 @@ mod tests {
                 Some(format!("v{raw_id}"))
             );
         }
+    }
+
+    #[test]
+    fn read_framed_rejects_file_smaller_than_trailer() {
+        // A header claiming 22 single-shard fields implies a 356-byte
+        // trailer, but the file is barely over the up-front min_size (which
+        // cannot know the frame count yet). The trailer bound computation
+        // must reject it instead of underflowing.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&FRAME_MAGIC);
+        bytes.extend_from_slice(&SCHEMA_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(NUM_FIELDS as u32).to_le_bytes());
+        for _ in 0..NUM_FIELDS {
+            bytes.extend_from_slice(&1u32.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0u8; 4]);
+        bytes.extend_from_slice(&100u64.to_le_bytes());
+
+        let err = TargetGraph::read_framed(&mut std::io::Cursor::new(bytes)).unwrap_err();
+        assert!(
+            err.to_string().contains("too small"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
