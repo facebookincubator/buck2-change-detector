@@ -88,6 +88,17 @@ pub async fn current_revision(cwd: Option<&Path>) -> anyhow::Result<String> {
     Ok(stdout.trim().to_owned())
 }
 
+/// Whether the current commit is public, run in `cwd` (or the process working
+/// directory when `None`).
+pub async fn current_revision_is_public(cwd: Option<&Path>) -> anyhow::Result<bool> {
+    let stdout = run_sl_async(
+        &["log", "-r", ". & public()", "-T", "x", "--limit", "1"],
+        cwd,
+    )
+    .await?;
+    Ok(!stdout.trim().is_empty())
+}
+
 /// Raw `sl status -amr --root-relative` for the working copy (changes
 /// relative to its parent), suitable for BTD's `read_status`.
 pub async fn status_working_copy(cwd: Option<&Path>) -> anyhow::Result<String> {

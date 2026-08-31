@@ -37,6 +37,9 @@ pub enum Event {
     /// Emitted once unified base-graph preparation has produced a valid graph
     /// and any requested structured metadata. Failures emit no success event.
     BTD_BASE_GRAPH_PREPARATION_SUCCESS,
+    /// Emitted after a graph cache upload is intentionally skipped or after
+    /// both the Manifold object and saved-state XDB record are available.
+    BTD_GRAPH_CACHE_UPLOAD,
     BTD_SUCCESS,
     BTD_SCOPE_CREATED,
     GRAPH_COMPRESSOR_SUCCESS,
