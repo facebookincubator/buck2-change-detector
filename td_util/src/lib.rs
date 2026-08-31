@@ -13,6 +13,7 @@ pub mod btd_graph_cache;
 pub mod cli;
 pub mod command;
 pub mod executor;
+pub mod external_calls_cache;
 pub mod file_io;
 pub mod git;
 pub mod json;
