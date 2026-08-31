@@ -113,19 +113,17 @@ where
 }
 
 /// Record or replay a synchronous call.
-pub fn call_cached_sync<F, T>(cache_type: CacheType, key: &str, call: F) -> T
+///
+/// `key` is a closure because an inert run discards it: some callers read a knob
+/// once per verifiable, and serializing a key only to drop it would be pure
+/// overhead on every production run.
+pub fn call_cached_sync<F, T, K>(cache_type: CacheType, key: K, call: F) -> T
 where
     F: FnOnce() -> T,
+    K: FnOnce() -> String,
     T: Serialize + for<'de> Deserialize<'de>,
 {
     CACHE.call_cached_sync(cache_type, key, call)
-}
-
-/// Cached wrapper for a boolean JustKnob.
-pub fn check_boolean_knob_cached(knob: &str) -> bool {
-    call_cached_sync(CacheType::JustKnobs, knob, || {
-        crate::knobs::check_boolean_knob(knob)
-    })
 }
 
 /// `Off` is the normal production path: every call reaches its real
@@ -284,17 +282,23 @@ impl ExternalCallsCache {
         result
     }
 
-    fn call_cached_sync<F, T>(&self, cache_type: CacheType, key: &str, call: F) -> T
+    fn call_cached_sync<F, T, K>(&self, cache_type: CacheType, key: K, call: F) -> T
     where
         F: FnOnce() -> T,
+        K: FnOnce() -> String,
         T: Serialize + for<'de> Deserialize<'de>,
     {
-        if let Some(cached) = self.lookup::<T>(cache_type, key) {
+        if self.mode() == Mode::Off {
+            return call();
+        }
+
+        let key = key();
+        if let Some(cached) = self.lookup::<T>(cache_type, &key) {
             return cached;
         }
 
         let result = call();
-        self.record(cache_type, key, &result);
+        self.record(cache_type, &key, &result);
         result
     }
 
@@ -358,10 +362,14 @@ mod tests {
         let calls = AtomicU32::new(0);
 
         for _ in 0..3 {
-            cache.call_cached_sync(CacheType::JustKnobs, "some/knob:on", || {
-                calls.fetch_add(1, Ordering::SeqCst);
-                true
-            });
+            cache.call_cached_sync(
+                CacheType::JustKnobs,
+                || "some/knob:on".to_owned(),
+                || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    true
+                },
+            );
         }
 
         assert_eq!(
@@ -369,6 +377,20 @@ mod tests {
             3,
             "every call must reach the real implementation when no cache was requested"
         );
+    }
+
+    /// Callers build a key per read, so an inert run must not pay for one.
+    #[test]
+    fn test_an_inert_read_does_not_build_a_cache_key() {
+        let cache = local();
+
+        let value = cache.call_cached_sync(
+            CacheType::JustKnobs,
+            || panic!("the cache key must not be built while the recorder is inert"),
+            || true,
+        );
+
+        assert!(value, "the real implementation still supplies the value");
     }
 
     #[test]
@@ -379,16 +401,17 @@ mod tests {
             calls.fetch_add(1, Ordering::SeqCst);
             true
         };
+        let key = || "k".to_owned();
 
-        cache.call_cached_sync(CacheType::JustKnobs, "k", call);
+        cache.call_cached_sync(CacheType::JustKnobs, key, call);
         cache.start_recording();
-        cache.call_cached_sync(CacheType::JustKnobs, "k", call);
-        cache.call_cached_sync(CacheType::JustKnobs, "k", call);
+        cache.call_cached_sync(CacheType::JustKnobs, key, call);
+        cache.call_cached_sync(CacheType::JustKnobs, key, call);
 
         assert_eq!(
             calls.load(Ordering::SeqCst),
             2,
-            "one call before recording started, one after; the third is cached"
+            "one call before recording started, one after; the third is served from the cache"
         );
     }
 
@@ -397,11 +420,12 @@ mod tests {
         let cache = local();
         cache.start_recording();
         let calls = AtomicU32::new(0);
+        let key = || "k".to_owned();
         let call = || {
             calls.fetch_add(1, Ordering::SeqCst);
             "recorded".to_owned()
         };
-        cache.call_cached_sync(CacheType::Configerator, "k", call);
+        cache.call_cached_sync(CacheType::Configerator, key, call);
 
         let file = NamedTempFile::new().unwrap();
         serde_json::to_writer(
@@ -416,7 +440,7 @@ mod tests {
             "cannot enter replay mode after recording has started"
         );
         assert_eq!(
-            cache.call_cached_sync(CacheType::Configerator, "k", call),
+            cache.call_cached_sync(CacheType::Configerator, key, call),
             "recorded"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -432,8 +456,9 @@ mod tests {
             "value".to_owned()
         };
 
-        let first = cache.call_cached_sync(CacheType::Configerator, "k", call);
-        let second = cache.call_cached_sync(CacheType::Configerator, "k", call);
+        let key = || "k".to_owned();
+        let first = cache.call_cached_sync(CacheType::Configerator, key, call);
+        let second = cache.call_cached_sync(CacheType::Configerator, key, call);
 
         assert_eq!((first, second), ("value".to_owned(), "value".to_owned()));
         assert_eq!(
@@ -447,8 +472,13 @@ mod tests {
     fn test_same_key_in_different_types_does_not_collide() {
         let cache = local();
         cache.start_recording();
-        cache.call_cached_sync(CacheType::Configerator, "shared", || "config".to_owned());
-        let other = cache.call_cached_sync(CacheType::Gk, "shared", || "gk".to_owned());
+        cache.call_cached_sync(
+            CacheType::Configerator,
+            || "shared".to_owned(),
+            || "config".to_owned(),
+        );
+        let other =
+            cache.call_cached_sync(CacheType::Gk, || "shared".to_owned(), || "gk".to_owned());
 
         assert_eq!(other, "gk", "each cache type is its own key namespace");
     }
@@ -466,18 +496,27 @@ mod tests {
         cache.load_cache_for_replay(file.path()).unwrap();
 
         assert_eq!(
-            cache.call_cached_sync(CacheType::Gk, "known", || "unused".to_owned()),
+            cache.call_cached_sync(CacheType::Gk, || "known".to_owned(), || "unused".to_owned()),
             "yes"
         );
-        cache.call_cached_sync(CacheType::Gk, "unknown", || "live".to_owned());
+        cache.call_cached_sync(CacheType::Gk, || "unknown".to_owned(), || "live".to_owned());
     }
 
     #[test]
     fn test_round_trip_through_a_file() {
         let recorder = local();
         recorder.start_recording();
-        recorder.call_cached_sync(CacheType::DrValue, "controller", || 1.25_f64);
-        recorder.call_cached_sync(CacheType::JustKnobs, "some/knob:on", || true);
+        recorder.call_cached_sync(CacheType::DrValue, || "controller".to_owned(), || 1.25_f64);
+        recorder.call_cached_sync(
+            CacheType::JustKnobs,
+            || "some/knob:on".to_owned(),
+            || Some(true),
+        );
+        recorder.call_cached_sync(
+            CacheType::JustKnobs,
+            || "some/knob:absent".to_owned(),
+            || Option::<bool>::None,
+        );
 
         let file = NamedTempFile::new().unwrap();
         recorder.save_cache(file.path()).unwrap();
@@ -485,15 +524,28 @@ mod tests {
         let replayer = local();
         replayer.load_cache_for_replay(file.path()).unwrap();
 
-        let dr: f64 = replayer.call_cached_sync(CacheType::DrValue, "controller", || {
-            panic!("must come from the cache")
-        });
-        let knob: bool = replayer.call_cached_sync(CacheType::JustKnobs, "some/knob:on", || {
-            panic!("must come from the cache")
-        });
+        let dr: f64 = replayer.call_cached_sync(
+            CacheType::DrValue,
+            || "controller".to_owned(),
+            || panic!("must come from the cache"),
+        );
+        let knob: Option<bool> = replayer.call_cached_sync(
+            CacheType::JustKnobs,
+            || "some/knob:on".to_owned(),
+            || panic!("must come from the cache"),
+        );
+        let absent: Option<bool> = replayer.call_cached_sync(
+            CacheType::JustKnobs,
+            || "some/knob:absent".to_owned(),
+            || panic!("must come from the cache"),
+        );
 
         assert_eq!(dr, 1.25);
-        assert!(knob);
+        assert_eq!(knob, Some(true));
+        assert_eq!(
+            absent, None,
+            "an absent knob must replay as absent, not as some caller's default"
+        );
     }
 
     #[rstest]
@@ -543,6 +595,6 @@ mod tests {
         cache.load_cache_for_replay(file.path()).unwrap();
 
         // Treating this as a miss would make a live call under replay.
-        cache.call_cached_sync(CacheType::Gk, "k", || 1.0_f64);
+        cache.call_cached_sync(CacheType::Gk, || "k".to_owned(), || 1.0_f64);
     }
 }
