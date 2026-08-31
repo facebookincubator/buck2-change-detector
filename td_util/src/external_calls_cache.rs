@@ -22,6 +22,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 
+use anyhow::Context as _;
 use anyhow::anyhow;
 use anyhow::bail;
 use serde::Deserialize;
@@ -53,6 +54,8 @@ pub enum CacheType {
     DrValue,
     DrMinValue,
     JustKnobs,
+    /// Coverage-pruner target-source batches keyed by ordered target fingerprint.
+    Glean,
 }
 
 /// Load a recorded cache and switch to replay mode: no external calls are made
@@ -322,8 +325,22 @@ impl ExternalCallsCache {
             Mode::Replay => bail!("already in replay mode"),
         }
 
-        let reader = std::io::BufReader::new(File::open(path)?);
-        let loaded: BTreeMap<CacheType, BTreeMap<String, Value>> = serde_json::from_reader(reader)?;
+        // Sniff rather than trust the extension, so a cache written before
+        // compression was added still loads.
+        let loaded: BTreeMap<CacheType, BTreeMap<String, Value>> =
+            if crate::zstd::has_zstd_magic(path) {
+                let file = File::open(path)
+                    .with_context(|| format!("opening compressed external calls cache {path:?}"))?;
+                let decoder = zstd::stream::read::Decoder::new(std::io::BufReader::new(file))
+                    .context("decompressing external calls cache")?;
+                serde_json::from_reader(decoder)
+                    .with_context(|| format!("parsing compressed external calls cache {path:?}"))?
+            } else {
+                let file = File::open(path)
+                    .with_context(|| format!("opening external calls cache {path:?}"))?;
+                serde_json::from_reader(std::io::BufReader::new(file))
+                    .with_context(|| format!("parsing external calls cache {path:?}"))?
+            };
         *self.cache.lock().unwrap() = loaded;
         self.mode.store(Mode::Replay as u8, Ordering::SeqCst);
 
@@ -331,14 +348,28 @@ impl ExternalCallsCache {
         Ok(())
     }
 
+    /// Writes a zstd-compressed recording.
+    ///
+    /// `td_util` is open source, so this cache uses a portable codec rather
+    /// than an internal-only compression service. Replay detects compression by
+    /// magic bytes, preserving compatibility with uncompressed caches.
     fn save_cache(&self, path: &Path) -> anyhow::Result<()> {
         let snapshot = self.cache.lock().unwrap().clone();
-        let file = File::create(path)?;
-        let mut writer = BufWriter::with_capacity(BUFFER_SIZE, file);
-        serde_json::to_writer(&mut writer, &snapshot)?;
-        writer.flush()?;
+        let file = File::create(path)
+            .with_context(|| format!("creating external calls cache {path:?}"))?;
+        let writer = BufWriter::with_capacity(BUFFER_SIZE, file);
+        let mut encoder = zstd::stream::write::Encoder::new(writer, 0)
+            .context("creating external calls cache compressor")?;
+        serde_json::to_writer(&mut encoder, &snapshot)
+            .with_context(|| format!("serializing external calls cache {path:?}"))?;
+        let mut writer = encoder
+            .finish()
+            .context("finishing external calls cache compression")?;
+        writer
+            .flush()
+            .context("flushing compressed external calls cache")?;
 
-        info!("Saved external calls cache to {:?}", path);
+        info!("Saved compressed external calls cache to {:?}", path);
         Ok(())
     }
 }
@@ -520,6 +551,10 @@ mod tests {
 
         let file = NamedTempFile::new().unwrap();
         recorder.save_cache(file.path()).unwrap();
+        assert!(
+            crate::zstd::has_zstd_magic(file.path()),
+            "new recordings must be zstd compressed"
+        );
 
         let replayer = local();
         replayer.load_cache_for_replay(file.path()).unwrap();
