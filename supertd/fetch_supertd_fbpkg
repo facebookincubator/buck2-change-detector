@@ -12,14 +12,35 @@ if [[ -z "$UUID" ]]; then
     echo "Failed to get UUID for ${SUPERTD_PACKAGE_NAME}:${SUPERTD_PACKAGE_VERSION}" >&2
     exit 1
 fi
+
 DIR="${SUPERTD_BASE_PATH}/${UUID}"
 SUPERTD_BINARY="${DIR}/supertd"
-echo "Using supertd fbpkg ${UUID} and tmp directory ${DIR}" >&2
+LOCK="${SUPERTD_BASE_PATH}/${UUID}.lock"
+LOCK_TIMEOUT_SEC=300
 
-if [[ ! -d "$SUPERTD_BINARY" ]]; then
-    mkdir -p "$DIR"
-    echo "Fetching ${SUPERTD_PACKAGE_NAME}:${UUID}..." >&2
-    fbpkg fetch "${SUPERTD_PACKAGE_NAME}:${UUID}" -d "$DIR" >&2
-fi
+mkdir -p "${SUPERTD_BASE_PATH}"
 
-echo "$DIR/supertd"
+# Publish by rename so a concurrent exec never sees the inode open for write
+# (ETXTBSY); TMP is a sibling of DIR so the rename stays on one filesystem.
+(
+  if ! flock -w "${LOCK_TIMEOUT_SEC}" 200; then
+    echo "Timed out after ${LOCK_TIMEOUT_SEC}s waiting for ${LOCK}" >&2
+    exit 1
+  fi
+
+  if [[ ! -x "${SUPERTD_BINARY}" ]]; then
+    TMP=$(mktemp -d -p "${SUPERTD_BASE_PATH}" "${UUID}.tmp.XXXXXX")
+    trap 'rm -rf "${TMP}"' EXIT
+    trap 'exit 1' INT TERM HUP
+
+    echo "Fetching ${SUPERTD_PACKAGE_NAME}:${UUID} to ${TMP}..." >&2
+    fbpkg fetch "${SUPERTD_PACKAGE_NAME}:${UUID}" -d "${TMP}" >&2
+
+    chmod +x "${TMP}/supertd"
+    mkdir -p "${DIR}"
+    mv "${TMP}/supertd" "${SUPERTD_BINARY}"
+  fi
+) 200>"${LOCK}"
+
+echo "Using supertd fbpkg ${UUID} from cache directory ${DIR}" >&2
+echo "${SUPERTD_BINARY}"
