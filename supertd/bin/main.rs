@@ -39,8 +39,6 @@ enum Args {
     #[cfg(all(fbcode_build, target_os = "linux"))]
     GraphFetch(target_graph::fetch::Args),
     #[cfg(fbcode_build)]
-    LogGraphCache(td_util::btd_graph_cache::Args),
-    #[cfg(fbcode_build)]
     MetadataFetcher(metadata_fetcher::Args),
     #[cfg(fbcode_build)]
     VerifiableMatcher(verifiable_matcher::Args),
@@ -138,8 +136,6 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::GraphFetch(args) => target_graph::run(fb, target_graph::Command::Fetch(args)).await,
         #[cfg(fbcode_build)]
-        Args::LogGraphCache(args) => td_util::btd_graph_cache::main(args),
-        #[cfg(fbcode_build)]
         Args::MetadataFetcher(args) => metadata_fetcher::main(fb, args).await,
         #[cfg(fbcode_build)]
         Args::VerifiableMatcher(args) => verifiable_matcher::main(args).await,
@@ -235,5 +231,6 @@ mod tests {
         }
         #[cfg(target_os = "linux")]
         assert!(command.find_subcommand("graph-fetch").is_some());
+        assert!(command.find_subcommand("log-graph-cache").is_none());
     }
 }
