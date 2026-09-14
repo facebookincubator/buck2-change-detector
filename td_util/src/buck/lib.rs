@@ -22,6 +22,7 @@ pub mod invalidation_patterns;
 pub mod labels;
 pub mod owners;
 pub mod package_resolver;
+pub mod process;
 pub mod run;
 pub mod select;
 pub mod target_graph;

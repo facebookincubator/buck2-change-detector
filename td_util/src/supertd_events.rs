@@ -34,9 +34,12 @@ pub enum Event {
     /// Carries the same per-phase breakdown (phases not reached read 0, so the
     /// failing phase is identifiable) plus the error.
     INLINE_ORCHESTRATOR_FAILURE,
-    /// Emitted once unified base-graph preparation has produced a valid graph
-    /// and any requested structured metadata. Failures emit no success event.
+    /// Emitted after base-graph preparation and output writing succeed, before
+    /// any requested publication is attempted.
     BTD_BASE_GRAPH_PREPARATION_SUCCESS,
+    /// Emitted once after base-graph preparation finishes, whether it succeeds
+    /// or fails. Carries the selected path and a flat phase-timing breakdown.
+    BTD_GRAPH_PREPARATION_FINISHED,
     /// Emitted after a graph cache upload is intentionally skipped or after
     /// both the Manifold object and saved-state XDB record are available.
     BTD_GRAPH_CACHE_UPLOAD,

@@ -21,6 +21,8 @@ use thiserror::Error;
 use tracing::info;
 
 use crate::cells::CellInfo;
+use crate::process::BuckCommand;
+use crate::process::BuckDiagnostics;
 use crate::types::CellPath;
 use crate::types::Package;
 use crate::types::ProjectRelativePath;
@@ -35,6 +37,8 @@ pub struct Buck2 {
     root: Option<PathBuf>,
     /// The isolation directory to always use when invoking buck
     isolation_dir: Option<String>,
+    /// How the incremental graph update's `targets` command reports diagnostics.
+    targets_diagnostics: BuckDiagnostics,
 }
 
 #[derive(Error, Debug)]
@@ -49,7 +53,22 @@ impl Buck2 {
             program,
             root: None,
             isolation_dir,
+            targets_diagnostics: BuckDiagnostics::Inherit,
         }
+    }
+
+    /// Configure diagnostics for the incremental graph update's `targets` command.
+    pub fn with_targets_diagnostics(mut self, targets_diagnostics: BuckDiagnostics) -> Self {
+        self.targets_diagnostics = targets_diagnostics;
+        self
+    }
+
+    pub fn targets_command(&self) -> anyhow::Result<BuckCommand> {
+        BuckCommand::targets(
+            &self.program,
+            self.isolation_dir.as_deref(),
+            self.targets_diagnostics,
+        )
     }
 
     pub fn command(&self) -> Command {
@@ -281,8 +300,14 @@ pub fn owners_arguments() -> Vec<&'static str> {
 /// attributes since graph_compressor's `RawBuckTarget` does not use them.
 /// This avoids serializing large per-target input lists (~10% of output).
 pub fn targets_arguments_v2() -> Vec<&'static str> {
-    const PREFIX: &[&str] = &[
-        "targets",
+    std::iter::once("targets")
+        .chain(targets_options_v2())
+        .collect()
+}
+
+/// Options shared by BTDv2 `buck2 targets` invocations, excluding the subcommand.
+pub fn targets_options_v2() -> Vec<&'static str> {
+    const OPTIONS: &[&str] = &[
         "--streaming",
         "--keep-going",
         "--no-cache",
@@ -292,7 +317,7 @@ pub fn targets_arguments_v2() -> Vec<&'static str> {
         "--imports",
         "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
     ];
-    [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
+    [OPTIONS, HASH_NORMALIZED_CONFIGS].concat()
 }
 
 #[cfg(test)]
@@ -340,6 +365,19 @@ mod tests {
                 assert!(args.contains(entry), "{label} must include {entry}",);
             }
         }
+    }
+
+    #[test]
+    fn targets_v2_separates_subcommand_from_options() {
+        let options = targets_options_v2();
+
+        assert!(!options.contains(&"targets"));
+        assert_eq!(
+            targets_arguments_v2(),
+            std::iter::once("targets")
+                .chain(options)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
