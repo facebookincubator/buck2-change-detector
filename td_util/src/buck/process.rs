@@ -66,8 +66,9 @@ impl BuckCommand {
             BuckDiagnostics::QuietWithUi => {
                 let directory = tempfile::tempdir().context("creating Buck build-ID directory")?;
                 let path = directory.path().join("build_id");
+                // The "none" console also discards streaming stdout from targets.
                 command
-                    .args(["--console=none", "--verbose=0"])
+                    .args(["--console=simple", "--verbose=0"])
                     .arg(format!("--write-build-id={}", path.display()));
                 Some(BuildIdOutput {
                     path,
@@ -176,7 +177,7 @@ mod tests {
                 "--isolation-dir",
                 "isolation",
                 "targets",
-                "--console=none",
+                "--console=simple",
                 "--verbose=0",
             ]
         );
