@@ -923,6 +923,86 @@ impl TargetGraph {
         self.target_id_to_rdeps.get(&target_id).map(|v| v.clone())
     }
 
+    /// Appends the target's rdeps and ci_hint-affected targets to `out` without
+    /// cloning the stored vectors. `out` is not cleared, so a caller can reuse
+    /// one buffer across a traversal. Same contents as `get_all_dependents`.
+    pub fn dependents_into(&self, target_id: TargetId, out: &mut Vec<TargetId>) {
+        if let Some(rdeps) = self.target_id_to_rdeps.get(&target_id) {
+            out.extend_from_slice(&rdeps);
+        }
+        if let Some(affected) = self.ci_hint_to_affected.get(&target_id) {
+            out.extend_from_slice(&affected);
+        }
+    }
+
+    /// Appends the target's deps to `out` without cloning the stored vector.
+    pub fn deps_into(&self, target_id: TargetId, out: &mut Vec<TargetId>) {
+        if let Some(deps) = self.target_id_to_deps.get(&target_id) {
+            out.extend_from_slice(&deps);
+        }
+    }
+
+    /// Whether the target has any (regular) dependency edge.
+    pub fn has_deps(&self, target_id: TargetId) -> bool {
+        self.target_id_to_deps
+            .get(&target_id)
+            .is_some_and(|deps| !deps.is_empty())
+    }
+
+    /// Whether anything depends on the target via an rdep or ci_hint edge.
+    pub fn has_dependents(&self, target_id: TargetId) -> bool {
+        self.target_id_to_rdeps
+            .get(&target_id)
+            .is_some_and(|rdeps| !rdeps.is_empty())
+            || self
+                .ci_hint_to_affected
+                .get(&target_id)
+                .is_some_and(|affected| !affected.is_empty())
+    }
+
+    /// The target's rule type id, read without cloning its `MinimizedBuckTarget`.
+    pub fn rule_type_id(&self, target_id: TargetId) -> Option<RuleTypeId> {
+        self.minimized_targets
+            .get(&target_id)
+            .map(|minimized| minimized.rule_type)
+    }
+
+    /// Whether the target carries `label_id`, read without cloning its labels.
+    pub fn target_has_label(&self, target_id: TargetId, label_id: LabelId) -> bool {
+        self.minimized_targets
+            .get(&target_id)
+            .is_some_and(|minimized| minimized.labels.contains(&label_id))
+    }
+
+    pub fn contains_target(&self, target_id: TargetId) -> bool {
+        self.target_id_to_label.contains_key(&target_id)
+    }
+
+    /// Runs `f` on the target's label without cloning it. `f` runs under the
+    /// read lock of one `target_id_to_label` shard, so it must not call a
+    /// method that writes to that map (`store_target`, `remove_target`, ...),
+    /// which would deadlock on the same shard. Nested reads are fine.
+    pub fn with_target_label<R>(
+        &self,
+        target_id: TargetId,
+        f: impl FnOnce(&str) -> R,
+    ) -> Option<R> {
+        self.target_id_to_label
+            .get(&target_id)
+            .map(|label| f(label.as_str()))
+    }
+
+    /// Whether the rule type's short name (after the last `:`) is `ci_hint`.
+    pub fn is_ci_hint_rule_type(&self, rule_type_id: RuleTypeId) -> bool {
+        self.rule_type_id_to_string
+            .get(&rule_type_id)
+            .is_some_and(|full| {
+                full.rsplit_once(':')
+                    .map_or(full.as_str(), |(_, short)| short)
+                    == CI_HINT_RULE_TYPE
+            })
+    }
+
     pub fn get_deps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
         self.target_id_to_deps.get(&target_id).map(|v| v.clone())
     }
@@ -1129,9 +1209,8 @@ impl TargetGraph {
     }
 
     pub fn is_ci_hint_target(&self, target_id: TargetId) -> bool {
-        self.get_minimized_target(target_id)
-            .and_then(|minimized| self.get_rule_type_short(minimized.rule_type))
-            .is_some_and(|short| short == CI_HINT_RULE_TYPE)
+        self.rule_type_id(target_id)
+            .is_some_and(|rule_type_id| self.is_ci_hint_rule_type(rule_type_id))
     }
 
     pub fn get_rule_type_short(&self, rule_type_id: RuleTypeId) -> Option<String> {

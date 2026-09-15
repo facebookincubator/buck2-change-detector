@@ -41,9 +41,13 @@ impl<T> PackageResolver<T> {
 
     /// Split a `Package` up into a series of strings that are used for indexing the maps.
     fn package_parts(package: &Package) -> impl Iterator<Item = &str> {
+        Self::package_path_parts(package.as_str())
+    }
+
+    /// `package_parts` for a package path that has not been interned.
+    fn package_path_parts(mut s: &str) -> impl Iterator<Item = &str> {
         // Note that a string such as `foo//bar` will currently turn into `["foo", "", "bar"]`.
         // We could remove the empty string part, but its simpler not to.
-        let mut s = package.as_str();
         if s.ends_with("//") {
             // corner case if we have a PACKAGE at the root of a cell
             s = &s[0..s.len() - 1];
@@ -70,18 +74,46 @@ impl<T> PackageResolver<T> {
     /// In Buck2 these would then be processed in _reverse_ order.
     pub fn get(&self, package: &Package) -> Vec<&T> {
         let mut res = Vec::new();
+        self.for_each_at_or_above(package.as_str(), |value| res.push(value));
+        res
+    }
+
+    /// Whether a value exists at this package or an ancestor, stopping at the first match.
+    pub fn has_at_or_above(&self, package_path: &str) -> bool {
+        let mut node = self;
+        if node.value.is_some() {
+            return true;
+        }
+        for part in Self::package_path_parts(package_path) {
+            let Some(child) = node.children.get(part) else {
+                return false;
+            };
+            if child.value.is_some() {
+                return true;
+            }
+            node = child;
+        }
+        false
+    }
+
+    /// Like `get`, but takes the package path as a plain string (no interning)
+    /// and visits the values top-down instead of collecting them.
+    pub fn for_each_at_or_above<'a>(&'a self, package_path: &str, mut f: impl FnMut(&'a T)) {
         let mut mp = self;
-        res.extend(mp.value.as_ref());
-        for x in Self::package_parts(package) {
+        if let Some(value) = mp.value.as_ref() {
+            f(value);
+        }
+        for x in Self::package_path_parts(package_path) {
             match mp.children.get(x) {
                 None => break,
                 Some(mp2) => {
-                    res.extend(mp2.value.as_ref());
+                    if let Some(value) = mp2.value.as_ref() {
+                        f(value);
+                    }
                     mp = mp2;
                 }
             }
         }
-        res
     }
 }
 
@@ -107,5 +139,20 @@ mod tests {
         assert_eq!(p.get(&Package::new("foo//bar/baz")), vec![&1, &2]);
         assert_eq!(p.get(&Package::new("foo//bar/baz/qux")), vec![&1, &2]);
         assert_eq!(p.get(&Package::new("other//bar")), Vec::<&i32>::new());
+    }
+
+    #[test]
+    fn test_has_at_or_above_respects_package_boundaries() {
+        let mut p = PackageResolver::new();
+        assert!(!p.has_at_or_above("foo//bar"));
+        p.insert(&Package::new("foo//bar"), 1);
+        assert!(p.has_at_or_above("foo//bar"));
+        assert!(p.has_at_or_above("foo//bar/sub"));
+        assert!(!p.has_at_or_above("foo//bard"));
+        assert!(!p.has_at_or_above("foo//"));
+        assert!(!p.has_at_or_above("other//bar"));
+        p.insert(&Package::new("foo//"), 2);
+        assert!(p.has_at_or_above("foo//"));
+        assert!(p.has_at_or_above("foo//other"));
     }
 }

@@ -17,6 +17,7 @@ pub mod config;
 mod deserializers;
 pub mod flattened_select;
 pub mod glob;
+pub mod id_target_map;
 pub mod ignore_set;
 pub mod invalidation_patterns;
 pub mod labels;
