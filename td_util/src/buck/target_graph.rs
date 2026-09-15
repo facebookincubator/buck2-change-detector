@@ -2432,11 +2432,15 @@ mod tests {
     #[rstest]
     #[case::schema_10(10)]
     #[case::schema_11(11)]
+    #[case::previous_schema(SCHEMA_VERSION - 1)]
     fn graph_cache_rejects_prior_schemas(#[case] version: u32) {
         let graph = TargetGraph::new();
         let mut bytes = Vec::new();
         graph.write_framed(&mut bytes).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 12);
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            SCHEMA_VERSION
+        );
         bytes[4..8].copy_from_slice(&version.to_le_bytes());
         let error = read_framed_bytes(&bytes).unwrap_err();
         assert!(error.to_string().contains("framed file version"), "{error}");
