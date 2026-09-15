@@ -38,7 +38,7 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 /// Schema version for TargetGraph serialization format.
 /// Increment this when making breaking changes to TargetGraph or the
 /// `StoredMinimizedTarget` struct.
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -485,6 +485,7 @@ struct StoredMinimizedTarget {
     rule_type: RuleTypeId,
     oncall: Option<OncallId>,
     label_set: LabelSetId,
+    #[serde(with = "crate::types::target_hash_storage")]
     target_hash: TargetHash,
 }
 
@@ -2396,6 +2397,84 @@ mod tests {
         let retrieved = graph.get_minimized_target(target_id).unwrap();
 
         assert_eq!(retrieved.target_hash, TargetHash::new(target_hash));
+    }
+
+    #[test]
+    fn graph_cache_compact_hash_storage() {
+        let graph = TargetGraph::new();
+        let target = graph.store_target("//pkg:target");
+        let minimized = minimized_with_labels(&graph, vec![]);
+        let hash_text = minimized.target_hash.to_string();
+        graph.store_minimized_target(target, minimized);
+        let stored = graph.minimized_targets.get(&target).unwrap();
+
+        let prefix = bincode_encode(&(stored.rule_type, stored.oncall, stored.label_set)).unwrap();
+        let encoded = bincode_encode(&*stored).unwrap();
+        assert_eq!(
+            encoded.len(),
+            prefix.len() + 17,
+            "one tag and 16 hash bytes"
+        );
+        assert_eq!(&encoded[..prefix.len()], prefix);
+        assert_eq!(
+            bincode_decode::<StoredMinimizedTarget>(&encoded).unwrap(),
+            *stored
+        );
+
+        let json = serde_json::to_value(&*stored).unwrap();
+        assert_eq!(json["target_hash"], hash_text);
+        assert_eq!(
+            serde_json::from_value::<StoredMinimizedTarget>(json).unwrap(),
+            *stored
+        );
+    }
+
+    #[rstest]
+    #[case::schema_10(10)]
+    #[case::schema_11(11)]
+    fn graph_cache_rejects_prior_schemas(#[case] version: u32) {
+        let graph = TargetGraph::new();
+        let mut bytes = Vec::new();
+        graph.write_framed(&mut bytes).unwrap();
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 12);
+        bytes[4..8].copy_from_slice(&version.to_le_bytes());
+        let error = read_framed_bytes(&bytes).unwrap_err();
+        assert!(error.to_string().contains("framed file version"), "{error}");
+    }
+
+    #[rstest]
+    #[case::single_frame(|_| 1)]
+    #[case::multiple_frames(|_| 4)]
+    fn graph_cache_hashes_round_trip(#[case] frame_count: fn(usize) -> usize) {
+        let graph = TargetGraph::new();
+        let hashes = [
+            "5700a84a628259e252ef6952d6af6079",
+            "5700A84A628259E252EF6952D6AF6079",
+            "5700a84A628259e252EF6952d6af6079",
+            "abc",
+            "",
+            "é東京",
+        ];
+        let targets: Vec<_> = hashes
+            .iter()
+            .enumerate()
+            .map(|(index, hash)| {
+                let target = graph.store_target(&format!("//pkg:t{index}"));
+                let mut minimized = minimized_with_labels(&graph, vec![]);
+                minimized.target_hash = TargetHash::new(hash);
+                graph.store_minimized_target(target, minimized);
+                target
+            })
+            .collect();
+
+        let mut bytes = Vec::new();
+        graph.write_framed_with(&mut bytes, frame_count).unwrap();
+        let loaded = read_framed_bytes(&bytes).unwrap();
+        for (target, hash) in targets.into_iter().zip(hashes) {
+            let minimized = loaded.get_minimized_target(target).unwrap();
+            assert_eq!(minimized.target_hash, TargetHash::new(hash));
+            assert_eq!(minimized.target_hash.to_string(), hash);
+        }
     }
 
     fn minimized_with_labels(graph: &TargetGraph, labels: Vec<LabelId>) -> MinimizedBuckTarget {
