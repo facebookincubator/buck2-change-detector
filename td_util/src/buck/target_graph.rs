@@ -36,8 +36,9 @@ use crate::types::TargetPattern;
 pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
 /// Schema version for TargetGraph serialization format.
-/// Increment this when making breaking changes to TargetGraph or MinimizedBuckTarget structs.
-pub const SCHEMA_VERSION: u32 = 10;
+/// Increment this when making breaking changes to TargetGraph or the
+/// `StoredMinimizedTarget` struct.
+pub const SCHEMA_VERSION: u32 = 11;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
@@ -153,6 +154,19 @@ define_id_type!(GlobPatternId);
 define_id_type!(FileId);
 define_id_type!(PackageId);
 define_id_type!(CiDepsPatternId);
+define_id_type!(LabelSetId);
+
+impl LabelSetId {
+    /// The id of an ordered label sequence: a hash of the label ids in order,
+    /// so two targets with the same labels in the same order share one set.
+    pub fn of(labels: &[LabelId]) -> Self {
+        let mut hasher = FxHasher::default();
+        for label in labels {
+            hasher.write_u64(label.0);
+        }
+        Self(hasher.finish())
+    }
+}
 
 pub type IdDashMap<K, V> = DashMap<K, V, BuildNoHash>;
 pub type IdDashSet<K> = DashSet<K, BuildNoHash>;
@@ -460,6 +474,18 @@ pub struct MinimizedBuckTarget {
     pub oncall: Option<OncallId>,
     pub labels: Vec<LabelId>,
     pub target_hash: TargetHash,
+}
+
+/// `MinimizedBuckTarget` as stored: the label sequence is interned in
+/// `label_set_id_to_labels`, because a graph has ~10x fewer distinct label
+/// sequences than targets and the per-target `Vec<LabelId>` was the single
+/// largest allocation in memory and on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredMinimizedTarget {
+    rule_type: RuleTypeId,
+    oncall: Option<OncallId>,
+    label_set: LabelSetId,
+    target_hash: TargetHash,
 }
 
 /// Single source of truth for `TargetGraph`'s on-disk field set. Generates
@@ -827,7 +853,8 @@ define_target_graph_framed_io! {
     rule_type_id_to_string: IdDashMap<RuleTypeId, String>,
     oncall_id_to_string: IdDashMap<OncallId, String>,
     label_id_to_string: IdDashMap<LabelId, String>,
-    minimized_targets: IdDashMap<TargetId, MinimizedBuckTarget>,
+    minimized_targets: IdDashMap<TargetId, StoredMinimizedTarget>,
+    label_set_id_to_labels: IdDashMap<LabelSetId, Vec<LabelId>>,
     glob_pattern_id_to_string: IdDashMap<GlobPatternId, String>,
     package_id_to_path: IdDashMap<PackageId, String>,
     file_id_to_path: IdDashMap<FileId, String>,
@@ -857,6 +884,7 @@ impl TargetGraph {
             oncall_id_to_string: ShardedField::new(1),
             label_id_to_string: ShardedField::new(1),
             minimized_targets: ShardedField::new(1),
+            label_set_id_to_labels: ShardedField::new(1),
             glob_pattern_id_to_string: ShardedField::new(1),
             target_id_to_rdeps: ShardedField::new(1),
             target_id_to_deps: ShardedField::new(1),
@@ -1134,9 +1162,14 @@ impl TargetGraph {
 
     /// Whether the target carries `label_id`, read without cloning its labels.
     pub fn target_has_label(&self, target_id: TargetId, label_id: LabelId) -> bool {
-        self.minimized_targets
+        let Some(label_set) = self
+            .minimized_targets
             .get(&target_id)
-            .is_some_and(|minimized| minimized.labels.contains(&label_id))
+            .map(|minimized| minimized.label_set)
+        else {
+            return false;
+        };
+        self.with_label_set(label_set, |labels| labels.contains(&label_id))
     }
 
     pub fn contains_target(&self, target_id: TargetId) -> bool {
@@ -1366,11 +1399,85 @@ impl TargetGraph {
     }
 
     pub fn store_minimized_target(&self, target_id: TargetId, target: MinimizedBuckTarget) {
-        self.minimized_targets.insert(target_id, target);
+        let MinimizedBuckTarget {
+            rule_type,
+            oncall,
+            labels,
+            target_hash,
+        } = target;
+        let label_set = self.store_label_set(labels);
+        self.minimized_targets.insert(
+            target_id,
+            StoredMinimizedTarget {
+                rule_type,
+                oncall,
+                label_set,
+                target_hash,
+            },
+        );
     }
 
     pub fn get_minimized_target(&self, id: TargetId) -> Option<MinimizedBuckTarget> {
-        self.minimized_targets.get(&id).map(|entry| entry.clone())
+        let stored = self.minimized_targets.get(&id)?.clone();
+        Some(MinimizedBuckTarget {
+            rule_type: stored.rule_type,
+            oncall: stored.oncall,
+            labels: self.get_label_set(stored.label_set),
+            target_hash: stored.target_hash,
+        })
+    }
+
+    /// Intern an ordered label sequence and return its id. Most calls hit an
+    /// already-interned sequence, so the shard is probed under a read lock
+    /// first.
+    pub fn store_label_set(&self, labels: Vec<LabelId>) -> LabelSetId {
+        let id = LabelSetId::of(&labels);
+        if let Some(interned) = self.label_set_id_to_labels.get(&id) {
+            debug_assert_eq!(
+                *interned, labels,
+                "two different label sequences hashed to {id:?}"
+            );
+            return id;
+        }
+        match self.label_set_id_to_labels.entry(id) {
+            dashmap::mapref::entry::Entry::Occupied(interned) => {
+                debug_assert_eq!(
+                    *interned.get(),
+                    labels,
+                    "two different label sequences hashed to {id:?}"
+                );
+            }
+            dashmap::mapref::entry::Entry::Vacant(slot) => {
+                slot.insert(labels);
+            }
+        }
+        id
+    }
+
+    /// Runs `f` on an interned label sequence without cloning it. `f` runs
+    /// under the read lock of one `label_set_id_to_labels` shard, so it must
+    /// not intern another label set.
+    ///
+    /// Panics on an id that was never interned: every id in the graph comes
+    /// from `store_label_set`, so an unknown one means the graph was built or
+    /// loaded wrong, and treating it as "no labels" would silently drop the
+    /// target's CI labels.
+    fn with_label_set<R>(&self, id: LabelSetId, f: impl FnOnce(&[LabelId]) -> R) -> R {
+        let interned = self
+            .label_set_id_to_labels
+            .get(&id)
+            .unwrap_or_else(|| panic!("label set {id:?} is not interned in this graph"));
+        f(interned.value())
+    }
+
+    /// The labels of an interned sequence. Panics on an unknown id, see
+    /// `with_label_set`.
+    pub fn get_label_set(&self, id: LabelSetId) -> Vec<LabelId> {
+        self.with_label_set(id, |labels| labels.to_vec())
+    }
+
+    pub fn label_sets_len(&self) -> usize {
+        self.label_set_id_to_labels.len()
     }
 
     pub fn is_ci_hint_target(&self, target_id: TargetId) -> bool {
@@ -1411,15 +1518,22 @@ impl TargetGraph {
         self.targets_with_sudo_label.len()
     }
 
+    /// Every target carrying any of `label_ids`. Resolves the matching label
+    /// sets eagerly, before the returned iterator is advanced, then streams
+    /// the targets.
     pub fn iter_targets_with_any_label(
         &self,
         label_ids: &IdHashSet<LabelId>,
     ) -> impl Iterator<Item = TargetId> + '_ {
-        let label_ids = label_ids.clone();
+        let matching_sets: IdHashSet<LabelSetId> = self
+            .label_set_id_to_labels
+            .iter()
+            .filter(|entry| entry.value().iter().any(|lid| label_ids.contains(lid)))
+            .map(|entry| *entry.key())
+            .collect();
         self.minimized_targets.iter().filter_map(move |entry| {
             let target_id = *entry.key();
-            let minimized = entry.value();
-            if minimized.labels.iter().any(|lid| label_ids.contains(lid)) {
+            if matching_sets.contains(&entry.value().label_set) {
                 Some(target_id)
             } else {
                 None
@@ -1522,6 +1636,7 @@ impl TargetGraph {
             ("rule_types", self.rule_types_len()),
             ("oncalls", self.oncalls_len()),
             ("labels", self.labels_len()),
+            ("label_sets", self.label_sets_len()),
             ("minimized_targets", self.minimized_targets_len()),
             ("glob_patterns", self.glob_patterns_len()),
             ("files", self.files_len()),
@@ -2281,6 +2396,137 @@ mod tests {
         let retrieved = graph.get_minimized_target(target_id).unwrap();
 
         assert_eq!(retrieved.target_hash, TargetHash::new(target_hash));
+    }
+
+    fn minimized_with_labels(graph: &TargetGraph, labels: Vec<LabelId>) -> MinimizedBuckTarget {
+        MinimizedBuckTarget {
+            rule_type: graph.store_rule_type("cpp_library"),
+            oncall: None,
+            labels,
+            target_hash: TargetHash::new("5700a84a628259e252ef6952d6af6079"),
+        }
+    }
+
+    /// Targets whose labels are equal in the same order share one interned
+    /// sequence; a different order, and the empty sequence, are their own.
+    #[test]
+    fn label_sets_are_interned_by_content_and_order() {
+        let graph = TargetGraph::new();
+        let a = graph.store_label("ci_test");
+        let b = graph.store_label("production");
+        let targets: Vec<TargetId> = (0..4)
+            .map(|i| graph.store_target(&format!("//pkg:t{i}")))
+            .collect();
+
+        graph.store_minimized_target(targets[0], minimized_with_labels(&graph, vec![a, b]));
+        graph.store_minimized_target(targets[1], minimized_with_labels(&graph, vec![a, b]));
+        assert_eq!(graph.label_sets_len(), 1, "same labels, same order");
+        graph.store_minimized_target(targets[2], minimized_with_labels(&graph, vec![b, a]));
+        assert_eq!(graph.label_sets_len(), 2, "same labels, other order");
+        graph.store_minimized_target(targets[3], minimized_with_labels(&graph, vec![]));
+        assert_eq!(graph.label_sets_len(), 3, "no labels");
+
+        for (target, labels) in targets
+            .iter()
+            .zip([vec![a, b], vec![a, b], vec![b, a], vec![]])
+        {
+            assert_eq!(graph.get_minimized_target(*target).unwrap().labels, labels);
+        }
+    }
+
+    #[test]
+    fn label_sets_survive_removal_replacement_and_incremental_rewrite() {
+        let graph = TargetGraph::new();
+        let a = graph.store_label("ci_test");
+        let b = graph.store_label("production");
+        let first = graph.store_target("//pkg:first");
+        let second = graph.store_target("//pkg:second");
+        let original = minimized_with_labels(&graph, vec![a, b]);
+        let replacement = minimized_with_labels(&graph, vec![b, a, a]);
+        graph.store_minimized_target(first, original.clone());
+        graph.store_minimized_target(second, original.clone());
+
+        graph.remove_target(first);
+        assert_eq!(graph.get_minimized_target(first), None);
+        assert_eq!(graph.get_minimized_target(second), Some(original.clone()));
+        graph.store_minimized_target(second, replacement.clone());
+        assert_eq!(graph.store_target("//pkg:first"), first);
+        graph.store_minimized_target(first, original.clone());
+
+        let mut initial = Vec::new();
+        graph.write_framed_with(&mut initial, |_| 3).unwrap();
+        let loaded = read_framed_bytes(&initial).unwrap();
+        assert_eq!(loaded.get_minimized_target(first), Some(original.clone()));
+        assert_eq!(loaded.get_minimized_target(second), Some(replacement));
+
+        loaded.remove_targets_batch(&[second].into_iter().collect());
+        assert_eq!(loaded.get_minimized_target(second), None);
+        assert_eq!(loaded.get_minimized_target(first), Some(original.clone()));
+        let mut rewritten = Vec::new();
+        loaded.write_framed(&mut rewritten).unwrap();
+        let reloaded = read_framed_bytes(&rewritten).unwrap();
+        assert_eq!(reloaded.get_minimized_target(first), Some(original));
+        assert_eq!(reloaded.get_minimized_target(second), None);
+    }
+
+    #[test]
+    fn target_has_label_reads_through_the_interned_set() {
+        let graph = TargetGraph::new();
+        let carried = graph.store_label("ci_test");
+        let other = graph.store_label("production");
+        let target = graph.store_target("//pkg:t");
+        graph.store_minimized_target(target, minimized_with_labels(&graph, vec![carried]));
+
+        assert!(graph.target_has_label(target, carried));
+        assert!(!graph.target_has_label(target, other));
+        assert!(!graph.target_has_label(graph.store_target("//pkg:unknown"), carried));
+    }
+
+    #[test]
+    fn iter_targets_with_any_label_returns_every_target_carrying_one() {
+        let graph = TargetGraph::new();
+        let a = graph.store_label("a");
+        let b = graph.store_label("b");
+        let c = graph.store_label("c");
+        let targets: Vec<TargetId> = (0..4)
+            .map(|i| graph.store_target(&format!("//pkg:t{i}")))
+            .collect();
+        for (target, labels) in targets.iter().zip([vec![a, b], vec![b], vec![c], vec![]]) {
+            graph.store_minimized_target(*target, minimized_with_labels(&graph, labels));
+        }
+
+        let wanted: IdHashSet<LabelId> = [a, c].into_iter().collect();
+        let found: IdHashSet<TargetId> = graph.iter_targets_with_any_label(&wanted).collect();
+        assert_eq!(found, [targets[0], targets[2]].into_iter().collect());
+    }
+
+    /// Label sets survive a write that splits every field across frames: a
+    /// target and its labels are routed to frames by different ids.
+    #[test]
+    fn label_sets_round_trip_through_multi_frame_write() {
+        let graph = TargetGraph::new();
+        let a = graph.store_label("ci_test");
+        let b = graph.store_label("production");
+        let targets: Vec<TargetId> = (0..8)
+            .map(|i| graph.store_target(&format!("//pkg:t{i}")))
+            .collect();
+        let label_sets = [vec![a, b], vec![b, a], vec![a], vec![]];
+        for (i, target) in targets.iter().enumerate() {
+            let labels = label_sets[i % label_sets.len()].clone();
+            graph.store_minimized_target(*target, minimized_with_labels(&graph, labels));
+        }
+
+        let mut buf = Vec::new();
+        graph.write_framed_with(&mut buf, |_| 4).unwrap();
+        let loaded = read_framed_bytes(&buf).unwrap();
+
+        assert_eq!(loaded.label_sets_len(), label_sets.len());
+        for target in &targets {
+            assert_eq!(
+                loaded.get_minimized_target(*target),
+                graph.get_minimized_target(*target)
+            );
+        }
     }
 
     #[test]
@@ -3305,8 +3551,8 @@ mod tests {
 
     #[test]
     fn read_framed_rejects_file_smaller_than_trailer() {
-        // A header claiming 22 single-shard fields implies a 356-byte
-        // trailer, but the file is barely over the up-front min_size (which
+        // A header claiming one frame per field implies a trailer of 16 bytes
+        // per frame, but the file is barely over the up-front min_size (which
         // cannot know the frame count yet). The trailer bound computation
         // must reject it instead of underflowing.
         let mut bytes = Vec::new();
