@@ -10,6 +10,7 @@
 
 use std::any::Any;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::hash::Hasher;
 use std::io::Read;
 use std::io::Seek;
@@ -176,15 +177,15 @@ pub fn pick_shard_count(entry_count: usize) -> usize {
 
 /// Generic shard container: owns `Vec<S>` of length N where each `S` is the
 /// per-shard storage (e.g. `IdDashMap<K, V>` or `IdDashSet<K>`). Routing
-/// dispatches by `K::shard_index`. N can change over the field's lifetime via
-/// `reshard` — used at write time to match `pick_shard_count(field.len())`.
+/// dispatches by `K::shard_index`. N is fixed for the field's lifetime, and is
+/// independent of how many frames the field is written to on disk.
 ///
 /// Serializes transparently as the inner storage type (a single combined
 /// `IdDashMap` or `IdDashSet`) rather than as `{"shards": [...]}`. This keeps
-/// the JSON output stable across resharding and matches the pre-sharded format
-/// so consumers (tests, debug tools) don't need to know about sharding. The
-/// framed binary format goes through `write_framed`/`read_framed` and bypasses
-/// these impls entirely.
+/// the JSON output independent of N and matches the pre-sharded format so
+/// consumers (tests, debug tools) don't need to know about sharding. The
+/// framed binary format goes through `write_framed`/`read_framed`, with each
+/// frame encoded as that same inner storage type.
 #[derive(Debug)]
 pub struct ShardedField<S> {
     shards: Vec<S>,
@@ -243,6 +244,105 @@ where
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let set = IdDashSet::<K>::deserialize(deserializer)?;
         Ok(Self { shards: vec![set] })
+    }
+}
+
+/// Compresses one frame, using up to the given number of zstd worker threads,
+/// and returns the compressed bytes with their uncompressed length.
+type FrameJob<'a> = Box<dyn FnOnce(u32) -> anyhow::Result<(Vec<u8>, u64)> + Send + 'a>;
+
+/// One on-disk frame of a sharded field: the keys that route to it in an
+/// N-frame layout (see `frame_key_lists`) plus the field to look them up in.
+/// Serializes as the inner storage type, so a frame reads back the same way
+/// whether the writer split the field into frames or not, and the writer never
+/// has to build a copy of the field grouped by frame.
+struct FrameView<'a, S, K> {
+    field: &'a ShardedField<S>,
+    keys: Vec<K>,
+}
+
+/// Partition a field's keys by `key.shard_index(frame_count)` in one parallel
+/// pass, so each frame is serialized by looking up its own keys rather than
+/// by scanning the whole field.
+trait FrameKeyLists<K> {
+    fn frame_key_lists(&self, frame_count: usize) -> Vec<Vec<K>>;
+}
+
+fn merge_key_lists<K>(mut a: Vec<Vec<K>>, b: Vec<Vec<K>>) -> Vec<Vec<K>> {
+    for (x, y) in a.iter_mut().zip(b) {
+        x.extend(y);
+    }
+    a
+}
+
+fn partition_keys<K: ShardKey + Send>(
+    keys: impl ParallelIterator<Item = K>,
+    frame_count: usize,
+) -> Vec<Vec<K>> {
+    keys.fold(
+        || vec![Vec::new(); frame_count],
+        |mut lists, key| {
+            lists[key.shard_index(frame_count)].push(key);
+            lists
+        },
+    )
+    .reduce(|| vec![Vec::new(); frame_count], merge_key_lists)
+}
+
+impl<K: ShardKey + Send + Sync, V: Send + Sync> FrameKeyLists<K> for ShardedField<IdDashMap<K, V>> {
+    fn frame_key_lists(&self, frame_count: usize) -> Vec<Vec<K>> {
+        partition_keys(
+            self.shards()
+                .par_iter()
+                .flat_map(|shard| shard.par_iter())
+                .map(|entry| *entry.key()),
+            frame_count,
+        )
+    }
+}
+
+impl<K: ShardKey + Send + Sync> FrameKeyLists<K> for ShardedField<IdDashSet<K>> {
+    fn frame_key_lists(&self, frame_count: usize) -> Vec<Vec<K>> {
+        partition_keys(
+            self.shards()
+                .par_iter()
+                .flat_map(|shard| shard.par_iter())
+                .map(|key| *key),
+            frame_count,
+        )
+    }
+}
+
+impl<K, V> Serialize for FrameView<'_, IdDashMap<K, V>, K>
+where
+    K: ShardKey + Serialize,
+    V: Serialize,
+{
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        use serde::ser::Error as _;
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.keys.len()))?;
+        for key in &self.keys {
+            let entry = self.field.get(key).ok_or_else(|| {
+                Ser::Error::custom("frame key vanished from the field during the write")
+            })?;
+            map.serialize_entry(key, entry.value())?;
+        }
+        map.end()
+    }
+}
+
+impl<K> Serialize for FrameView<'_, IdDashSet<K>, K>
+where
+    K: ShardKey + Serialize,
+{
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.keys.len()))?;
+        for key in &self.keys {
+            seq.serialize_element(key)?;
+        }
+        seq.end()
     }
 }
 
@@ -322,26 +422,6 @@ impl<K: ShardKey, V> ShardedField<IdDashMap<K, V>> {
             shard.retain(|k, v| f(k, v));
         }
     }
-
-    /// Redistribute entries into `target_n` shards by id-modulo. No-op if
-    /// already at the target count. Used at write time so each field's N
-    /// matches `pick_shard_count(self.len())` without forcing in-memory N
-    /// to be fixed at construction.
-    pub fn reshard(&mut self, target_n: usize) {
-        assert!(target_n > 0, "target_n must be positive");
-        if self.shards.len() == target_n {
-            return;
-        }
-        let new_shards: Vec<IdDashMap<K, V>> =
-            (0..target_n).map(|_| IdDashMap::default()).collect();
-        for shard in self.shards.drain(..) {
-            for (key, value) in shard.into_iter() {
-                let idx = key.shard_index(target_n);
-                new_shards[idx].insert(key, value);
-            }
-        }
-        self.shards = new_shards;
-    }
 }
 
 impl<K: ShardKey> ShardedField<IdDashSet<K>> {
@@ -372,22 +452,6 @@ impl<K: ShardKey> ShardedField<IdDashSet<K>> {
     pub fn iter(&self) -> impl Iterator<Item = dashmap::setref::multiple::RefMulti<'_, K>> {
         self.shards.iter().flat_map(|s| s.iter())
     }
-
-    /// See `ShardedField<IdDashMap<K, V>>::reshard`.
-    pub fn reshard(&mut self, target_n: usize) {
-        assert!(target_n > 0, "target_n must be positive");
-        if self.shards.len() == target_n {
-            return;
-        }
-        let new_shards: Vec<IdDashSet<K>> = (0..target_n).map(|_| IdDashSet::default()).collect();
-        for shard in self.shards.drain(..) {
-            for key in shard.into_iter() {
-                let idx = key.shard_index(target_n);
-                new_shards[idx].insert(key);
-            }
-        }
-        self.shards = new_shards;
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -406,6 +470,12 @@ pub struct MinimizedBuckTarget {
 /// records the shard count for each field; a trailer at the end records
 /// per-frame compressed and uncompressed lengths plus its own offset.
 ///
+/// The in-memory shard count is independent of N. A field written to a single
+/// frame is serialized in place; a field split across frames has its keys
+/// partitioned by id-modulo once, and each frame then serializes its own keys.
+/// Existing shards are serialized directly when their count already matches
+/// the output layout. The writer builds no second copy of the field.
+///
 /// Per-frame zstd workers divide the Rayon thread budget across the active
 /// batch while reserving each frame's caller thread.
 macro_rules! define_target_graph_framed_io {
@@ -418,71 +488,118 @@ macro_rules! define_target_graph_framed_io {
         const NUM_FIELDS: usize = [$(stringify!($field)),*].len();
 
         impl TargetGraph {
-            /// Pick `pick_shard_count(field.len())` for every field. Cheap
-            /// when N is already correct. Call before `write_framed`.
-            pub fn reshard_for_write(&mut self) {
-                $(
-                    self.$field.reshard(pick_shard_count(self.$field.len()));
-                )*
-            }
-
-            /// Reshard every field to exactly `n` shards. Test-only helper for
-            /// exercising the N>1 framed-IO path without needing >1.5M entries.
-            #[cfg(test)]
-            pub fn reshard_all_to(&mut self, n: usize) {
-                $(
-                    self.$field.reshard(n);
-                )*
-            }
-
             pub fn write_framed<W: Write>(&self, writer: &mut W) -> anyhow::Result<()> {
+                self.write_framed_with(writer, pick_shard_count)
+            }
+
+            /// `write_framed`, with each field's frame count chosen by
+            /// `frame_count_for(field.len())`. Tests use it to produce the
+            /// multi-frame layout without building 1.5M entries per field.
+            fn write_framed_with<'graph>(
+                &'graph self,
+                writer: &mut dyn Write,
+                frame_count_for: fn(usize) -> usize,
+            ) -> anyhow::Result<()> {
                 writer.write_all(&FRAME_MAGIC)?;
                 writer.write_all(&SCHEMA_VERSION.to_le_bytes())?;
 
-                let mut field_shard_counts: Vec<u32> = Vec::with_capacity(NUM_FIELDS);
+                let mut field_frame_counts: Vec<u32> = Vec::with_capacity(NUM_FIELDS);
                 $(
-                    field_shard_counts.push(self.$field.shard_count() as u32);
+                    field_frame_counts.push(frame_count_for(self.$field.len()) as u32);
                 )*
 
                 writer.write_all(&(NUM_FIELDS as u32).to_le_bytes())?;
-                for &count in &field_shard_counts {
+                for &count in &field_frame_counts {
                     writer.write_all(&count.to_le_bytes())?;
                 }
 
                 let total_frame_count: usize =
-                    field_shard_counts.iter().map(|&c| c as usize).sum::<usize>();
+                    field_frame_counts.iter().map(|&c| c as usize).sum::<usize>();
                 let rayon_threads = rayon::current_num_threads();
-                let mut jobs: Vec<
-                    Box<dyn FnOnce(u32) -> anyhow::Result<(Vec<u8>, u64)> + Send + '_>,
-                > = Vec::with_capacity(total_frame_count);
-                $(
-                    for (shard_idx, shard) in self.$field.shards().iter().enumerate() {
-                        jobs.push(Box::new(move |workers| -> anyhow::Result<(Vec<u8>, u64)> {
-                            bincode_encode_compressed(shard, workers).with_context(|| {
-                                format!(
-                                    "serialize and compress {} shard {}",
-                                    stringify!($field),
-                                    shard_idx
-                                )
+
+                // One builder per field, run only when that field's frames are
+                // about to be compressed, limiting how long multi-frame key
+                // lists stay live. Filling a partial batch can retain keys
+                // from multiple fields, but the queue holds
+                // at most FRAME_COMPRESSION_BATCH_SIZE - 1 + MAX_SHARDS jobs
+                // before draining the next batch.
+                let mut frame_counts_iter = field_frame_counts.iter();
+                let mut builders: Vec<Box<dyn FnOnce() -> Vec<FrameJob<'graph>> + 'graph>> =
+                    Vec::with_capacity(NUM_FIELDS);
+                $({
+                    let frame_count = *frame_counts_iter
+                        .next()
+                        .expect("frame count for field") as usize;
+                    builders.push(Box::new(move || -> Vec<FrameJob<'graph>> {
+                        if frame_count == 1 {
+                            // The whole field is one frame: serialize it in
+                            // place, no key list and no random lookups.
+                            return vec![Box::new(move |workers| {
+                                bincode_encode_compressed(&self.$field, workers).with_context(|| {
+                                    format!("serialize and compress {} frame 0", stringify!($field))
+                                })
+                            }) as FrameJob<'graph>];
+                        }
+                        if self.$field.shard_count() == frame_count {
+                            return self.$field
+                                .shards()
+                                .iter()
+                                .enumerate()
+                                .map(|(frame_index, shard)| {
+                                    Box::new(move |workers| {
+                                        bincode_encode_compressed(shard, workers).with_context(|| {
+                                            format!(
+                                                "serialize and compress {} frame {}",
+                                                stringify!($field),
+                                                frame_index
+                                            )
+                                        })
+                                    }) as FrameJob<'graph>
+                                })
+                                .collect();
+                        }
+                        self.$field
+                            .frame_key_lists(frame_count)
+                            .into_iter()
+                            .enumerate()
+                            .map(|(frame_index, keys)| {
+                                Box::new(move |workers| {
+                                    let view = FrameView {
+                                        field: &self.$field,
+                                        keys,
+                                    };
+                                    bincode_encode_compressed(&view, workers).with_context(|| {
+                                        format!(
+                                            "serialize and compress {} frame {}",
+                                            stringify!($field),
+                                            frame_index
+                                        )
+                                    })
+                                }) as FrameJob<'graph>
                             })
-                        }) as _);
-                    }
-                )*
+                            .collect()
+                    }));
+                })*
 
                 let header_bytes = header_size(NUM_FIELDS) as u64;
                 let mut compressed_lens: Vec<u64> = Vec::with_capacity(total_frame_count);
                 let mut uncompressed_lens: Vec<u64> = Vec::with_capacity(total_frame_count);
                 let mut trailer_offset: u64 = header_bytes;
 
-                let mut remaining_jobs = jobs.into_iter();
+                let mut builders = builders.into_iter();
+                let mut pending: VecDeque<FrameJob<'graph>> = VecDeque::new();
                 loop {
-                    let batch: Vec<_> = remaining_jobs
-                        .by_ref()
-                        .take(FRAME_COMPRESSION_BATCH_SIZE)
-                        .collect();
-                    if batch.is_empty() {
+                    while pending.len() < FRAME_COMPRESSION_BATCH_SIZE {
+                        match builders.next() {
+                            Some(build) => pending.extend(build()),
+                            None => break,
+                        }
+                    }
+                    if pending.is_empty() {
                         break;
                     }
+                    let batch_size = FRAME_COMPRESSION_BATCH_SIZE.min(pending.len());
+                    let batch: Vec<FrameJob<'graph>> = pending.drain(..batch_size).collect();
                     let worker_counts = frame_worker_counts_with_callers(
                         batch.len() as u32,
                         rayon_threads as u32,
@@ -695,9 +812,11 @@ macro_rules! define_target_graph_framed_io {
                     };
                 )*
 
-                Ok(TargetGraph {
+                let graph = TargetGraph {
                     $($field,)*
-                })
+                };
+                graph.shrink_edge_vectors();
+                Ok(graph)
             }
         }
     };
@@ -730,9 +849,8 @@ define_target_graph_framed_io! {
 
 impl TargetGraph {
     pub fn new() -> Self {
-        // Every field starts with a single shard; `reshard_for_write`
-        // (called from `serialize_graph_to_file`) reshards each field to
-        // `pick_shard_count(field.len())` before writing.
+        // Every field starts with a single shard; `write_framed` picks the
+        // on-disk frame count per field independently of this.
         Self {
             target_id_to_label: ShardedField::new(1),
             rule_type_id_to_string: ShardedField::new(1),
@@ -902,6 +1020,53 @@ impl TargetGraph {
         iter_ci_deps_recursive_patterns,
         target_id_to_ci_deps_recursive_patterns
     );
+
+    /// Creates the same edges as `add_rdep(dep, target_id)` for every dep, but
+    /// takes the forward-edge vector as is, so a vector built at the right size
+    /// stays at the right size instead of being regrown one `push` at a time.
+    pub fn store_deps_with_rdeps(&self, target_id: TargetId, deps: Vec<TargetId>) {
+        for &dep_id in &deps {
+            self.target_id_to_rdeps
+                .entry(dep_id)
+                .or_default()
+                .push(target_id);
+        }
+        if deps.is_empty() {
+            return;
+        }
+        match self.target_id_to_deps.entry(target_id) {
+            dashmap::mapref::entry::Entry::Occupied(mut existing) => {
+                existing.get_mut().extend(deps);
+            }
+            dashmap::mapref::entry::Entry::Vacant(slot) => {
+                slot.insert(deps);
+            }
+        }
+    }
+
+    /// Release the capacity slack of every edge vector. During construction
+    /// every edge list is grown by `push`, so most carry slack. On load serde
+    /// preallocates from the encoded length but caps that at 1 MiB worth of
+    /// elements, so only the lists longer than the cap (the hub targets) are
+    /// grown by doubling and end up with slack.
+    pub fn shrink_edge_vectors(&self) {
+        fn shrink_all<K: ShardKey + Send + Sync, V: Send + Sync>(
+            field: &ShardedField<IdDashMap<K, Vec<V>>>,
+        ) {
+            field.shards().par_iter().for_each(|shard| {
+                shard
+                    .par_iter_mut()
+                    .for_each(|mut entry| entry.value_mut().shrink_to_fit());
+            });
+        }
+        shrink_all(&self.target_id_to_rdeps);
+        shrink_all(&self.target_id_to_deps);
+        shrink_all(&self.package_id_to_targets);
+        shrink_all(&self.file_id_to_rdeps);
+        shrink_all(&self.file_id_to_deps);
+        shrink_all(&self.ci_hint_to_affected);
+        shrink_all(&self.affected_to_ci_hints);
+    }
 
     // Bidirectional dependencies storage - always maintains both directions
     pub fn add_rdep(&self, target_id: TargetId, dependent_target: TargetId) {
@@ -1716,12 +1881,11 @@ mod tests {
     }
 
     #[test]
-    fn write_framed_round_trips_with_multi_shard_fields() {
-        let mut graph = build_distinguishing_graph();
-        graph.reshard_all_to(4);
+    fn write_framed_round_trips_with_multi_frame_fields() {
+        let graph = build_distinguishing_graph();
 
         let mut buf = Vec::new();
-        graph.write_framed(&mut buf).unwrap();
+        graph.write_framed_with(&mut buf, |_| 4).unwrap();
 
         let loaded = read_framed_bytes(&buf).unwrap();
 
@@ -1733,6 +1897,75 @@ mod tests {
         assert_eq!(loaded.packages_len(), 6);
         assert_eq!(loaded.files_len(), 7);
         assert_eq!(loaded.ci_deps_patterns_len(), 8);
+    }
+
+    #[test]
+    fn write_framed_repartitions_loaded_graph_with_mixed_frame_counts() {
+        let graph = build_distinguishing_graph();
+        let ids: Vec<TargetId> = (0..64)
+            .map(|i| graph.store_target(&format!("//pkg:t{i}")))
+            .collect();
+        for pair in ids.windows(2) {
+            graph.add_rdep(pair[0], pair[1]);
+        }
+        let expected = serde_json::to_value(&graph).unwrap();
+
+        let mut mixed = Vec::new();
+        graph
+            .write_framed_with(&mut mixed, |len| len.clamp(1, MAX_SHARDS))
+            .unwrap();
+        let loaded = read_framed_bytes(&mixed).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+
+        let mut same_layout = Vec::new();
+        loaded
+            .write_framed_with(&mut same_layout, |len| len.clamp(1, MAX_SHARDS))
+            .unwrap();
+        let loaded = read_framed_bytes(&same_layout).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+
+        let mut repartitioned = Vec::new();
+        loaded.write_framed_with(&mut repartitioned, |_| 3).unwrap();
+        let loaded = read_framed_bytes(&repartitioned).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+
+        let mut single_frame = Vec::new();
+        loaded.write_framed(&mut single_frame).unwrap();
+        let loaded = read_framed_bytes(&single_frame).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+    }
+
+    /// Every entry has to come back from the frame its id routes to, whatever
+    /// in-memory shard it was stored in, and whatever field it belongs to.
+    #[test]
+    fn write_framed_routes_every_entry_to_its_id_frame() {
+        const FRAMES: usize = 4;
+        let graph = TargetGraph::new();
+        let ids: Vec<TargetId> = (0..64)
+            .map(|i| graph.store_target(&format!("//pkg:t{i}")))
+            .collect();
+        for pair in ids.windows(2) {
+            graph.add_rdep(pair[0], pair[1]);
+        }
+        graph.mark_target_has_sudo_label(ids[3]);
+
+        let mut buf = Vec::new();
+        graph.write_framed_with(&mut buf, |_| FRAMES).unwrap();
+
+        for field in 0..NUM_FIELDS {
+            let at = 12 + 4 * field;
+            let count = u32::from_le_bytes(buf[at..at + 4].try_into().unwrap());
+            assert_eq!(count as usize, FRAMES, "frame count of field {field}");
+        }
+
+        let loaded = read_framed_bytes(&buf).unwrap();
+        assert_eq!(loaded.targets_len(), ids.len());
+        for (i, &id) in ids.iter().enumerate() {
+            assert_eq!(loaded.get_target_label(id), graph.get_target_label(id));
+            assert_eq!(loaded.get_deps(id), graph.get_deps(id), "deps of t{i}");
+            assert_eq!(loaded.get_rdeps(id), graph.get_rdeps(id), "rdeps of t{i}");
+            assert_eq!(loaded.has_sudo_label(id), i == 3, "sudo label of t{i}");
+        }
     }
 
     #[test]
