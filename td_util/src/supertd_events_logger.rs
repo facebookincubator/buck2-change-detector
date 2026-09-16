@@ -588,6 +588,9 @@ mod linux {
         apply_verifiable("SANDCASTLE_PHABRICATOR_DIFF_ID", &variables_path, |value| {
             log_entry.set_sandcastle_phabricator_diff_id(value);
         });
+        apply_verifiable("SANDCASTLE_DIFF_ID", &variables_path, |value| {
+            log_entry.set_sandcastle_phabricator_version_number(value);
+        });
         apply_verifiable("SANDCASTLE_SCHEDULE_TYPE", &variables_path, |value| {
             log_entry.set_sandcastle_schedule_type(value);
         });
