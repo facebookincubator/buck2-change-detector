@@ -566,7 +566,12 @@ impl Package {
     }
 
     pub fn join_path(&self, path: &str) -> CellPath {
-        CellPath(InternString::new3(self.0.as_str(), "/", path))
+        let separator = if self.0.as_str().ends_with("//") {
+            ""
+        } else {
+            "/"
+        };
+        CellPath(InternString::new3(self.0.as_str(), separator, path))
     }
 
     pub fn cell(&self) -> CellName {
@@ -1105,6 +1110,18 @@ mod tests {
         ));
         #[cfg(target_pointer_width = "64")]
         assert_eq!(std::mem::size_of::<TargetHash>(), 24);
+    }
+
+    #[rstest]
+    #[case::cell_root("cell//", "cell//BUCK")]
+    #[case::nested_package("cell//dir", "cell//dir/BUCK")]
+    fn package_join_path_preserves_cell_root_separator(
+        #[case] package: &str,
+        #[case] expected: &str,
+    ) {
+        let path = Package::new(package).join_path("BUCK");
+        assert_eq!(path.as_str(), expected);
+        assert!(!path.path().as_str().starts_with('/'));
     }
 
     #[test]
