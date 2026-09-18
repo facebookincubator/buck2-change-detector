@@ -88,6 +88,22 @@ pub async fn current_revision(cwd: Option<&Path>) -> anyhow::Result<String> {
     Ok(stdout.trim().to_owned())
 }
 
+/// Whether a 40-character commit hash resolves locally. Malformed hashes are
+/// rejected before constructing the Sapling revset.
+pub async fn has_revision(hash: &str, cwd: Option<&Path>) -> anyhow::Result<bool> {
+    let revset = commit_hash_revset(hash)?;
+    let stdout = run_sl_async(&["log", "-r", &revset, "-T", "{node}", "--limit", "1"], cwd).await?;
+    Ok(!stdout.trim().is_empty())
+}
+
+fn commit_hash_revset(hash: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "expected a 40-character hexadecimal commit hash, got `{hash}`"
+    );
+    Ok(format!("present({hash})"))
+}
+
 /// Whether the current commit is public, run in `cwd` (or the process working
 /// directory when `None`).
 pub async fn current_revision_is_public(cwd: Option<&Path>) -> anyhow::Result<bool> {
@@ -266,6 +282,27 @@ mod tests {
     fn count_from_log_output_saturates_at_zero_for_empty_stdout() {
         assert_eq!(count_from_log_output(""), 0);
         assert_eq!(count_from_log_output("\n"), 0);
+    }
+
+    #[test]
+    fn commit_hash_revset_requires_a_full_hex_hash() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            commit_hash_revset(hash).expect("full hash should parse"),
+            format!("present({hash})")
+        );
+        for invalid in [
+            "",
+            "1",
+            ".",
+            "master",
+            "g123456789abcdef0123456789abcdef01234567",
+        ] {
+            assert!(
+                commit_hash_revset(invalid).is_err(),
+                "`{invalid}` must not be treated as a commit hash"
+            );
+        }
     }
 
     #[test]
