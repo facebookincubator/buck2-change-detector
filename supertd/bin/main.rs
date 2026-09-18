@@ -165,7 +165,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::Validate(args) => citadel_validate::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
-        Args::VersionDelta(args) => version_delta::step::main(fb, args).await,
+        Args::VersionDelta(args) => version_delta::step::main(args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::FilterVerifiables(args) => filter_verifiables::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
