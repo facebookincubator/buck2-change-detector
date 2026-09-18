@@ -225,6 +225,21 @@ impl CellInfo {
         }
     }
 
+    /// Whether a valid cell path names one of its cell's configured build files.
+    pub fn is_target_file_path(&self, path: &str) -> anyhow::Result<bool> {
+        let (cell, _) = path
+            .split_once("//")
+            .with_context(|| format!("Invalid CellPath, missing `//` from `{path}`"))?;
+        let data = self
+            .cells
+            .get(cell)
+            .with_context(|| format!("Unknown cell, `{cell}`"))?;
+        Ok(data.build_files.iter().any(|build_file| {
+            path.strip_suffix(build_file)
+                .is_some_and(|prefix| prefix.ends_with('/'))
+        }))
+    }
+
     pub fn is_ignored(&self, path: &CellPath) -> bool {
         match self.cells.get(&path.cell()) {
             None => false,
@@ -301,6 +316,12 @@ mod tests {
             &["BUCK.v2", "BUCK"]
         );
         assert!(cells.build_files(&CellName::new("cell4")).is_err());
+        assert!(cells.is_target_file_path("cell1//pkg/TARGETS").unwrap());
+        assert!(!cells.is_target_file_path("cell1//pkg/BUCK").unwrap());
+        assert!(cells.is_target_file_path("cell2//A1.v2").unwrap());
+        assert!(cells.is_target_file_path("cell3//pkg/BUCK").unwrap());
+        assert!(!cells.is_target_file_path("cell3//pkg/BUCK.txt").unwrap());
+        assert!(cells.is_target_file_path("cell4//pkg/BUCK").is_err());
     }
 
     #[test]

@@ -356,7 +356,28 @@ impl CellName {
     }
 }
 
+impl std::borrow::Borrow<str> for CellName {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 pub const PACKAGE_FILE_NAMES: &[&str] = &["PACKAGE", "BUCK_TREE"];
+
+/// Returns the parent package portion of a valid cell path without allocating.
+pub fn parent_cell_path(path: &str) -> &str {
+    let (cell, relative) = path
+        .split_once("//")
+        .unwrap_or_else(|| panic!("Invalid CellPath, missing `//` from `{path}`"));
+    let parent_len = relative.rfind('/').unwrap_or(0);
+    &path[..cell.len() + 2 + parent_len]
+}
+
+/// Whether a valid cell path names a Buck package metadata file.
+pub fn is_package_file_path(path: &str) -> bool {
+    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
+    PACKAGE_FILE_NAMES.contains(&name)
+}
 
 /// Example: `fbcode//buck2/TARGETS`
 #[derive(
@@ -404,20 +425,7 @@ impl CellPath {
     /// );
     /// ```
     pub fn parent(&self) -> CellPath {
-        let p = self.path();
-        let p_parent = p.parent();
-        if let Some(x) = p_parent {
-            Self(InternString::from_string(format!(
-                "{}//{}",
-                self.cell().as_str(),
-                x.as_str()
-            )))
-        } else {
-            Self(InternString::from_string(format!(
-                "{}//",
-                self.cell().as_str()
-            )))
-        }
+        Self::new(parent_cell_path(self.as_str()))
     }
 
     /// Convert a `CellPath` into an identically valued `Package`.
@@ -495,15 +503,7 @@ impl CellPath {
     /// );
     /// ```
     pub fn is_target_file(&self, cells: &CellInfo) -> anyhow::Result<bool> {
-        let contents = self.0.as_str();
-        for build_file in cells.build_files(&self.cell())? {
-            if let Some(suffix) = contents.strip_suffix(build_file) {
-                if suffix.ends_with('/') {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        cells.is_target_file_path(self.as_str())
     }
 
     /// ```
@@ -517,10 +517,7 @@ impl CellPath {
     /// assert!(CellPath::new("foo//bar/BUCK_TREE").is_package_file());
     /// ```
     pub fn is_package_file(&self) -> bool {
-        let s = self.0.as_str();
-        PACKAGE_FILE_NAMES
-            .iter()
-            .any(|name| s.ends_with(&format!("/{name}")))
+        is_package_file_path(self.as_str())
     }
 
     /// ```

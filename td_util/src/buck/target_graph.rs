@@ -1568,6 +1568,20 @@ impl TargetGraph {
         self.file_id_to_rdeps.get(&file_id).map(|v| v.clone())
     }
 
+    pub fn contains_file(&self, file_id: FileId) -> bool {
+        self.file_id_to_path.contains_key(&file_id)
+    }
+
+    /// Runs `f` on the file path without cloning or interning it. `f` runs
+    /// under the read lock of one `file_id_to_path` shard, so it must not call
+    /// a method that writes to that map (`store_file`, `remove_file`, ...),
+    /// which would deadlock on the same shard. Nested reads are fine.
+    pub fn with_file_path<R>(&self, file_id: FileId, f: impl FnOnce(&str) -> R) -> Option<R> {
+        self.file_id_to_path
+            .get(&file_id)
+            .map(|path| f(path.as_str()))
+    }
+
     pub fn get_file_deps(&self, file_id: FileId) -> Option<Vec<FileId>> {
         self.file_id_to_deps.get(&file_id).map(|v| v.clone())
     }
@@ -3089,6 +3103,12 @@ mod tests {
         let defs_bzl = graph.store_file("fbcode//defs.bzl");
         let utils_bzl = graph.store_file("fbcode//utils.bzl");
 
+        assert!(graph.contains_file(defs_bzl));
+        assert!(!graph.contains_file("fbcode//missing.bzl".parse().unwrap()));
+        assert_eq!(
+            graph.with_file_path(defs_bzl, str::to_owned),
+            Some("fbcode//defs.bzl".to_owned())
+        );
         assert_eq!(graph.get_file_rdeps(defs_bzl).unwrap(), vec![targets_file]);
         assert_eq!(graph.get_file_rdeps(utils_bzl).unwrap(), vec![targets_file]);
 
