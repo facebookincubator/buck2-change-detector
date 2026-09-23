@@ -19,6 +19,7 @@ pub mod json;
 pub mod knobs;
 pub mod logging;
 pub mod no_hash;
+pub mod operation_event;
 pub mod prelude;
 pub mod project;
 pub mod sapling;
