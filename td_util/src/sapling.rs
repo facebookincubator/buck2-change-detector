@@ -72,6 +72,54 @@ pub fn sl_log_timestamp(rev: &str) -> Option<i64> {
     stdout.trim().parse::<i64>().ok()
 }
 
+/// A public cache anchor. Its hash and timestamp come from the same SCM record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicAncestor {
+    pub commit_hash: String,
+    pub timestamp: i64,
+}
+
+/// Resolve the public ancestor used by timestamp-based saved-state lookup.
+/// Keep the historical `last` selector: changing ancestor policy on merges is
+/// independent of returning a consistent hash and timestamp.
+pub async fn public_ancestor_identity(
+    rev: &str,
+    cwd: Option<&Path>,
+) -> anyhow::Result<PublicAncestor> {
+    let stdout = run_sl_async(
+        &[
+            "log",
+            "--rev",
+            &format!("last(::{rev} & public())"),
+            "-T",
+            "{node}\t{date(date, '%s')}\n",
+        ],
+        cwd,
+    )
+    .await?;
+    parse_public_ancestor(&stdout)
+        .map_err(|error| error.context(format!("resolving public ancestor of {rev}")))
+}
+
+fn parse_public_ancestor(stdout: &str) -> anyhow::Result<PublicAncestor> {
+    let mut fields = stdout.split_whitespace();
+    let hash = fields
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no public ancestor"))?;
+    let timestamp = fields
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing timestamp"))?;
+    anyhow::ensure!(
+        hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid public ancestor hash: {hash}"
+    );
+    anyhow::ensure!(fields.next().is_none(), "multiple public ancestor records");
+    Ok(PublicAncestor {
+        commit_hash: hash.to_owned(),
+        timestamp: timestamp.parse()?,
+    })
+}
+
 /// The repository root (`sl root`), run in `cwd` (or the process working
 /// directory when `None`). The async counterpart to
 /// [`crate::project::get_repo_root`], for `tokio` callers.
@@ -288,6 +336,27 @@ fn write_temp(contents: &str) -> anyhow::Result<NamedTempFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_ancestor_record_requires_one_complete_identity() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            parse_public_ancestor(&format!("{hash}\t1234\n")).unwrap(),
+            PublicAncestor {
+                commit_hash: hash.to_owned(),
+                timestamp: 1234
+            },
+        );
+        for malformed in [
+            String::new(),
+            hash.to_owned(),
+            "bad-hash\t1234".to_owned(),
+            format!("{hash}\tnot-a-timestamp"),
+            format!("{hash}\t1234\n{hash}\t1235\n"),
+        ] {
+            assert!(parse_public_ancestor(&malformed).is_err(), "{malformed:?}");
+        }
+    }
 
     #[test]
     fn count_from_log_output_returns_inclusive_minus_one() {
