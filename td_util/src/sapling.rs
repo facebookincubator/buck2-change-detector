@@ -97,11 +97,28 @@ pub async fn has_revision(hash: &str, cwd: Option<&Path>) -> anyhow::Result<bool
 }
 
 fn commit_hash_revset(hash: &str) -> anyhow::Result<String> {
+    validate_commit_hash(hash)?;
+    Ok(format!("present({hash})"))
+}
+
+fn validate_commit_hash(hash: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "expected a 40-character hexadecimal commit hash, got `{hash}`"
     );
-    Ok(format!("present({hash})"))
+    Ok(())
+}
+
+/// Whether the requested commit is public, independent of the working copy.
+/// Unknown revisions, malformed hashes, and SCM failures are errors, not skips.
+pub async fn revision_is_public(hash: &str, cwd: Option<&Path>) -> anyhow::Result<bool> {
+    validate_commit_hash(hash)?;
+    let phase = run_sl_async(&["log", "-r", hash, "-T", "{phase}"], cwd).await?;
+    match phase.trim() {
+        "public" => Ok(true),
+        "draft" | "secret" => Ok(false),
+        other => anyhow::bail!("unexpected commit phase for {hash}: {other:?}"),
+    }
 }
 
 /// Whether the current commit is public, run in `cwd` (or the process working
