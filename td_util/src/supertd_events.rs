@@ -65,6 +65,9 @@ pub enum Event {
     SCHEDULE_JOBS_FINISHED,
     TARGETS_SUCCESS,
     VERIFIABLE_MATCHER_SUCCESS,
+    /// Emitted once per requested FBAndroid incremental-coverage evaluation.
+    /// Reports the terminal decision and aggregate target/verifiable counts.
+    MOBILE_INCREMENTAL_COVERAGE_DECISION,
     VERSE_SUCCESS,
     VERSE_PG_DEMAND_RESPONSE_VERIFIABLES_COUNT,
     VERSE_PG_GUARANTEED_VERIFIABLES_COUNT,
