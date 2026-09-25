@@ -1802,8 +1802,10 @@ fn read_dyn_lengths(bytes: &[u8], expected_count: usize) -> anyhow::Result<Vec<u
         );
     }
     Ok(bytes
-        .chunks_exact(std::mem::size_of::<u64>())
-        .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("8-byte chunk")))
+        .as_chunks::<{ std::mem::size_of::<u64>() }>()
+        .0
+        .iter()
+        .map(|chunk| u64::from_le_bytes(*chunk))
         .collect())
 }
 
