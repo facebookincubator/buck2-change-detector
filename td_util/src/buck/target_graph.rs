@@ -35,10 +35,10 @@ use crate::types::TargetPattern;
 
 pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
-/// Schema version for TargetGraph serialization format.
-/// Increment this when making breaking changes to TargetGraph or the
-/// `StoredMinimizedTarget` struct.
-pub const SCHEMA_VERSION: u32 = 13;
+/// Version of the serialized graph and its persisted-state contract.
+/// Version 14 excludes caches built before reruns respected the target universe.
+/// Increment for incompatible layout or graph-maintenance changes.
+pub const SCHEMA_VERSION: u32 = 14;
 
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
