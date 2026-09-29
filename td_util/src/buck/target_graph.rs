@@ -667,6 +667,16 @@ macro_rules! define_target_graph_framed_io {
             /// compressed bytes stay file-backed (reclaimable page cache)
             /// instead of being copied into anonymous memory.
             pub fn read_framed(file: &std::fs::File) -> anyhow::Result<Self> {
+                Self::read_framed_cancellable(file, &|| Ok(()))
+            }
+
+            /// Read a framed graph, checking cancellation before decoding each frame.
+            /// In-flight frames finish before returning; decoded parts never outlive this call.
+            pub fn read_framed_cancellable(
+                file: &std::fs::File,
+                check_cancelled: &(impl Fn() -> anyhow::Result<()> + Sync),
+            ) -> anyhow::Result<Self> {
+                check_cancelled()?;
                 let mut reader = file;
                 let file_size = reader.seek(SeekFrom::End(0))?;
                 let min_size = (header_size(NUM_FIELDS)
@@ -818,7 +828,10 @@ macro_rules! define_target_graph_framed_io {
                 }
                 let parts: Vec<Box<dyn Any + Send>> = pairs
                     .into_par_iter()
-                    .map(|(f, frame)| f(frame))
+                    .map(|(f, frame)| {
+                        check_cancelled()?;
+                        f(frame)
+                    })
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 let mut iter = parts.into_iter();
 
@@ -842,7 +855,9 @@ macro_rules! define_target_graph_framed_io {
                 let graph = TargetGraph {
                     $($field,)*
                 };
+                check_cancelled()?;
                 graph.shrink_edge_vectors();
+                check_cancelled()?;
                 Ok(graph)
             }
         }
@@ -2010,6 +2025,30 @@ mod tests {
         assert_eq!(loaded.packages_len(), 6);
         assert_eq!(loaded.files_len(), 7);
         assert_eq!(loaded.ci_deps_patterns_len(), 8);
+    }
+
+    #[test]
+    fn framed_read_can_cancel_before_frame_decoding() {
+        let graph = build_distinguishing_graph();
+        let mut file = tempfile::tempfile().unwrap();
+        graph.write_framed(&mut file).unwrap();
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let result = TargetGraph::read_framed_cancellable(&file, &|| {
+            if checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0 {
+                anyhow::bail!("cancelled by reader owner");
+            }
+            Ok(())
+        });
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cancelled by reader owner")
+        );
+        let loaded = TargetGraph::read_framed(&file).unwrap();
+        assert_eq!(loaded.targets_len(), graph.targets_len());
+        assert_eq!(loaded.files_len(), graph.files_len());
     }
 
     #[test]

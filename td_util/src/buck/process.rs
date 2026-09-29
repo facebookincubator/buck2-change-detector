@@ -15,12 +15,16 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::process::ChildStdout;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::Context as _;
 use anyhow::anyhow;
 use tempfile::TempDir;
 use tracing::info;
 use tracing::warn;
+
+use crate::cancellation::Cancellation;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 /// Controls how a nested Buck invocation reports diagnostics.
@@ -39,7 +43,7 @@ struct BuildIdOutput {
 
 /// A running Buck child process and its diagnostic output state.
 pub struct BuckProcess {
-    child: Child,
+    child: RunningChild,
     build_id: Option<BuildIdOutput>,
 }
 
@@ -47,6 +51,15 @@ pub struct BuckProcess {
 pub struct BuckCommand {
     command: Command,
     build_id: Option<BuildIdOutput>,
+    cancellation: Option<Cancellation>,
+}
+
+enum RunningChild {
+    Direct(Child),
+    Cancellable {
+        child: Arc<Mutex<Child>>,
+        cancellation: Cancellation,
+    },
 }
 
 impl BuckCommand {
@@ -77,7 +90,17 @@ impl BuckCommand {
             }
         };
 
-        Ok(Self { command, build_id })
+        Ok(Self {
+            command,
+            build_id,
+            cancellation: None,
+        })
+    }
+
+    /// Bind this targets invocation to its preparation's cancellation lifecycle.
+    pub fn with_cancellation(mut self, cancellation: Option<Cancellation>) -> Self {
+        self.cancellation = cancellation;
+        self
     }
 
     /// Access the command to append `targets` options and patterns.
@@ -92,7 +115,13 @@ impl BuckCommand {
 
     /// Spawn the configured command.
     pub fn spawn(mut self) -> anyhow::Result<BuckProcess> {
-        let child = self.command.spawn().context("spawning Buck")?;
+        let child = match self.cancellation {
+            Some(cancellation) => RunningChild::Cancellable {
+                child: cancellation.spawn(&mut self.command)?,
+                cancellation,
+            },
+            None => RunningChild::Direct(self.command.spawn().context("spawning Buck")?),
+        };
         Ok(BuckProcess {
             child,
             build_id: self.build_id,
@@ -103,7 +132,15 @@ impl BuckCommand {
 impl BuckProcess {
     /// Take the child's piped stdout.
     pub fn take_stdout(&mut self) -> anyhow::Result<ChildStdout> {
-        self.child.stdout.take().context("capturing Buck stdout")
+        match &mut self.child {
+            RunningChild::Direct(child) => child.stdout.take(),
+            RunningChild::Cancellable { child, .. } => child
+                .lock()
+                .expect("Buck child mutex poisoned")
+                .stdout
+                .take(),
+        }
+        .context("capturing Buck stdout")
     }
 
     /// Wait for Buck and report its build UI on failure when available.
@@ -113,7 +150,13 @@ impl BuckProcess {
 
     /// Wait for Buck while preserving a caller's stdout-processing result.
     pub fn wait_with_output<T>(mut self, output: anyhow::Result<T>) -> anyhow::Result<T> {
-        let status = self.child.wait().context("waiting for Buck")?;
+        let status = match &mut self.child {
+            RunningChild::Direct(child) => child.wait().context("waiting for Buck")?,
+            RunningChild::Cancellable {
+                child,
+                cancellation,
+            } => cancellation.wait(child)?,
+        };
         let diagnostic = match read_build_id(self.build_id.as_ref()) {
             Ok(Some(build_id)) => {
                 let url = format!("https://www.internalfb.com/buck2/{build_id}");
@@ -136,6 +179,33 @@ impl BuckProcess {
             (false, Err(error)) => Err(error.context(format!(
                 "Buck command failed with {status}; stdout processing also failed{diagnostic}"
             ))),
+        }
+    }
+}
+
+impl Drop for RunningChild {
+    fn drop(&mut self) {
+        let cleanup = |child: &mut Child| -> anyhow::Result<()> {
+            if child
+                .try_wait()
+                .context("checking owned Buck child")?
+                .is_none()
+            {
+                child
+                    .kill()
+                    .context("stopping unfinished owned Buck child")?;
+                child.wait().context("reaping owned Buck child")?;
+            }
+            Ok(())
+        };
+        let result = match self {
+            Self::Direct(child) => cleanup(child),
+            Self::Cancellable { child, .. } => {
+                cleanup(&mut child.lock().expect("Buck child mutex poisoned"))
+            }
+        };
+        if let Err(error) = result {
+            warn!("Buck child cleanup failed: {error:#}");
         }
     }
 }

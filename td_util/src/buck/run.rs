@@ -20,6 +20,8 @@ use td_util::command::with_command;
 use thiserror::Error;
 use tracing::info;
 
+use crate::cancellation::CancellableReader;
+use crate::cancellation::Cancellation;
 use crate::cells::CellInfo;
 use crate::process::BuckCommand;
 use crate::process::BuckDiagnostics;
@@ -39,6 +41,7 @@ pub struct Buck2 {
     isolation_dir: Option<String>,
     /// How the incremental graph update's `targets` command reports diagnostics.
     targets_diagnostics: BuckDiagnostics,
+    targets_cancellation: Option<Cancellation>,
 }
 
 #[derive(Error, Debug)]
@@ -54,6 +57,7 @@ impl Buck2 {
             root: None,
             isolation_dir,
             targets_diagnostics: BuckDiagnostics::Inherit,
+            targets_cancellation: None,
         }
     }
 
@@ -64,11 +68,23 @@ impl Buck2 {
     }
 
     pub fn targets_command(&self) -> anyhow::Result<BuckCommand> {
-        BuckCommand::targets(
+        Ok(BuckCommand::targets(
             &self.program,
             self.isolation_dir.as_deref(),
             self.targets_diagnostics,
-        )
+        )?
+        .with_cancellation(self.targets_cancellation.clone()))
+    }
+
+    /// Cancellation covers graph targets commands, not audit/owner queries.
+    pub fn with_targets_cancellation(mut self, cancellation: Option<Cancellation>) -> Self {
+        self.targets_cancellation = cancellation;
+        self
+    }
+
+    /// Keep cancellation active while parsing a completed targets command's file.
+    pub fn targets_reader<R>(&self, reader: R) -> CancellableReader<R> {
+        CancellableReader::new(reader, self.targets_cancellation.clone())
     }
 
     pub fn command(&self) -> Command {

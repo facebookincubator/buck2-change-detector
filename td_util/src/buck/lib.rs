@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 use td_util::supertd_events;
+pub mod cancellation;
 pub mod cells;
 pub mod config;
 mod deserializers;
