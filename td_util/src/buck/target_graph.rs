@@ -1292,7 +1292,41 @@ impl TargetGraph {
         self.minimized_targets.remove(&target_id);
     }
 
+    /// The package a target is filed under, derived from its label: a label
+    /// is `<package>:<name>`, and a package id is the hash of its path.
+    fn package_of(&self, target_id: TargetId) -> Option<PackageId> {
+        self.with_target_label(target_id, |label| {
+            label
+                .rsplit_once(':')
+                .map(|(package, _)| package.parse().expect("id parsing is infallible"))
+        })
+        .flatten()
+    }
+
+    /// Removes `target_id` from its derived package. Returns false if it is
+    /// not filed there, so the caller can fall back to scanning.
+    fn remove_target_from_derived_package(&self, target_id: TargetId) -> bool {
+        let Some(package_id) = self.package_of(target_id) else {
+            return false;
+        };
+        let Some(mut targets) = self.package_id_to_targets.get_mut(&package_id) else {
+            return false;
+        };
+        let Some(pos) = targets.iter().position(|&id| id == target_id) else {
+            return false;
+        };
+        targets.swap_remove(pos);
+        if targets.is_empty() {
+            drop(targets);
+            self.package_id_to_targets.remove(&package_id);
+        }
+        true
+    }
+
     fn remove_target_from_package(&self, target_id: TargetId) {
+        if self.remove_target_from_derived_package(target_id) {
+            return;
+        }
         for mut entry in self.package_id_to_targets.iter_mut() {
             let targets = entry.value_mut();
             let Some(pos) = targets.iter().position(|&id| id == target_id) else {
@@ -1389,9 +1423,21 @@ impl TargetGraph {
         self.batch_update_rdeps(IdDashMap::default(), removals);
     }
 
+    /// Removes the targets from their packages. Each target is looked up in
+    /// the package its label names, so the cost scales with the removal
+    /// rather than with the graph; only targets not filed under that package
+    /// fall back to scanning every package.
     fn clean_package_targets_for_removed_targets(&self, targets_to_remove: &IdHashSet<TargetId>) {
+        let unfiled: IdHashSet<TargetId> = targets_to_remove
+            .iter()
+            .copied()
+            .filter(|&target_id| !self.remove_target_from_derived_package(target_id))
+            .collect();
+        if unfiled.is_empty() {
+            return;
+        }
         self.package_id_to_targets.retain(|_, targets| {
-            targets.retain(|id| !targets_to_remove.contains(id));
+            targets.retain(|id| !unfiled.contains(id));
             !targets.is_empty()
         });
     }
@@ -3343,6 +3389,29 @@ mod tests {
 
         let remaining = graph.get_targets_in_package(package_id).unwrap();
         assert_eq!(remaining, vec![survivor]);
+    }
+
+    #[test]
+    fn remove_finds_target_filed_under_another_package() {
+        let graph = TargetGraph::new();
+
+        // Filed under a package its label does not name: removal must fall
+        // back to scanning instead of leaving it behind.
+        let other = graph.store_package("fbcode//other");
+        let misfiled = graph.store_target("fbcode//pkg:misfiled");
+        let single = graph.store_target("fbcode//pkg:single");
+        let kept = graph.store_target("fbcode//other:kept");
+        graph.add_target_to_package(other, misfiled);
+        graph.add_target_to_package(other, single);
+        graph.add_target_to_package(other, kept);
+        for &id in &[misfiled, single, kept] {
+            store_minimized_stub(&graph, id);
+        }
+
+        graph.remove_targets_batch(&[misfiled].into_iter().collect());
+        graph.remove_target(single);
+
+        assert_eq!(graph.get_targets_in_package(other).unwrap(), vec![kept]);
     }
 
     #[test]
