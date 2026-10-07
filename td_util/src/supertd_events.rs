@@ -57,6 +57,9 @@ pub enum Event {
     /// sub-phases (job generation, decoration, serialization, sandcastle spawn,
     /// skycastle spawn) instead of seeing only the aggregate.
     SCHEDULER_PHASE_TIMING,
+    /// Emitted once per scheduler invocation after job construction and before
+    /// scheduling, SubmitQueue, or snapshot work begins.
+    CITADEL_SCHEDULING_READY,
     /// Emitted once `schedule_jobs()` has attempted to schedule all jobs;
     /// covers both the inline `schedule()` and `rehydrate()` paths (see the
     /// `source` field) and reports how many jobs were actually scheduled.
