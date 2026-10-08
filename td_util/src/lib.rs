@@ -19,6 +19,7 @@ pub mod json;
 pub mod knobs;
 pub mod logging;
 pub mod no_hash;
+// @oss-disable: pub mod ods;
 pub mod operation_event;
 pub mod prelude;
 pub mod project;
