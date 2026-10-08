@@ -76,6 +76,10 @@ pub enum Event {
     VERSE_PG_GUARANTEED_VERIFIABLES_COUNT,
     VERSE_MULTISTAGE_SUCCESS,
     VERSE_MULTISTAGE_FAILURE,
+    /// Emitted once per Verse invocation that runs the bucket-selection shadow,
+    /// whatever its outcome. `duration_ms` covers only the shadow; it is also
+    /// included in the enclosing `VERSE_SUCCESS` duration.
+    BUCKET_SELECTION_COMPARISON_FINISHED,
     BUILD_DIRECTIVES_SPECIFIED,
     RE_METADATA_SUCCESS,
     GENERATED_TARGETS_COUNT,
