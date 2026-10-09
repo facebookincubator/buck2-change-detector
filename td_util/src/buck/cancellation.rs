@@ -13,8 +13,6 @@
 use std::io;
 use std::io::BufRead;
 use std::io::Read;
-use std::process::Child;
-use std::process::Command;
 use std::process::ExitStatus;
 use std::sync::Arc;
 use std::sync::Condvar;
@@ -27,6 +25,8 @@ use std::time::Duration;
 use anyhow::Context as _;
 use thiserror::Error;
 
+use crate::process::OwnedChild;
+
 const CHILD_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Error)]
@@ -36,7 +36,7 @@ pub struct Cancelled;
 #[derive(Debug, Default)]
 struct State {
     cancelled: AtomicBool,
-    children: Mutex<Vec<Weak<Mutex<Child>>>>,
+    children: Mutex<Vec<Weak<Mutex<OwnedChild>>>>,
     wake: Condvar,
 }
 
@@ -108,19 +108,7 @@ impl Cancellation {
         let mut failures = Vec::new();
         for child in children.iter().filter_map(Weak::upgrade) {
             let mut child = child.lock().expect("Buck child mutex poisoned");
-            let stop = (|| -> io::Result<()> {
-                if child.try_wait()?.is_some() {
-                    return Ok(());
-                }
-                match child.kill() {
-                    Ok(()) => Ok(()),
-                    // Only a confirmed exit makes a failed kill harmless. In
-                    // particular, EPERM by itself is not proof of termination.
-                    Err(_) if child.try_wait()?.is_some() => Ok(()),
-                    Err(error) => Err(error),
-                }
-            })();
-            if let Err(error) = stop {
+            if let Err(error) = child.stop() {
                 failures.push(error.to_string());
             }
         }
@@ -133,7 +121,10 @@ impl Cancellation {
         Ok(())
     }
 
-    pub(crate) fn spawn(&self, command: &mut Command) -> anyhow::Result<Arc<Mutex<Child>>> {
+    pub(crate) fn spawn(
+        &self,
+        spawn: impl FnOnce() -> io::Result<OwnedChild>,
+    ) -> anyhow::Result<Arc<Mutex<OwnedChild>>> {
         let mut children = self
             .state
             .children
@@ -142,15 +133,13 @@ impl Cancellation {
         self.check()?;
         // Registration and cancellation share the lock: cancellation cannot miss
         // a child spawned concurrently with the request.
-        let child = Arc::new(Mutex::new(
-            command.spawn().context("spawning cancellable Buck")?,
-        ));
+        let child = Arc::new(Mutex::new(spawn().context("spawning cancellable Buck")?));
         children.retain(|child| child.strong_count() != 0);
         children.push(Arc::downgrade(&child));
         Ok(child)
     }
 
-    pub(crate) fn wait(&self, child: &Mutex<Child>) -> anyhow::Result<ExitStatus> {
+    pub(crate) fn wait(&self, child: &Mutex<OwnedChild>) -> anyhow::Result<ExitStatus> {
         let mut children = self
             .state
             .children
@@ -183,12 +172,10 @@ impl Cancellation {
 
 #[cfg(test)]
 mod tests {
-    use std::io::BufRead;
-    use std::io::BufReader;
-    use std::io::Read;
+    #[cfg(unix)]
+    use std::process::Command;
+    #[cfg(unix)]
     use std::process::Stdio;
-    use std::sync::mpsc;
-    use std::thread;
 
     use super::*;
 
@@ -197,15 +184,26 @@ mod tests {
         let cancellation = Cancellation::default();
         cancellation.cancel().unwrap();
         assert!(cancellation.check().is_err());
-        assert!(cancellation.spawn(&mut Command::new("/bin/true")).is_err());
+        assert!(
+            cancellation
+                .spawn(|| panic!("cancelled preparations must not spawn"))
+                .is_err()
+        );
     }
 
     #[test]
     #[cfg(unix)]
     fn cancellation_after_normal_exit_is_idempotent() {
+        use crate::process::test_support::spawn_child;
+
         let cancellation = Cancellation::default();
         let child = cancellation
-            .spawn(Command::new("/bin/sh").args(["-c", "exit 0"]))
+            .spawn(|| {
+                spawn_child(
+                    Command::new("/bin/sh").args(["-c", "exit 0"]),
+                    Stdio::null(),
+                )
+            })
             .unwrap();
         assert!(cancellation.wait(&child).unwrap().success());
         cancellation.cancel().unwrap();
@@ -213,46 +211,60 @@ mod tests {
         assert!(child.lock().unwrap().try_wait().unwrap().is_some());
     }
 
+    #[rstest::rstest]
+    #[case("trap - TERM")]
+    #[case("trap '' TERM")]
+    #[case("trap 'kill -TERM \"$child\"; wait \"$child\"; exit 0' TERM")]
+    #[cfg(target_os = "linux")]
+    fn cancellation_does_not_require_signal_forwarding(#[case] setup: &str) {
+        use crate::process::test_support::*;
+
+        let gate = Gate::new();
+        let cancellation = Cancellation::default();
+        let command = gate.command(&format!(
+            "{setup}; exec 4<gate; (printf 'ready\\n'; read value <&4) & child=$!; wait"
+        ));
+        let child = cancellation
+            .spawn(|| spawn_child(&command, Stdio::piped()))
+            .unwrap();
+        let output = lines(child.lock().unwrap().take_stdout().unwrap());
+        assert_eq!(line(&output), "ready");
+        cancellation.cancel().unwrap();
+        eof(&output);
+        assert!(cancellation.wait(&child).unwrap_err().is::<Cancelled>());
+    }
+
     #[test]
     #[cfg(unix)]
     fn cancellation_closes_stream_and_reaps_only_owned_child() {
+        use crate::process::test_support::*;
+
+        let gate = Gate::new();
         let cancellation = Cancellation::default();
         let other = Cancellation::default();
         let spawn = |owner: &Cancellation| {
-            let mut command = Command::new("/bin/sh");
-            command
-                .args(["-c", "printf 'ready\\n'; read value"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped());
-            let child = owner.spawn(&mut command).unwrap();
-            let stdout = child.lock().unwrap().stdout.take().unwrap();
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            assert_eq!(line, "ready\n");
-            (child, reader)
+            let child = owner
+                .spawn(|| {
+                    spawn_child(
+                        &gate.command("exec 4<gate; printf 'ready\\n'; read value <&4"),
+                        Stdio::piped(),
+                    )
+                })
+                .unwrap();
+            let output = lines(child.lock().unwrap().take_stdout().unwrap());
+            assert_eq!(line(&output), "ready");
+            (child, output)
         };
-        let (child, mut reader) = spawn(&cancellation);
-        let (unrelated, _) = spawn(&other);
-        let (done_tx, done_rx) = mpsc::channel();
-        let waiter_cancel = cancellation.clone();
-        let waiter_child = child.clone();
-        let waiter = thread::spawn(move || {
-            let mut remainder = String::new();
-            reader.read_to_string(&mut remainder).unwrap();
-            let error = waiter_cancel.wait(&waiter_child).unwrap_err();
-            assert!(error.is::<Cancelled>());
-            done_tx.send(()).unwrap();
-        });
+        let (child, output) = spawn(&cancellation);
+        let (unrelated, other_output) = spawn(&other);
         cancellation.cancel().unwrap();
-        done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("cancelled child must release streaming reader and waiter");
-        waiter.join().unwrap();
+        eof(&output);
+        assert!(cancellation.wait(&child).unwrap_err().is::<Cancelled>());
         assert!(child.lock().unwrap().try_wait().unwrap().is_some());
         cancellation.cancel().unwrap();
         assert!(unrelated.lock().unwrap().try_wait().unwrap().is_none());
         other.cancel().unwrap();
+        eof(&other_output);
         assert!(other.wait(&unrelated).unwrap_err().is::<Cancelled>());
     }
 }
