@@ -17,6 +17,8 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
 use std::str::FromStr;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 
 use anyhow::Context;
 use dashmap::DashMap;
@@ -2012,12 +2014,49 @@ impl Default for TargetGraph {
     }
 }
 
+/// Graphs passed to [`TargetGraph::keep_until_exit`]. Rust never drops a
+/// static, and the static keeps each graph reachable, so LeakSanitizer does
+/// not report it.
+static KEPT_UNTIL_EXIT: Mutex<Vec<TargetGraph>> = Mutex::new(Vec::new());
+
+impl TargetGraph {
+    /// Keeps the graph alive until the process exits, and never frees it.
+    ///
+    /// Freeing a production graph walks tens of millions of allocations one
+    /// at a time and takes seconds. The graph owns nothing but memory, and the
+    /// kernel reclaims the whole address space at exit much faster. Call this
+    /// only from a command's entry point, right before the process exits.
+    pub fn keep_until_exit(self) {
+        KEPT_UNTIL_EXIT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(self);
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn kept_graphs_stay_reachable() {
+        let graph = TargetGraph::new();
+        let target = graph.store_target("//pkg:kept");
+
+        graph.keep_until_exit();
+
+        // LeakSanitizer reports only memory that no static or stack can reach.
+        let kept = KEPT_UNTIL_EXIT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            kept.iter()
+                .any(|graph| graph.get_target_label(target).as_deref() == Some("//pkg:kept"))
+        );
+    }
 
     fn build_distinguishing_graph() -> TargetGraph {
         let graph = TargetGraph::new();
