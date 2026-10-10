@@ -1054,12 +1054,14 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case("INT")]
-    #[case("TERM")]
-    #[case("KILL")]
+    #[case("INT", 2)]
+    #[case("TERM", 15)]
+    #[case("KILL", 9)]
     #[cfg(target_os = "linux")]
-    fn owner_termination_stops_invocation(#[case] signal: &str) {
-        use std::os::unix::process::CommandExt;
+    fn owner_termination_stops_invocation(#[case] signal: &str, #[case] signal_number: i32) {
+        use std::os::unix::process::ExitStatusExt;
+        use std::time::Duration;
+        use std::time::Instant;
 
         use super::test_support::*;
 
@@ -1078,7 +1080,6 @@ mod tests {
                 .args(["--exact", "process::tests::owner_fixture", "--nocapture"])
                 .env("TD_TEST_OWNER_DIRECTORY", gate.directory.path())
                 .stdout(Stdio::piped())
-                .process_group(0)
                 .spawn()
                 .unwrap(),
         );
@@ -1086,14 +1087,26 @@ mod tests {
         while !line(&output).contains("worker-ready") {}
         assert!(
             Command::new("/bin/kill")
-                .arg(format!("-{signal}"))
-                .arg(format!("-{}", owner.0.id()))
+                .args(["-s", signal, "--"])
+                .arg(owner.0.id().to_string())
                 .status()
                 .unwrap()
                 .success()
         );
+        // Check the injected signal separately from the invocation's cleanup.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = owner.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture owner did not exit after {signal}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(status.signal(), Some(signal_number));
         eof(&output);
-        assert!(!owner.0.wait().unwrap().success());
     }
 
     #[test]
