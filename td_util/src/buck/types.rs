@@ -673,13 +673,12 @@ impl fmt::Display for Oncall {
 }
 
 /// Buck's unconfigured target hash. Its 32 lowercase hex characters are
-/// kept inline as 16 bytes; anything else is kept verbatim. Default serde
-/// serialization preserves the original string; graph storage opts into a
-/// compact binary representation with `target_hash_storage`.
+/// kept inline as 16 bytes; anything else is kept verbatim. Serde
+/// serialization preserves the original string.
 #[derive(PartialEq, Eq, Clone)]
 pub struct TargetHash(TargetHashRepr);
 
-#[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone)]
 enum TargetHashRepr {
     Hex128([u8; 16]),
     Text(Box<str>),
@@ -706,6 +705,17 @@ fn parse_hex128(hash: &str) -> Option<[u8; 16]> {
 }
 
 impl TargetHash {
+    pub(crate) fn as_hex128(&self) -> Option<&[u8; 16]> {
+        match &self.0 {
+            TargetHashRepr::Hex128(bytes) => Some(bytes),
+            TargetHashRepr::Text(_) => None,
+        }
+    }
+
+    pub(crate) fn from_hex128(bytes: [u8; 16]) -> Self {
+        Self(TargetHashRepr::Hex128(bytes))
+    }
+
     pub fn new(hash: &str) -> Self {
         Self(match parse_hex128(hash) {
             Some(bytes) => TargetHashRepr::Hex128(bytes),
@@ -714,7 +724,7 @@ impl TargetHash {
     }
 
     /// Run `f` on the textual hash without allocating.
-    fn with_str<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+    pub(crate) fn with_str<R>(&self, f: impl FnOnce(&str) -> R) -> R {
         match &self.0 {
             TargetHashRepr::Text(text) => f(text),
             TargetHashRepr::Hex128(bytes) => {
@@ -778,41 +788,6 @@ impl<'de> Deserialize<'de> for TargetHash {
         }
 
         deserializer.deserialize_str(TargetHashVisitor)
-    }
-}
-
-pub(crate) mod target_hash_storage {
-    use serde::Deserialize;
-    use serde::Deserializer;
-    use serde::Serialize;
-    use serde::Serializer;
-
-    use super::TargetHash;
-    use super::TargetHashRepr;
-    use super::parse_hex128;
-
-    pub fn serialize<S: Serializer>(hash: &TargetHash, serializer: S) -> Result<S::Ok, S::Error> {
-        if serializer.is_human_readable() {
-            hash.serialize(serializer)
-        } else {
-            hash.0.serialize(serializer)
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<TargetHash, D::Error> {
-        if deserializer.is_human_readable() {
-            return TargetHash::deserialize(deserializer);
-        }
-        let repr = match TargetHashRepr::deserialize(deserializer)? {
-            TargetHashRepr::Hex128(bytes) => TargetHashRepr::Hex128(bytes),
-            // Equality relies on every canonical lowercase hash using Hex128,
-            // including a string variant received from another writer.
-            TargetHashRepr::Text(text) => match parse_hex128(&text) {
-                Some(bytes) => TargetHashRepr::Hex128(bytes),
-                None => TargetHashRepr::Text(text),
-            },
-        };
-        Ok(TargetHash(repr))
     }
 }
 
@@ -977,10 +952,6 @@ mod tests {
 
     use super::*;
 
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(transparent)]
-    struct StoredHash(#[serde(with = "target_hash_storage")] TargetHash);
-
     /// Whatever the input, a `TargetHash` prints, serializes and deserializes
     /// exactly like the string it was built from.
     #[rstest]
@@ -1036,56 +1007,6 @@ mod tests {
         let from_bytes =
             TargetHash::deserialize(BytesDeserializer::<ValueError>::new(text.as_bytes())).unwrap();
         assert_eq!(from_bytes, hash, "deserialized from a byte string");
-
-        let stored = StoredHash(hash);
-        let compact = bincode::serde::encode_to_vec(&stored, config).unwrap();
-        let (decoded, consumed) =
-            bincode::serde::decode_from_slice::<StoredHash, _>(&compact, config).unwrap();
-        assert_eq!(consumed, compact.len());
-        assert_eq!(decoded, stored, "graph binary round trip");
-        let json = serde_json::to_string(&stored).unwrap();
-        assert_eq!(json, serde_json::to_string(text).unwrap(), "graph JSON");
-        assert_eq!(serde_json::from_str::<StoredHash>(&json).unwrap(), stored);
-    }
-
-    #[test]
-    fn graph_hash_encoding_is_compact() {
-        let hash = TargetHash::new("5700a84a628259e252ef6952d6af6079");
-        let config = bincode::config::standard();
-        let plain = bincode::serde::encode_to_vec(&hash, config).unwrap();
-        let compact = bincode::serde::encode_to_vec(StoredHash(hash), config).unwrap();
-        assert_eq!(plain.len(), 33);
-        assert_eq!(
-            compact,
-            [
-                0, 0x57, 0x00, 0xa8, 0x4a, 0x62, 0x82, 0x59, 0xe2, 0x52, 0xef, 0x69, 0x52, 0xd6,
-                0xaf, 0x60, 0x79
-            ]
-        );
-    }
-
-    #[test]
-    fn graph_hash_decoding_normalizes_text_variants() {
-        let text = "5700a84a628259e252ef6952d6af6079";
-        let config = bincode::config::standard();
-        let encoded =
-            bincode::serde::encode_to_vec(TargetHashRepr::Text(text.into()), config).unwrap();
-        let (decoded, consumed) =
-            bincode::serde::decode_from_slice::<StoredHash, _>(&encoded, config).unwrap();
-        assert_eq!(consumed, encoded.len());
-        assert_eq!(decoded.0, TargetHash::new(text));
-        assert!(matches!(decoded.0.0, TargetHashRepr::Hex128(_)));
-    }
-
-    #[rstest]
-    #[case::unknown_variant(&[2])]
-    #[case::truncated_hash(&[0, 0x57])]
-    #[case::invalid_text(&[1, 1, 0xff])]
-    fn graph_hash_rejects_invalid_binary(#[case] bytes: &[u8]) {
-        assert!(
-            bincode::serde::decode_from_slice::<StoredHash, _>(bytes, bincode::config::standard())
-                .is_err()
-        );
     }
 
     /// Bytes that are not a string are rejected, not silently reinterpreted.

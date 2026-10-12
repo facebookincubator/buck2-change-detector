@@ -21,11 +21,6 @@ use anyhow::Context;
 /// https://datatracker.ietf.org/doc/html/rfc8878#section-3.1.1
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
-/// Cap on zstd worker threads. Above ~16 threads, gains diminish and
-/// contention with co-tenant workloads on shared sandcastle hosts becomes the
-/// larger cost.
-const ZSTD_MAX_WORKERS: u32 = 16;
-
 /// Check if a file has a zstd extension (.zst)
 pub fn is_zstd(filename: &Path) -> bool {
     match filename.extension() {
@@ -49,43 +44,6 @@ pub fn has_zstd_magic(file_path: &Path) -> bool {
     }
 }
 
-/// Number of zstd worker threads per frame when compressing many independent
-/// frames in parallel. Splits the host's parallelism budget across `frames`
-/// so that 22 frames × workers ≤ available cores. Falls back to 1 (no MT
-/// per frame) on small hosts or when parallelism cannot be detected.
-pub fn frame_worker_count(frames: u32) -> u32 {
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(0);
-    (cores / frames.max(1)).clamp(1, ZSTD_MAX_WORKERS)
-}
-
-/// Worker counts for a bounded set of Rayon frame tasks. Reserves one caller
-/// thread per active frame and distributes the remaining Rayon budget across
-/// the frames. A zero entry selects zstd's single-threaded mode for that frame.
-pub fn frame_worker_counts_with_callers(
-    frames: u32,
-    rayon_threads: u32,
-    max_workers: u32,
-) -> Vec<u32> {
-    if frames == 0 {
-        return Vec::new();
-    }
-
-    // Multithreaded zstd workers run in addition to each Rayon caller. Reserve
-    // those callers, then distribute the remaining worker slots evenly across
-    // frames so integer division does not leave usable capacity idle.
-    let max_workers = max_workers.clamp(1, ZSTD_MAX_WORKERS);
-    let worker_budget = rayon_threads
-        .saturating_sub(frames)
-        .min(frames.saturating_mul(max_workers));
-    let workers_per_frame = worker_budget / frames;
-    let frames_with_extra_worker = worker_budget % frames;
-    (0..frames)
-        .map(|frame| workers_per_frame + u32::from(frame < frames_with_extra_worker))
-        .collect()
-}
-
 /// Compress `input` into a self-contained zstd frame at the default
 /// compression level. When `workers > 1`, uses the multithreaded zstd
 /// encoder; when `workers == 1`, uses the single-threaded `encode_all`
@@ -107,8 +65,6 @@ pub fn zstd_encode_to_vec(input: &[u8], workers: u32) -> anyhow::Result<Vec<u8>>
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
     #[test]
@@ -127,30 +83,5 @@ mod tests {
         let compressed = zstd_encode_to_vec(&payload, 4).unwrap();
         let decompressed = zstd::decode_all(&compressed[..]).unwrap();
         assert_eq!(decompressed, payload);
-    }
-
-    #[test]
-    fn frame_worker_count_clamps() {
-        assert!(frame_worker_count(22) >= 1);
-        assert!(frame_worker_count(22) <= ZSTD_MAX_WORKERS);
-        assert_eq!(frame_worker_count(u32::MAX), 1);
-    }
-
-    #[rstest]
-    #[case(0, 16, 2, vec![])]
-    #[case(4, 4, 2, vec![0; 4])]
-    #[case(4, 7, 2, vec![1, 1, 1, 0])]
-    #[case(4, 10, 2, vec![2, 2, 1, 1])]
-    #[case(16, 316, 2, vec![2; 16])]
-    fn frame_worker_counts_follow_the_supplied_budget(
-        #[case] frames: u32,
-        #[case] rayon_threads: u32,
-        #[case] max_workers: u32,
-        #[case] expected: Vec<u32>,
-    ) {
-        assert_eq!(
-            frame_worker_counts_with_callers(frames, rayon_threads, max_workers),
-            expected
-        );
     }
 }
