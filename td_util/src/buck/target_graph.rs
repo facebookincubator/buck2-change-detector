@@ -194,7 +194,8 @@ pub fn pick_shard_count(entry_count: usize) -> usize {
 /// Generic shard container: owns `Vec<S>` of length N where each `S` is the
 /// per-shard storage (e.g. `IdDashMap<K, V>` or `IdDashSet<K>`). Routing
 /// dispatches by `K::shard_index`. N is fixed for the field's lifetime, and is
-/// independent of how many frames the field is written to on disk.
+/// independent of how many frames the field is written to on disk. Shards are
+/// also the unit of parallel freeing (see `Drop for TargetGraph`).
 ///
 /// Serializes transparently as the inner storage type (a single combined
 /// `IdDashMap` or `IdDashSet`) rather than as `{"shards": [...]}`. This keeps
@@ -492,10 +493,11 @@ struct StoredMinimizedTarget {
 }
 
 /// Single source of truth for `TargetGraph`'s on-disk field set. Generates
-/// the struct itself and the parallel framed `write_framed` / `read_framed`
-/// methods on `TargetGraph`. **Every** field is wrapped in `ShardedField`
-/// and split into N inner zstd frames on disk, where N is chosen per field
-/// at write time by `pick_shard_count(field.len())`. The wire-format header
+/// the struct itself, the parallel framed `write_framed` / `read_framed`
+/// methods on `TargetGraph`, and the shard hand-off that `Drop` uses.
+/// **Every** field is wrapped in `ShardedField` and split into N inner zstd
+/// frames on disk, where N is chosen per field at write time by
+/// `pick_shard_count(field.len())`. The wire-format header
 /// records the shard count for each field; a trailer at the end records
 /// per-frame compressed and uncompressed lengths plus its own offset.
 ///
@@ -517,6 +519,26 @@ macro_rules! define_target_graph_framed_io {
         const NUM_FIELDS: usize = [$(stringify!($field)),*].len();
 
         impl TargetGraph {
+            /// The number of shards over all fields.
+            fn shard_count(&self) -> usize {
+                0 $(+ self.$field.shards.len())*
+            }
+
+            /// Moves the shards of every field out of the graph, each with its
+            /// entry count, so they can be freed in parallel. Leaves every
+            /// field without shards; see `free_shards_on_threads`.
+            fn take_all_shards(&mut self) -> Vec<(usize, Box<dyn Send>)> {
+                let mut shards: Vec<(usize, Box<dyn Send>)> = Vec::new();
+                $(
+                    shards.extend(
+                        std::mem::take(&mut self.$field.shards)
+                            .into_iter()
+                            .map(|shard| (shard.len(), Box::new(shard) as Box<dyn Send>)),
+                    );
+                )*
+                shards
+            }
+
             pub fn write_framed<W: Write>(&self, writer: &mut W) -> anyhow::Result<()> {
                 self.write_framed_with(writer, pick_shard_count)
             }
@@ -2022,16 +2044,94 @@ static KEPT_UNTIL_EXIT: Mutex<Vec<TargetGraph>> = Mutex::new(Vec::new());
 impl TargetGraph {
     /// Keeps the graph alive until the process exits, and never frees it.
     ///
-    /// Freeing a production graph walks tens of millions of allocations one
-    /// at a time and takes seconds. The graph owns nothing but memory, and the
-    /// kernel reclaims the whole address space at exit much faster. Call this
-    /// only from a command's entry point, right before the process exits.
+    /// Freeing a production graph walks tens of millions of allocations,
+    /// which takes time even in parallel. The graph owns nothing but memory,
+    /// and the kernel reclaims the whole address space at exit much faster.
+    /// Call this only from a command's entry point, right before the process
+    /// exits.
     pub fn keep_until_exit(self) {
         KEPT_UNTIL_EXIT
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(self);
     }
+}
+
+/// Keeps small graphs with several shards per field, such as test graphs, off
+/// the threads. Estimated from the free time of a production graph of 27M
+/// targets, a graph below this size frees in about 5 ms on one thread.
+const PARALLEL_DROP_TARGETS: usize = 100_000;
+/// Threads that free a large graph, counting the dropping thread. On a
+/// production graph of 27M targets read from a file, 32 threads freed it as
+/// fast as 64 on average, with less variation.
+const DROP_THREADS: usize = 32;
+
+/// Frees the shards of every field on short-lived threads, because a large
+/// graph holds tens of millions of small allocations. Each shard is one unit
+/// of work. Dedicated threads, not the rayon pool, keep an implicit drop
+/// independent of the pool's work and of the locks that the dropping thread
+/// holds.
+impl Drop for TargetGraph {
+    fn drop(&mut self) {
+        self.free_shards_on_threads(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    }
+}
+
+impl TargetGraph {
+    /// Frees the shards on threads if `free_threads` chooses more than one.
+    /// Leaves every field without shards in that case, so only `Drop` and
+    /// tests call it.
+    fn free_shards_on_threads(&mut self, parallelism: impl FnOnce() -> usize) {
+        let threads = free_threads(self.targets_len(), self.shard_count(), parallelism);
+        if threads <= 1 {
+            return;
+        }
+        let mut shards = self.take_all_shards();
+        // Threads take shards from the end, so the largest shards start first.
+        shards.sort_unstable_by_key(|(entries, _)| *entries);
+        free_in_parallel(shards, threads);
+    }
+}
+
+/// Threads that free a graph of `targets` targets in `shards` shards,
+/// counting the dropping thread. One means that the dropping thread frees the
+/// graph alone, as for any value.
+///
+/// Only a field with more than 1.5M entries is read from a file as several
+/// shards, usually by several decoding threads, so more shards than fields
+/// marks a large graph read from a file. A graph with one shard per field,
+/// loaded from JSON, freed more slowly on threads than on the dropping thread.
+fn free_threads(targets: usize, shards: usize, parallelism: impl FnOnce() -> usize) -> usize {
+    if targets < PARALLEL_DROP_TARGETS || shards <= NUM_FIELDS {
+        return 1;
+    }
+    parallelism().min(DROP_THREADS).min(shards)
+}
+
+/// Frees `items` on `threads` threads, counting the calling thread. Threads
+/// take items from the end of `items`.
+fn free_in_parallel<T: Send>(items: Vec<T>, threads: usize) {
+    let items = Mutex::new(items);
+    // The lock guard ends inside `next`, so items free concurrently.
+    let next = || items.lock().unwrap_or_else(PoisonError::into_inner).pop();
+    let free = || {
+        while let Some(item) = next() {
+            drop(item);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..threads {
+            // If a thread fails to start, the calling thread frees its share.
+            if let Err(err) = std::thread::Builder::new()
+                .name("tgraph-drop".to_owned())
+                .spawn_scoped(scope, free)
+            {
+                tracing::warn!("freeing the target graph on fewer threads: {err}");
+                break;
+            }
+        }
+        free();
+    });
 }
 
 #[cfg(test)]
@@ -2056,6 +2156,87 @@ mod tests {
             kept.iter()
                 .any(|graph| graph.get_target_label(target).as_deref() == Some("//pkg:kept"))
         );
+    }
+
+    #[rstest]
+    #[case::small_graph(PARALLEL_DROP_TARGETS - 1, 4 * NUM_FIELDS, 192, 1)]
+    #[case::one_shard_per_field(PARALLEL_DROP_TARGETS, NUM_FIELDS, 192, 1)]
+    #[case::capped_by_constant(PARALLEL_DROP_TARGETS, 4 * NUM_FIELDS, 192, DROP_THREADS)]
+    #[case::capped_by_parallelism(PARALLEL_DROP_TARGETS, 4 * NUM_FIELDS, 8, 8)]
+    #[case::capped_by_shards(PARALLEL_DROP_TARGETS, NUM_FIELDS + 1, 192, NUM_FIELDS + 1)]
+    fn free_threads_parallelizes_only_large_multi_shard_graphs(
+        #[case] targets: usize,
+        #[case] shards: usize,
+        #[case] parallelism: usize,
+        #[case] expected: usize,
+    ) {
+        assert_eq!(free_threads(targets, shards, || parallelism), expected);
+    }
+
+    /// A large graph with a multi-shard field takes the threaded path, which
+    /// frees every shard.
+    #[test]
+    fn a_large_multi_shard_graph_frees_on_threads() {
+        let mut graph = TargetGraph::new();
+        graph.target_id_to_label = ShardedField::new(4);
+        for i in 0..PARALLEL_DROP_TARGETS {
+            graph.store_target(&format!("//pkg:t{i}"));
+        }
+        graph.free_shards_on_threads(|| 8);
+        assert_eq!(graph.shard_count(), 0);
+    }
+
+    /// Each item waits in its drop until `threads` items are being dropped at
+    /// the same time. There are twice as many items as threads, so each thread
+    /// must also keep taking items. A wait that times out fails the test
+    /// instead of hanging it.
+    #[test]
+    fn free_in_parallel_frees_items_concurrently() {
+        use std::sync::Arc;
+        use std::sync::Condvar;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+
+        struct Gate {
+            arrived: Mutex<usize>,
+            changed: Condvar,
+            group: usize,
+            timed_out: AtomicBool,
+        }
+        struct Rendezvous(Arc<Gate>);
+        impl Drop for Rendezvous {
+            fn drop(&mut self) {
+                let gate = &self.0;
+                if gate.timed_out.load(Ordering::Relaxed) {
+                    return;
+                }
+                let mut arrived = gate.arrived.lock().unwrap();
+                *arrived += 1;
+                let group_end = arrived.div_ceil(gate.group) * gate.group;
+                gate.changed.notify_all();
+                let (arrived, wait) = gate
+                    .changed
+                    .wait_timeout_while(arrived, Duration::from_secs(30), |a| *a < group_end)
+                    .unwrap();
+                drop(arrived);
+                if wait.timed_out() {
+                    gate.timed_out.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+
+        let threads = 8;
+        let gate = Arc::new(Gate {
+            arrived: Mutex::new(0),
+            changed: Condvar::new(),
+            group: threads,
+            timed_out: AtomicBool::new(false),
+        });
+        let items = (0..2 * threads).map(|_| Rendezvous(gate.clone())).collect();
+        free_in_parallel(items, threads);
+        assert!(!gate.timed_out.load(Ordering::Relaxed));
+        assert_eq!(*gate.arrived.lock().unwrap(), 2 * threads);
     }
 
     fn build_distinguishing_graph() -> TargetGraph {
