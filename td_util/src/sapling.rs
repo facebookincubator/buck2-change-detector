@@ -52,10 +52,10 @@ pub fn sl_log_count(from_hash: &str, to_hash: &str) -> Option<i64> {
     Some(count_from_log_output(&stdout))
 }
 
-/// Returns the Unix epoch seconds of the commit identified by `rev`.
+/// Returns the Unix epoch seconds of the last public commit in `::rev`,
+/// which is `rev` itself when `rev` is public.
 ///
-/// Mirrors PHP `BTDCachedGraphScriptControllerBase::genTimestampFromHg`,
-/// which queries `last(public() & ::<rev>)`. Uses the `%s` strftime
+/// Queries `last(public() & ::<rev>)`. Uses the `%s` strftime
 /// template so the output is just the integer seconds (rather than
 /// `{date|hgdate}` which adds the timezone offset and forces a split).
 /// `None` on shell failure or if the output isn't parseable.
