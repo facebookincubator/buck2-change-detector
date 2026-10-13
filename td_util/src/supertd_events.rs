@@ -60,6 +60,8 @@ pub enum Event {
     /// Emitted once per scheduler invocation after job construction and before
     /// scheduling, SubmitQueue, or snapshot work begins.
     CITADEL_SCHEDULING_READY,
+    /// Records the attempted pre-snapshot decision and bounded RPC outcome.
+    CITADEL_INLINE_SCHEDULING_DECISION,
     /// Emitted once `schedule_jobs()` has attempted to schedule all jobs;
     /// covers both the inline `schedule()` and `rehydrate()` paths (see the
     /// `source` field) and reports how many jobs were actually scheduled.
