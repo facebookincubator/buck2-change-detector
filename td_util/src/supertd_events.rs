@@ -62,6 +62,8 @@ pub enum Event {
     CITADEL_SCHEDULING_READY,
     /// Records the attempted pre-snapshot decision and bounded RPC outcome.
     CITADEL_INLINE_SCHEDULING_DECISION,
+    /// Terminal scheduling ownership outcome, including handled fallback paths.
+    CITADEL_SCHEDULING_OWNERSHIP_OUTCOME,
     /// Emitted once `schedule_jobs()` has attempted to schedule all jobs;
     /// covers both the inline `schedule()` and `rehydrate()` paths (see the
     /// `source` field) and reports how many jobs were actually scheduled.
