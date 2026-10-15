@@ -31,7 +31,14 @@ pub fn should_exclude_bzl_file_from_rule_impact(path: &str) -> bool {
             // Only controls which ci.labels get applied to targets. Label
             // changes are detected independently via hash/label comparison
             // after rerun.
+            // Buck target graphs use the cell named at the load site. Keep the
+            // physical spellings for callers that operate on fbsource cell paths.
+            "fbcode_macros//build_defs/lib/python_opt_rollout.bzl",
             "fbsource//tools/build_defs/fbcode_macros/build_defs/lib/python_opt_rollout.bzl",
+            // Checker selection is copied onto owner-library typing attributes,
+            // whose hash changes are detected after rerun.
+            "fbcode_macros//build_defs/rollouts/pyrefly_checker_rollout.bzl",
+            "fbsource//tools/build_defs/fbcode_macros/build_defs/rollouts/pyrefly_checker_rollout.bzl",
         ]
         .iter()
         .any(|prefix| path.starts_with(*prefix))
@@ -78,8 +85,17 @@ mod tests {
     #[rstest]
     #[case::td_macros("fbsource//tools/target_determinator/macros/defs.bzl", true)]
     #[case::prelude("prelude//prelude.bzl", true)]
-    #[case::python_opt_rollout(
+    #[case::python_opt_rollout("fbcode_macros//build_defs/lib/python_opt_rollout.bzl", true)]
+    #[case::python_opt_rollout_physical_path(
         "fbsource//tools/build_defs/fbcode_macros/build_defs/lib/python_opt_rollout.bzl",
+        true
+    )]
+    #[case::pyrefly_checker_rollout(
+        "fbcode_macros//build_defs/rollouts/pyrefly_checker_rollout.bzl",
+        true
+    )]
+    #[case::pyrefly_checker_rollout_physical_path(
+        "fbsource//tools/build_defs/fbcode_macros/build_defs/rollouts/pyrefly_checker_rollout.bzl",
         true
     )]
     #[case::regular_bzl("fbcode//some/path/defs.bzl", false)]
