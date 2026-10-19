@@ -29,6 +29,9 @@ use crate::types::TargetHash;
 use crate::types::TargetPattern;
 
 mod dense;
+mod packed;
+use packed::Map;
+use packed::Set;
 
 pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
@@ -37,22 +40,19 @@ pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 /// Increment for incompatible layout or graph-maintenance changes.
 pub const SCHEMA_VERSION: u32 = 15;
 
+/// Keeps decoding and runtime construction independent of the caller's closure type.
+type CheckCancelled<'a> = dyn Fn() -> anyhow::Result<()> + Sync + 'a;
+
 macro_rules! impl_string_storage {
     ($id_type:ident, $store_method:ident, $get_string_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
-        // NOTE: We use entry().or_insert_with() instead of insert() for performance.
-        // This is safe because the ID is a hash of the string (see define_id_type! macro),
-        // so the same string always produces the same ID. Since we're storing the string
-        // as the value, inserting once vs. overwriting produces identical results.
-        // This optimization avoids redundant String allocations and write locks when
-        // the same key is stored multiple times (common during graph construction).
         pub fn $store_method(&self, s: &str) -> $id_type {
             let id = s.parse().unwrap();
-            self.$map_field.entry(id).or_insert_with(|| s.to_string());
+            self.$map_field.intern(id, s);
             id
         }
 
         pub fn $get_string_method(&self, id: $id_type) -> Option<String> {
-            self.$map_field.get(&id).map(|v| v.clone())
+            self.$map_field.get(&id).map(|v| v.to_owned_value())
         }
 
         pub fn $len_method(&self) -> usize {
@@ -62,7 +62,7 @@ macro_rules! impl_string_storage {
         pub fn $iter_method(&self) -> impl Iterator<Item = ($id_type, String)> + '_ {
             self.$map_field
                 .iter()
-                .map(|entry| (*entry.key(), entry.value().clone()))
+                .map(|entry| (*entry.key(), entry.to_owned_value()))
         }
     };
 }
@@ -71,7 +71,7 @@ macro_rules! impl_collection_storage {
     ($key_type:ident, $value_type:ident, $store_method:ident, $add_method:ident, $get_method:ident, $len_method:ident, $iter_method:ident, $map_field:ident) => {
         pub fn $store_method(&self, key: $key_type, values: Vec<$value_type>) {
             if values.is_empty() {
-                self.$map_field.remove(&key);
+                self.$map_field.discard(&key);
             } else {
                 self.$map_field.insert(key, values);
             }
@@ -82,7 +82,7 @@ macro_rules! impl_collection_storage {
         }
 
         pub fn $get_method(&self, key: $key_type) -> Option<Vec<$value_type>> {
-            self.$map_field.get(&key).map(|v| v.clone())
+            self.$map_field.get(&key).map(|v| v.to_owned_value())
         }
 
         pub fn $len_method(&self) -> usize {
@@ -92,7 +92,7 @@ macro_rules! impl_collection_storage {
         pub fn $iter_method(&self) -> impl Iterator<Item = ($key_type, Vec<$value_type>)> + '_ {
             self.$map_field
                 .iter()
-                .map(|entry| (*entry.key(), entry.value().clone()))
+                .map(|entry| (*entry.key(), entry.to_owned_value()))
         }
     };
 }
@@ -129,12 +129,6 @@ macro_rules! define_id_type {
             }
         }
 
-        impl ShardKey for $name {
-            fn shard_index(self, shard_count: usize) -> usize {
-                (self.0 as usize) % shard_count
-            }
-        }
-
         impl RawId for $name {
             fn raw(self) -> u64 {
                 self.as_u64()
@@ -147,14 +141,19 @@ macro_rules! define_id_type {
     };
 }
 
-/// Routes id-keyed entries to one of `shard_count` shards by id-modulo. Stable
-/// across runs because every `Id` is a content-derived hash.
-pub trait ShardKey: Copy + Eq + std::hash::Hash {
-    fn shard_index(self, shard_count: usize) -> usize;
-}
-
 /// The hash inside an id, for the binary layout in `dense`.
-trait RawId: ShardKey + FromStr<Err = std::convert::Infallible> + Send + Sync {
+trait RawId:
+    Copy
+    + Eq
+    + std::hash::Hash
+    + FromStr<Err = std::convert::Infallible>
+    + Send
+    + Sync
+    + std::fmt::Debug
+    + Serialize
+    + serde::de::DeserializeOwned
+    + 'static
+{
     fn raw(self) -> u64;
     fn from_raw(raw: u64) -> Self;
 }
@@ -185,201 +184,6 @@ pub type IdDashMap<K, V> = DashMap<K, V, BuildNoHash>;
 pub type IdDashSet<K> = DashSet<K, BuildNoHash>;
 pub type IdHashSet<K> = HashSet<K, BuildNoHash>;
 
-const MAX_SHARDS: usize = 16;
-const TARGET_ENTRIES_PER_SHARD: usize = 1_500_000;
-
-/// Picks the shard count for a field given its total entry count. Aims for
-/// ~1.5M entries per shard; clamps between 1 and `MAX_SHARDS`.
-pub fn pick_shard_count(entry_count: usize) -> usize {
-    entry_count
-        .div_ceil(TARGET_ENTRIES_PER_SHARD)
-        .clamp(1, MAX_SHARDS)
-}
-
-/// Generic shard container: owns `Vec<S>` of length N where each `S` is the
-/// per-shard storage (e.g. `IdDashMap<K, V>` or `IdDashSet<K>`). Routing
-/// dispatches by `K::shard_index`. N is fixed for the field's lifetime and
-/// does not affect the binary layout. Shards are the unit of parallel
-/// iteration and of parallel freeing (see `Drop for TargetGraph`).
-///
-/// Serializes transparently as the inner storage type (a single combined
-/// `IdDashMap` or `IdDashSet`) rather than as `{"shards": [...]}`. This keeps
-/// the JSON output independent of N and matches the pre-sharded format so
-/// consumers (tests, debug tools) don't need to know about sharding. The
-/// binary format goes through `write_framed`/`read_framed`.
-#[derive(Debug)]
-pub struct ShardedField<S> {
-    shards: Vec<S>,
-}
-
-impl<K, V> Serialize for ShardedField<IdDashMap<K, V>>
-where
-    K: Eq + std::hash::Hash + Serialize,
-    V: Serialize,
-{
-    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
-        use serde::ser::SerializeMap;
-        let total = self.shards.iter().map(|s| s.len()).sum();
-        let mut map = serializer.serialize_map(Some(total))?;
-        for shard in &self.shards {
-            for entry in shard.iter() {
-                map.serialize_entry(entry.key(), entry.value())?;
-            }
-        }
-        map.end()
-    }
-}
-
-impl<'de, K, V> Deserialize<'de> for ShardedField<IdDashMap<K, V>>
-where
-    K: Eq + std::hash::Hash + Deserialize<'de>,
-    V: Deserialize<'de>,
-{
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let map = IdDashMap::<K, V>::deserialize(deserializer)?;
-        Ok(Self { shards: vec![map] })
-    }
-}
-
-impl<K> Serialize for ShardedField<IdDashSet<K>>
-where
-    K: Eq + std::hash::Hash + Serialize,
-{
-    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
-        use serde::ser::SerializeSeq;
-        let total = self.shards.iter().map(|s| s.len()).sum();
-        let mut seq = serializer.serialize_seq(Some(total))?;
-        for shard in &self.shards {
-            for entry in shard.iter() {
-                seq.serialize_element(&*entry)?;
-            }
-        }
-        seq.end()
-    }
-}
-
-impl<'de, K> Deserialize<'de> for ShardedField<IdDashSet<K>>
-where
-    K: Eq + std::hash::Hash + Deserialize<'de>,
-{
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let set = IdDashSet::<K>::deserialize(deserializer)?;
-        Ok(Self { shards: vec![set] })
-    }
-}
-
-impl<S: Default> ShardedField<S> {
-    pub fn new(shard_count: usize) -> Self {
-        assert!(shard_count > 0, "shard_count must be positive");
-        Self {
-            shards: (0..shard_count).map(|_| S::default()).collect(),
-        }
-    }
-}
-
-impl<S> ShardedField<S> {
-    pub fn shards(&self) -> &[S] {
-        &self.shards
-    }
-
-    pub fn from_shards(shards: Vec<S>) -> Self {
-        assert!(!shards.is_empty(), "shards must be non-empty");
-        Self { shards }
-    }
-}
-
-impl<K: ShardKey, V> ShardedField<IdDashMap<K, V>> {
-    pub fn shard_for(&self, key: K) -> &IdDashMap<K, V> {
-        &self.shards[key.shard_index(self.shards.len())]
-    }
-
-    pub fn entry(&self, key: K) -> dashmap::mapref::entry::Entry<'_, K, V> {
-        self.shard_for(key).entry(key)
-    }
-
-    pub fn insert(&self, key: K, value: V) -> Option<V> {
-        self.shard_for(key).insert(key, value)
-    }
-
-    pub fn get(&self, key: &K) -> Option<dashmap::mapref::one::Ref<'_, K, V>> {
-        self.shard_for(*key).get(key)
-    }
-
-    pub fn get_mut(&self, key: &K) -> Option<dashmap::mapref::one::RefMut<'_, K, V>> {
-        self.shard_for(*key).get_mut(key)
-    }
-
-    pub fn remove(&self, key: &K) -> Option<(K, V)> {
-        self.shard_for(*key).remove(key)
-    }
-
-    pub fn contains_key(&self, key: &K) -> bool {
-        self.shard_for(*key).contains_key(key)
-    }
-
-    pub fn len(&self) -> usize {
-        self.shards.iter().map(|s| s.len()).sum()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.shards.iter().all(|s| s.is_empty())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, K, V>> {
-        self.shards.iter().flat_map(|s| s.iter())
-    }
-
-    pub fn iter_mut(
-        &self,
-    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMutMulti<'_, K, V>> {
-        self.shards.iter().flat_map(|s| s.iter_mut())
-    }
-
-    pub fn retain(&self, mut f: impl FnMut(&K, &mut V) -> bool) {
-        for shard in &self.shards {
-            shard.retain(|k, v| f(k, v));
-        }
-    }
-}
-
-impl<K: ShardKey + Send + Sync, V: Send + Sync> ShardedField<IdDashMap<K, V>> {
-    fn par_iter(
-        &self,
-    ) -> impl ParallelIterator<Item = dashmap::mapref::multiple::RefMulti<'_, K, V>> {
-        self.shards.par_iter().flat_map(|s| s.par_iter())
-    }
-}
-
-impl<K: ShardKey> ShardedField<IdDashSet<K>> {
-    pub fn shard_for(&self, key: K) -> &IdDashSet<K> {
-        &self.shards[key.shard_index(self.shards.len())]
-    }
-
-    pub fn insert(&self, key: K) -> bool {
-        self.shard_for(key).insert(key)
-    }
-
-    pub fn contains(&self, key: &K) -> bool {
-        self.shard_for(*key).contains(key)
-    }
-
-    pub fn remove(&self, key: &K) -> Option<K> {
-        self.shard_for(*key).remove(key)
-    }
-
-    pub fn len(&self) -> usize {
-        self.shards.iter().map(|s| s.len()).sum()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.shards.iter().all(|s| s.is_empty())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = dashmap::setref::multiple::RefMulti<'_, K>> {
-        self.shards.iter().flat_map(|s| s.iter())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinimizedBuckTarget {
     pub rule_type: RuleTypeId,
@@ -400,67 +204,31 @@ struct StoredMinimizedTarget {
     target_hash: TargetHash,
 }
 
-/// Single source of truth for `TargetGraph`'s field set. Generates the struct,
-/// whose fields are each sharded in memory by id, and the shard count and
-/// hand-off that `Drop` uses. `dense` owns the binary layout that
-/// `write_framed` writes and `read_framed` reads.
-macro_rules! define_target_graph {
-    ($($field:ident: $ty:ty),* $(,)?) => {
-        #[derive(Debug, Serialize, Deserialize)]
-        pub struct TargetGraph {
-            $($field: ShardedField<$ty>,)*
-        }
-
-        const NUM_FIELDS: usize = [$(stringify!($field)),*].len();
-
-        impl TargetGraph {
-            /// The number of shards over all fields.
-            fn shard_count(&self) -> usize {
-                0 $(+ self.$field.shards.len())*
-            }
-
-            /// Moves the shards of every field out of the graph, each with its
-            /// entry count, so they can be freed in parallel. Leaves every
-            /// field without shards; see `free_shards_on_threads`.
-            fn take_all_shards(&mut self) -> Vec<(usize, Box<dyn Send>)> {
-                let mut shards: Vec<(usize, Box<dyn Send>)> = Vec::new();
-                $(
-                    shards.extend(
-                        std::mem::take(&mut self.$field.shards)
-                            .into_iter()
-                            .map(|shard| (shard.len(), Box::new(shard) as Box<dyn Send>)),
-                    );
-                )*
-                shards
-            }
-        }
-    };
-}
-
-define_target_graph! {
-    target_id_to_label: IdDashMap<TargetId, String>,
-    rule_type_id_to_string: IdDashMap<RuleTypeId, String>,
-    oncall_id_to_string: IdDashMap<OncallId, String>,
-    label_id_to_string: IdDashMap<LabelId, String>,
-    minimized_targets: IdDashMap<TargetId, StoredMinimizedTarget>,
-    label_set_id_to_labels: IdDashMap<LabelSetId, Vec<LabelId>>,
-    glob_pattern_id_to_string: IdDashMap<GlobPatternId, String>,
-    package_id_to_path: IdDashMap<PackageId, String>,
-    file_id_to_path: IdDashMap<FileId, String>,
-    ci_deps_pattern_id_to_string: IdDashMap<CiDepsPatternId, String>,
-    target_id_to_rdeps: IdDashMap<TargetId, Vec<TargetId>>,
-    target_id_to_deps: IdDashMap<TargetId, Vec<TargetId>>,
-    file_id_to_rdeps: IdDashMap<FileId, Vec<FileId>>,
-    file_id_to_deps: IdDashMap<FileId, Vec<FileId>>,
-    package_id_to_errors: IdDashMap<PackageId, Vec<String>>,
-    package_id_to_targets: IdDashMap<PackageId, Vec<TargetId>>,
-    target_id_to_ci_srcs: IdDashMap<TargetId, Vec<GlobPatternId>>,
-    target_id_to_ci_srcs_must_match: IdDashMap<TargetId, Vec<GlobPatternId>>,
-    target_id_to_ci_deps_package_patterns: IdDashMap<TargetId, Vec<CiDepsPatternId>>,
-    target_id_to_ci_deps_recursive_patterns: IdDashMap<TargetId, Vec<CiDepsPatternId>>,
-    targets_with_sudo_label: IdDashSet<TargetId>,
-    ci_hint_to_affected: IdDashMap<TargetId, Vec<TargetId>>,
-    affected_to_ci_hints: IdDashMap<TargetId, Vec<TargetId>>,
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TargetGraph {
+    target_id_to_label: Map<TargetId, String>,
+    rule_type_id_to_string: Map<RuleTypeId, String>,
+    oncall_id_to_string: Map<OncallId, String>,
+    label_id_to_string: Map<LabelId, String>,
+    minimized_targets: Map<TargetId, StoredMinimizedTarget>,
+    label_set_id_to_labels: Map<LabelSetId, Vec<LabelId>>,
+    glob_pattern_id_to_string: Map<GlobPatternId, String>,
+    package_id_to_path: Map<PackageId, String>,
+    file_id_to_path: Map<FileId, String>,
+    ci_deps_pattern_id_to_string: Map<CiDepsPatternId, String>,
+    target_id_to_rdeps: Map<TargetId, Vec<TargetId>>,
+    target_id_to_deps: Map<TargetId, Vec<TargetId>>,
+    file_id_to_rdeps: Map<FileId, Vec<FileId>>,
+    file_id_to_deps: Map<FileId, Vec<FileId>>,
+    package_id_to_errors: Map<PackageId, Vec<String>>,
+    package_id_to_targets: Map<PackageId, Vec<TargetId>>,
+    target_id_to_ci_srcs: Map<TargetId, Vec<GlobPatternId>>,
+    target_id_to_ci_srcs_must_match: Map<TargetId, Vec<GlobPatternId>>,
+    target_id_to_ci_deps_package_patterns: Map<TargetId, Vec<CiDepsPatternId>>,
+    target_id_to_ci_deps_recursive_patterns: Map<TargetId, Vec<CiDepsPatternId>>,
+    targets_with_sudo_label: Set<TargetId>,
+    ci_hint_to_affected: Map<TargetId, Vec<TargetId>>,
+    affected_to_ci_hints: Map<TargetId, Vec<TargetId>>,
 }
 
 impl TargetGraph {
@@ -485,33 +253,7 @@ impl TargetGraph {
 
 impl TargetGraph {
     pub fn new() -> Self {
-        // Every field starts with a single shard; loading a graph picks a
-        // shard count from each field's size.
-        Self {
-            target_id_to_label: ShardedField::new(1),
-            rule_type_id_to_string: ShardedField::new(1),
-            oncall_id_to_string: ShardedField::new(1),
-            label_id_to_string: ShardedField::new(1),
-            minimized_targets: ShardedField::new(1),
-            label_set_id_to_labels: ShardedField::new(1),
-            glob_pattern_id_to_string: ShardedField::new(1),
-            target_id_to_rdeps: ShardedField::new(1),
-            target_id_to_deps: ShardedField::new(1),
-            file_id_to_path: ShardedField::new(1),
-            file_id_to_rdeps: ShardedField::new(1),
-            file_id_to_deps: ShardedField::new(1),
-            package_id_to_path: ShardedField::new(1),
-            package_id_to_errors: ShardedField::new(1),
-            package_id_to_targets: ShardedField::new(1),
-            ci_deps_pattern_id_to_string: ShardedField::new(1),
-            target_id_to_ci_srcs: ShardedField::new(1),
-            target_id_to_ci_srcs_must_match: ShardedField::new(1),
-            target_id_to_ci_deps_package_patterns: ShardedField::new(1),
-            target_id_to_ci_deps_recursive_patterns: ShardedField::new(1),
-            targets_with_sudo_label: ShardedField::new(1),
-            ci_hint_to_affected: ShardedField::new(1),
-            affected_to_ci_hints: ShardedField::new(1),
-        }
+        Self::default()
     }
 
     pub fn len(&self) -> usize {
@@ -627,7 +369,7 @@ impl TargetGraph {
     );
 
     pub fn clear_errors(&self, package_id: PackageId) {
-        self.package_id_to_errors.remove(&package_id);
+        self.package_id_to_errors.discard(&package_id);
     }
 
     pub fn error_package_ids(&self) -> IdHashSet<PackageId> {
@@ -671,35 +413,22 @@ impl TargetGraph {
         if deps.is_empty() {
             return;
         }
-        match self.target_id_to_deps.entry(target_id) {
-            dashmap::mapref::entry::Entry::Occupied(mut existing) => {
-                existing.get_mut().extend(deps);
-            }
-            dashmap::mapref::entry::Entry::Vacant(slot) => {
-                slot.insert(deps);
-            }
-        }
+        self.target_id_to_deps
+            .entry(target_id)
+            .or_default()
+            .extend(deps);
     }
 
     /// Release the capacity slack of every edge vector. During construction
     /// every edge list is grown by `push`, so most carry slack.
     pub fn shrink_edge_vectors(&self) {
-        fn shrink_all<K: ShardKey + Send + Sync, V: Send + Sync>(
-            field: &ShardedField<IdDashMap<K, Vec<V>>>,
-        ) {
-            field.shards().par_iter().for_each(|shard| {
-                shard
-                    .par_iter_mut()
-                    .for_each(|mut entry| entry.value_mut().shrink_to_fit());
-            });
-        }
-        shrink_all(&self.target_id_to_rdeps);
-        shrink_all(&self.target_id_to_deps);
-        shrink_all(&self.package_id_to_targets);
-        shrink_all(&self.file_id_to_rdeps);
-        shrink_all(&self.file_id_to_deps);
-        shrink_all(&self.ci_hint_to_affected);
-        shrink_all(&self.affected_to_ci_hints);
+        self.target_id_to_rdeps.shrink_owned_vectors();
+        self.target_id_to_deps.shrink_owned_vectors();
+        self.package_id_to_targets.shrink_owned_vectors();
+        self.file_id_to_rdeps.shrink_owned_vectors();
+        self.file_id_to_deps.shrink_owned_vectors();
+        self.ci_hint_to_affected.shrink_owned_vectors();
+        self.affected_to_ci_hints.shrink_owned_vectors();
     }
 
     // Bidirectional dependencies storage - always maintains both directions
@@ -719,7 +448,9 @@ impl TargetGraph {
     }
 
     pub fn get_rdeps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
-        self.target_id_to_rdeps.get(&target_id).map(|v| v.clone())
+        self.target_id_to_rdeps
+            .get(&target_id)
+            .map(|v| v.to_owned_value())
     }
 
     /// Appends the target's rdeps and ci_hint-affected targets to `out` without
@@ -727,17 +458,17 @@ impl TargetGraph {
     /// one buffer across a traversal. Same contents as `get_all_dependents`.
     pub fn dependents_into(&self, target_id: TargetId, out: &mut Vec<TargetId>) {
         if let Some(rdeps) = self.target_id_to_rdeps.get(&target_id) {
-            out.extend_from_slice(&rdeps);
+            rdeps.append_to(out);
         }
         if let Some(affected) = self.ci_hint_to_affected.get(&target_id) {
-            out.extend_from_slice(&affected);
+            affected.append_to(out);
         }
     }
 
     /// Appends the target's deps to `out` without cloning the stored vector.
     pub fn deps_into(&self, target_id: TargetId, out: &mut Vec<TargetId>) {
         if let Some(deps) = self.target_id_to_deps.get(&target_id) {
-            out.extend_from_slice(&deps);
+            deps.append_to(out);
         }
     }
 
@@ -763,7 +494,7 @@ impl TargetGraph {
     pub fn rule_type_id(&self, target_id: TargetId) -> Option<RuleTypeId> {
         self.minimized_targets
             .get(&target_id)
-            .map(|minimized| minimized.rule_type)
+            .map(|minimized| minimized.value().rule_type)
     }
 
     /// Whether the target carries `label_id`, read without cloning its labels.
@@ -771,18 +502,18 @@ impl TargetGraph {
         let Some(label_set) = self
             .minimized_targets
             .get(&target_id)
-            .map(|minimized| minimized.label_set)
+            .map(|minimized| minimized.value().label_set)
         else {
             return false;
         };
-        self.with_label_set(label_set, |labels| labels.contains(&label_id))
+        self.with_label_set(label_set, |labels| labels.contains_id(label_id))
     }
 
     pub fn contains_target(&self, target_id: TargetId) -> bool {
         self.target_id_to_label.contains_key(&target_id)
     }
 
-    /// Runs `f` on the target's label without cloning it. `f` runs under the
+    /// Runs `f` on the target's label without cloning it. `f` can hold the
     /// read lock of one `target_id_to_label` shard, so it must not call a
     /// method that writes to that map (`store_target`, `remove_target`, ...),
     /// which would deadlock on the same shard. Nested reads are fine.
@@ -793,7 +524,7 @@ impl TargetGraph {
     ) -> Option<R> {
         self.target_id_to_label
             .get(&target_id)
-            .map(|label| f(label.as_str()))
+            .map(|label| f(label.text()))
     }
 
     /// Whether the rule type's short name (after the last `:`) is `ci_hint`.
@@ -801,19 +532,20 @@ impl TargetGraph {
         self.rule_type_id_to_string
             .get(&rule_type_id)
             .is_some_and(|full| {
-                full.rsplit_once(':')
-                    .map_or(full.as_str(), |(_, short)| short)
-                    == CI_HINT_RULE_TYPE
+                let full = full.text();
+                full.rsplit_once(':').map_or(full, |(_, short)| short) == CI_HINT_RULE_TYPE
             })
     }
 
     pub fn get_deps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
-        self.target_id_to_deps.get(&target_id).map(|v| v.clone())
+        self.target_id_to_deps
+            .get(&target_id)
+            .map(|v| v.to_owned_value())
     }
 
     pub fn set_deps(&self, target_id: TargetId, deps: Vec<TargetId>) {
         if deps.is_empty() {
-            self.target_id_to_deps.remove(&target_id);
+            self.target_id_to_deps.discard(&target_id);
         } else {
             self.target_id_to_deps.insert(target_id, deps);
         }
@@ -833,13 +565,20 @@ impl TargetGraph {
     ) {
         removals.into_par_iter().for_each(|(dep_id, to_remove)| {
             let remove_set: IdHashSet<TargetId> = to_remove.into_iter().collect();
+            if !self
+                .target_id_to_rdeps
+                .get(&dep_id)
+                .is_some_and(|row| row.is_empty() || row.any_id(|id| remove_set.contains(&id)))
+            {
+                return;
+            }
             let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) else {
                 return;
             };
             rdeps.retain(|id| !remove_set.contains(id));
             if rdeps.is_empty() {
                 drop(rdeps);
-                self.target_id_to_rdeps.remove(&dep_id);
+                self.target_id_to_rdeps.discard(&dep_id);
             }
         });
 
@@ -852,13 +591,20 @@ impl TargetGraph {
     }
 
     pub fn remove_from_rdeps(&self, dep_id: TargetId, target_to_remove: TargetId) {
+        if !self
+            .target_id_to_rdeps
+            .get(&dep_id)
+            .is_some_and(|row| row.is_empty() || row.contains_id(target_to_remove))
+        {
+            return;
+        }
         if let Some(mut rdeps) = self.target_id_to_rdeps.get_mut(&dep_id) {
             if let Some(pos) = rdeps.iter().position(|&id| id == target_to_remove) {
                 rdeps.swap_remove(pos);
             }
             if rdeps.is_empty() {
                 drop(rdeps);
-                self.target_id_to_rdeps.remove(&dep_id);
+                self.target_id_to_rdeps.discard(&dep_id);
             }
         }
     }
@@ -871,15 +617,15 @@ impl TargetGraph {
         }
 
         self.remove_target_from_package(target_id);
-        self.target_id_to_deps.remove(&target_id);
-        self.target_id_to_ci_srcs.remove(&target_id);
-        self.target_id_to_ci_srcs_must_match.remove(&target_id);
+        self.target_id_to_deps.discard(&target_id);
+        self.target_id_to_ci_srcs.discard(&target_id);
+        self.target_id_to_ci_srcs_must_match.discard(&target_id);
         self.target_id_to_ci_deps_package_patterns
-            .remove(&target_id);
+            .discard(&target_id);
         self.target_id_to_ci_deps_recursive_patterns
-            .remove(&target_id);
-        self.targets_with_sudo_label.remove(&target_id);
-        self.minimized_targets.remove(&target_id);
+            .discard(&target_id);
+        self.targets_with_sudo_label.discard(&target_id);
+        self.minimized_targets.discard(&target_id);
     }
 
     /// The package a target is filed under, derived from its label: a label
@@ -893,12 +639,14 @@ impl TargetGraph {
         .flatten()
     }
 
-    /// Removes `target_id` from its derived package. Returns false if it is
-    /// not filed there, so the caller can fall back to scanning.
-    fn remove_target_from_derived_package(&self, target_id: TargetId) -> bool {
-        let Some(package_id) = self.package_of(target_id) else {
+    fn remove_target_from_package_id(&self, package_id: PackageId, target_id: TargetId) -> bool {
+        if !self
+            .package_id_to_targets
+            .get(&package_id)
+            .is_some_and(|targets| targets.contains_id(target_id))
+        {
             return false;
-        };
+        }
         let Some(mut targets) = self.package_id_to_targets.get_mut(&package_id) else {
             return false;
         };
@@ -906,29 +654,31 @@ impl TargetGraph {
             return false;
         };
         targets.swap_remove(pos);
-        if targets.is_empty() {
-            drop(targets);
-            self.package_id_to_targets.remove(&package_id);
+        let empty = targets.is_empty();
+        drop(targets);
+        if empty {
+            self.package_id_to_targets.discard(&package_id);
         }
         true
+    }
+
+    /// Removes `target_id` from its derived package. Returns false if it is
+    /// not filed there, so the caller can fall back to scanning.
+    fn remove_target_from_derived_package(&self, target_id: TargetId) -> bool {
+        self.package_of(target_id)
+            .is_some_and(|package| self.remove_target_from_package_id(package, target_id))
     }
 
     fn remove_target_from_package(&self, target_id: TargetId) {
         if self.remove_target_from_derived_package(target_id) {
             return;
         }
-        for mut entry in self.package_id_to_targets.iter_mut() {
-            let targets = entry.value_mut();
-            let Some(pos) = targets.iter().position(|&id| id == target_id) else {
-                continue;
-            };
-            targets.swap_remove(pos);
-            if targets.is_empty() {
-                let package_id = *entry.key();
-                drop(entry);
-                self.package_id_to_targets.remove(&package_id);
-            }
-            return;
+        let package = self
+            .package_id_to_targets
+            .iter()
+            .find_map(|row| row.contains_id(target_id).then_some(*row.key()));
+        if let Some(package) = package {
+            self.remove_target_from_package_id(package, target_id);
         }
     }
 
@@ -942,12 +692,12 @@ impl TargetGraph {
                     }
                     if ci_hints.is_empty() {
                         drop(ci_hints);
-                        self.affected_to_ci_hints.remove(&affected_target);
+                        self.affected_to_ci_hints.discard(&affected_target);
                     }
                 }
             }
         }
-        self.ci_hint_to_affected.remove(&target_id);
+        self.ci_hint_to_affected.discard(&target_id);
 
         // Clean up any regular dep edges (from ci_deps concrete labels)
         if let Some(deps) = self.get_deps(target_id) {
@@ -995,11 +745,11 @@ impl TargetGraph {
                 ci_hints.retain(|id| !targets_to_remove.contains(id));
                 if ci_hints.is_empty() {
                     drop(ci_hints);
-                    self.affected_to_ci_hints.remove(&affected_target);
+                    self.affected_to_ci_hints.discard(&affected_target);
                 }
             }
 
-            self.ci_hint_to_affected.remove(&target_id);
+            self.ci_hint_to_affected.discard(&target_id);
         }
     }
 
@@ -1026,23 +776,35 @@ impl TargetGraph {
         if unfiled.is_empty() {
             return;
         }
-        self.package_id_to_targets.retain(|_, targets| {
-            targets.retain(|id| !unfiled.contains(id));
-            !targets.is_empty()
-        });
+        let packages: Vec<_> = self
+            .package_id_to_targets
+            .iter()
+            .filter(|row| row.is_empty() || row.any_id(|id| unfiled.contains(&id)))
+            .map(|row| *row.key())
+            .collect();
+        for package in packages {
+            if let Some(mut targets) = self.package_id_to_targets.get_mut(&package) {
+                targets.retain(|id| !unfiled.contains(id));
+                let empty = targets.is_empty();
+                drop(targets);
+                if empty {
+                    self.package_id_to_targets.discard(&package);
+                }
+            }
+        }
     }
 
     fn clean_per_target_data(&self, targets_to_remove: &IdHashSet<TargetId>) {
         for &target_id in targets_to_remove {
-            self.target_id_to_deps.remove(&target_id);
-            self.target_id_to_ci_srcs.remove(&target_id);
-            self.target_id_to_ci_srcs_must_match.remove(&target_id);
+            self.target_id_to_deps.discard(&target_id);
+            self.target_id_to_ci_srcs.discard(&target_id);
+            self.target_id_to_ci_srcs_must_match.discard(&target_id);
             self.target_id_to_ci_deps_package_patterns
-                .remove(&target_id);
+                .discard(&target_id);
             self.target_id_to_ci_deps_recursive_patterns
-                .remove(&target_id);
-            self.targets_with_sudo_label.remove(&target_id);
-            self.minimized_targets.remove(&target_id);
+                .discard(&target_id);
+            self.targets_with_sudo_label.discard(&target_id);
+            self.minimized_targets.discard(&target_id);
         }
     }
 
@@ -1070,7 +832,7 @@ impl TargetGraph {
     }
 
     pub fn get_minimized_target(&self, id: TargetId) -> Option<MinimizedBuckTarget> {
-        let stored = self.minimized_targets.get(&id)?.clone();
+        let stored = self.minimized_targets.get(&id)?.to_owned_value();
         Some(MinimizedBuckTarget {
             rule_type: stored.rule_type,
             oncall: stored.oncall,
@@ -1080,52 +842,53 @@ impl TargetGraph {
     }
 
     /// Intern an ordered label sequence and return its id. Most calls hit an
-    /// already-interned sequence, so the shard is probed under a read lock
-    /// first.
+    /// already-interned sequence, so probe it before requesting mutable access.
     pub fn store_label_set(&self, labels: Vec<LabelId>) -> LabelSetId {
         let id = LabelSetId::of(&labels);
         if let Some(interned) = self.label_set_id_to_labels.get(&id) {
             debug_assert_eq!(
-                *interned, labels,
+                *interned.value(),
+                labels,
                 "two different label sequences hashed to {id:?}"
             );
             return id;
         }
-        match self.label_set_id_to_labels.entry(id) {
-            dashmap::mapref::entry::Entry::Occupied(interned) => {
-                debug_assert_eq!(
-                    *interned.get(),
-                    labels,
-                    "two different label sequences hashed to {id:?}"
-                );
-            }
-            dashmap::mapref::entry::Entry::Vacant(slot) => {
-                slot.insert(labels);
-            }
+        let entry = self.label_set_id_to_labels.entry(id);
+        if let Some(interned) = entry.get() {
+            debug_assert_eq!(
+                *interned, labels,
+                "two different label sequences hashed to {id:?}"
+            );
+        } else {
+            entry.or_insert(labels);
         }
         id
     }
 
     /// Runs `f` on an interned label sequence without cloning it. `f` runs
-    /// under the read lock of one `label_set_id_to_labels` shard, so it must
+    /// while possibly holding one `label_set_id_to_labels` read lock, so it must
     /// not intern another label set.
     ///
     /// Panics on an id that was never interned: every id in the graph comes
     /// from `store_label_set`, so an unknown one means the graph was built or
     /// loaded wrong, and treating it as "no labels" would silently drop the
     /// target's CI labels.
-    fn with_label_set<R>(&self, id: LabelSetId, f: impl FnOnce(&[LabelId]) -> R) -> R {
+    fn with_label_set<R>(
+        &self,
+        id: LabelSetId,
+        f: impl FnOnce(packed::ReadRef<'_, LabelSetId, Vec<LabelId>>) -> R,
+    ) -> R {
         let interned = self
             .label_set_id_to_labels
             .get(&id)
             .unwrap_or_else(|| panic!("label set {id:?} is not interned in this graph"));
-        f(interned.value())
+        f(interned)
     }
 
     /// The labels of an interned sequence. Panics on an unknown id, see
     /// `with_label_set`.
     pub fn get_label_set(&self, id: LabelSetId) -> Vec<LabelId> {
-        self.with_label_set(id, |labels| labels.to_vec())
+        self.with_label_set(id, |labels| labels.to_owned_value())
     }
 
     pub fn label_sets_len(&self) -> usize {
@@ -1155,7 +918,7 @@ impl TargetGraph {
     }
 
     pub fn unmark_target_has_sudo_label(&self, target_id: TargetId) {
-        self.targets_with_sudo_label.remove(&target_id);
+        self.targets_with_sudo_label.discard(&target_id);
     }
 
     pub fn has_sudo_label(&self, target_id: TargetId) -> bool {
@@ -1180,7 +943,7 @@ impl TargetGraph {
         let matching_sets: IdHashSet<LabelSetId> = self
             .label_set_id_to_labels
             .iter()
-            .filter(|entry| entry.value().iter().any(|lid| label_ids.contains(lid)))
+            .filter(|entry| entry.any_id(|lid| label_ids.contains(&lid)))
             .map(|entry| *entry.key())
             .collect();
         self.minimized_targets.iter().filter_map(move |entry| {
@@ -1216,30 +979,34 @@ impl TargetGraph {
     }
 
     pub fn get_file_rdeps(&self, file_id: FileId) -> Option<Vec<FileId>> {
-        self.file_id_to_rdeps.get(&file_id).map(|v| v.clone())
+        self.file_id_to_rdeps
+            .get(&file_id)
+            .map(|v| v.to_owned_value())
     }
 
     pub fn contains_file(&self, file_id: FileId) -> bool {
         self.file_id_to_path.contains_key(&file_id)
     }
 
-    /// Runs `f` on the file path without cloning or interning it. `f` runs
-    /// under the read lock of one `file_id_to_path` shard, so it must not call
+    /// Runs `f` on the file path without cloning or interning it. `f` can hold
+    /// a read lock of one `file_id_to_path` shard, so it must not call
     /// a method that writes to that map (`store_file`, `remove_file`, ...),
     /// which would deadlock on the same shard. Nested reads are fine.
     pub fn with_file_path<R>(&self, file_id: FileId, f: impl FnOnce(&str) -> R) -> Option<R> {
         self.file_id_to_path
             .get(&file_id)
-            .map(|path| f(path.as_str()))
+            .map(|path| f(path.text()))
     }
 
     pub fn get_file_deps(&self, file_id: FileId) -> Option<Vec<FileId>> {
-        self.file_id_to_deps.get(&file_id).map(|v| v.clone())
+        self.file_id_to_deps
+            .get(&file_id)
+            .map(|v| v.to_owned_value())
     }
 
     pub fn set_file_deps(&self, importer: FileId, deps: Vec<FileId>) {
         if deps.is_empty() {
-            self.file_id_to_deps.remove(&importer);
+            self.file_id_to_deps.discard(&importer);
         } else {
             self.file_id_to_deps.insert(importer, deps);
         }
@@ -1259,7 +1026,7 @@ impl TargetGraph {
             }
             if rdeps.is_empty() {
                 drop(rdeps);
-                self.file_id_to_rdeps.remove(&imported);
+                self.file_id_to_rdeps.discard(&imported);
             }
         }
     }
@@ -1273,7 +1040,7 @@ impl TargetGraph {
                     }
                     if rdeps.is_empty() {
                         drop(rdeps);
-                        self.file_id_to_rdeps.remove(&dep);
+                        self.file_id_to_rdeps.discard(&dep);
                     }
                 }
             }
@@ -1354,7 +1121,7 @@ impl TargetGraph {
     pub fn get_targets_in_package(&self, package_id: PackageId) -> Option<Vec<TargetId>> {
         self.package_id_to_targets
             .get(&package_id)
-            .map(|v| v.clone())
+            .map(|v| v.to_owned_value())
     }
 
     pub fn iter_packages_with_targets(&self) -> impl Iterator<Item = (PackageId, String)> + '_ {
@@ -1383,7 +1150,7 @@ impl TargetGraph {
             }
             if affected.is_empty() {
                 drop(affected);
-                self.ci_hint_to_affected.remove(&ci_hint_id);
+                self.ci_hint_to_affected.discard(&ci_hint_id);
             }
         }
         if let Some(mut ci_hints) = self.affected_to_ci_hints.get_mut(&affected_target) {
@@ -1392,17 +1159,21 @@ impl TargetGraph {
             }
             if ci_hints.is_empty() {
                 drop(ci_hints);
-                self.affected_to_ci_hints.remove(&affected_target);
+                self.affected_to_ci_hints.discard(&affected_target);
             }
         }
     }
 
     pub fn get_ci_hint_affected(&self, ci_hint_id: TargetId) -> Option<Vec<TargetId>> {
-        self.ci_hint_to_affected.get(&ci_hint_id).map(|v| v.clone())
+        self.ci_hint_to_affected
+            .get(&ci_hint_id)
+            .map(|v| v.to_owned_value())
     }
 
     pub fn get_affecting_ci_hints(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
-        self.affected_to_ci_hints.get(&target_id).map(|v| v.clone())
+        self.affected_to_ci_hints
+            .get(&target_id)
+            .map(|v| v.to_owned_value())
     }
 
     pub fn get_all_dependents(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
@@ -1425,12 +1196,6 @@ impl TargetGraph {
     }
 }
 
-impl Default for TargetGraph {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Graphs passed to [`TargetGraph::keep_until_exit`]. Rust never drops a
 /// static, and the static keeps each graph reachable, so LeakSanitizer does
 /// not report it.
@@ -1439,9 +1204,8 @@ static KEPT_UNTIL_EXIT: Mutex<Vec<TargetGraph>> = Mutex::new(Vec::new());
 impl TargetGraph {
     /// Keeps the graph alive until the process exits, and never frees it.
     ///
-    /// Freeing a production graph walks tens of millions of allocations,
-    /// which takes time even in parallel. The graph owns nothing but memory,
-    /// and the kernel reclaims the whole address space at exit much faster.
+    /// The graph owns only memory. The kernel can reclaim that address space
+    /// directly at exit, including mutable rows and packed buffers.
     /// Call this only from a command's entry point, right before the process
     /// exits.
     pub fn keep_until_exit(self) {
@@ -1450,83 +1214,6 @@ impl TargetGraph {
             .unwrap_or_else(PoisonError::into_inner)
             .push(self);
     }
-}
-
-/// Keeps small graphs with several shards per field, such as test graphs, off
-/// the threads. Estimated from the free time of a production graph of 27M
-/// targets, a graph below this size frees in about 5 ms on one thread.
-const PARALLEL_DROP_TARGETS: usize = 100_000;
-/// Threads that free a large graph, counting the dropping thread. On a
-/// production graph of 27M targets read from a file, more threads stopped
-/// helping at about 64.
-const DROP_THREADS: usize = 64;
-
-/// Frees the shards of every field on short-lived threads, because a large
-/// graph holds tens of millions of small allocations. Each shard is one unit
-/// of work. Dedicated threads, not the rayon pool, keep an implicit drop
-/// independent of the pool's work and of the locks that the dropping thread
-/// holds.
-impl Drop for TargetGraph {
-    fn drop(&mut self) {
-        self.free_shards_on_threads(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
-    }
-}
-
-impl TargetGraph {
-    /// Frees the shards on threads if `free_threads` chooses more than one.
-    /// Leaves every field without shards in that case, so only `Drop` and
-    /// tests call it.
-    fn free_shards_on_threads(&mut self, parallelism: impl FnOnce() -> usize) {
-        let threads = free_threads(self.targets_len(), self.shard_count(), parallelism);
-        if threads <= 1 {
-            return;
-        }
-        let mut shards = self.take_all_shards();
-        // Threads take shards from the end, so the largest shards start first.
-        shards.sort_unstable_by_key(|(entries, _)| *entries);
-        free_in_parallel(shards, threads);
-    }
-}
-
-/// Threads that free a graph of `targets` targets in `shards` shards,
-/// counting the dropping thread. One means that the dropping thread frees the
-/// graph alone, as for any value.
-///
-/// Only a field with more than 1.5M entries is read from a file as several
-/// shards, usually by several decoding threads, so more shards than fields
-/// marks a large graph read from a file. A graph with one shard per field,
-/// loaded from JSON, freed more slowly on threads than on the dropping thread.
-fn free_threads(targets: usize, shards: usize, parallelism: impl FnOnce() -> usize) -> usize {
-    if targets < PARALLEL_DROP_TARGETS || shards <= NUM_FIELDS {
-        return 1;
-    }
-    parallelism().min(DROP_THREADS).min(shards)
-}
-
-/// Frees `items` on `threads` threads, counting the calling thread. Threads
-/// take items from the end of `items`.
-fn free_in_parallel<T: Send>(items: Vec<T>, threads: usize) {
-    let items = Mutex::new(items);
-    // The lock guard ends inside `next`, so items free concurrently.
-    let next = || items.lock().unwrap_or_else(PoisonError::into_inner).pop();
-    let free = || {
-        while let Some(item) = next() {
-            drop(item);
-        }
-    };
-    std::thread::scope(|scope| {
-        for _ in 1..threads {
-            // If a thread fails to start, the calling thread frees its share.
-            if let Err(err) = std::thread::Builder::new()
-                .name("tgraph-drop".to_owned())
-                .spawn_scoped(scope, free)
-            {
-                tracing::warn!("freeing the target graph on fewer threads: {err}");
-                break;
-            }
-        }
-        free();
-    });
 }
 
 #[cfg(test)]
@@ -1550,87 +1237,6 @@ mod tests {
             kept.iter()
                 .any(|graph| graph.get_target_label(target).as_deref() == Some("//pkg:kept"))
         );
-    }
-
-    #[rstest]
-    #[case::small_graph(PARALLEL_DROP_TARGETS - 1, 4 * NUM_FIELDS, 192, 1)]
-    #[case::one_shard_per_field(PARALLEL_DROP_TARGETS, NUM_FIELDS, 192, 1)]
-    #[case::capped_by_constant(PARALLEL_DROP_TARGETS, 4 * NUM_FIELDS, 192, DROP_THREADS)]
-    #[case::capped_by_parallelism(PARALLEL_DROP_TARGETS, 4 * NUM_FIELDS, 8, 8)]
-    #[case::capped_by_shards(PARALLEL_DROP_TARGETS, NUM_FIELDS + 1, 192, NUM_FIELDS + 1)]
-    fn free_threads_parallelizes_only_large_multi_shard_graphs(
-        #[case] targets: usize,
-        #[case] shards: usize,
-        #[case] parallelism: usize,
-        #[case] expected: usize,
-    ) {
-        assert_eq!(free_threads(targets, shards, || parallelism), expected);
-    }
-
-    /// A large graph with a multi-shard field takes the threaded path, which
-    /// frees every shard.
-    #[test]
-    fn a_large_multi_shard_graph_frees_on_threads() {
-        let mut graph = TargetGraph::new();
-        graph.target_id_to_label = ShardedField::new(4);
-        for i in 0..PARALLEL_DROP_TARGETS {
-            graph.store_target(&format!("//pkg:t{i}"));
-        }
-        graph.free_shards_on_threads(|| 8);
-        assert_eq!(graph.shard_count(), 0);
-    }
-
-    /// Each item waits in its drop until `threads` items are being dropped at
-    /// the same time. There are twice as many items as threads, so each thread
-    /// must also keep taking items. A wait that times out fails the test
-    /// instead of hanging it.
-    #[test]
-    fn free_in_parallel_frees_items_concurrently() {
-        use std::sync::Arc;
-        use std::sync::Condvar;
-        use std::sync::atomic::AtomicBool;
-        use std::sync::atomic::Ordering;
-        use std::time::Duration;
-
-        struct Gate {
-            arrived: Mutex<usize>,
-            changed: Condvar,
-            group: usize,
-            timed_out: AtomicBool,
-        }
-        struct Rendezvous(Arc<Gate>);
-        impl Drop for Rendezvous {
-            fn drop(&mut self) {
-                let gate = &self.0;
-                if gate.timed_out.load(Ordering::Relaxed) {
-                    return;
-                }
-                let mut arrived = gate.arrived.lock().unwrap();
-                *arrived += 1;
-                let group_end = arrived.div_ceil(gate.group) * gate.group;
-                gate.changed.notify_all();
-                let (arrived, wait) = gate
-                    .changed
-                    .wait_timeout_while(arrived, Duration::from_secs(30), |a| *a < group_end)
-                    .unwrap();
-                drop(arrived);
-                if wait.timed_out() {
-                    gate.timed_out.store(true, Ordering::Relaxed);
-                }
-            }
-        }
-
-        let threads = 8;
-        let gate = Arc::new(Gate {
-            arrived: Mutex::new(0),
-            changed: Condvar::new(),
-            group: threads,
-            timed_out: AtomicBool::new(false),
-        });
-        let items = (0..2 * threads).map(|_| Rendezvous(gate.clone())).collect();
-        free_in_parallel(items, threads);
-        assert!(!gate.timed_out.load(Ordering::Relaxed));
-        assert_eq!(*gate.arrived.lock().unwrap(), 2 * threads);
     }
 
     fn build_distinguishing_graph() -> TargetGraph {
@@ -1979,11 +1585,11 @@ mod tests {
         graph.store_minimized_target(target, minimized);
         let stored = graph.minimized_targets.get(&target).unwrap();
 
-        let json = serde_json::to_value(&*stored).unwrap();
+        let json = serde_json::to_value(stored.value()).unwrap();
         assert_eq!(json["target_hash"], hash_text);
         assert_eq!(
             serde_json::from_value::<StoredMinimizedTarget>(json).unwrap(),
-            *stored
+            *stored.value()
         );
     }
 
@@ -3016,110 +2622,5 @@ mod tests {
         graph.batch_update_rdeps(rdep_map(&[(dep, t1)]), rdep_map(&[]));
 
         assert_eq!(graph.get_rdeps(dep).unwrap(), vec![t1]);
-    }
-
-    #[rstest]
-    #[case::empty(0, 1)]
-    #[case::tiny(1, 1)]
-    #[case::just_under(1_499_999, 1)]
-    #[case::single_shard_boundary(1_500_000, 1)]
-    #[case::just_over(1_500_001, 2)]
-    #[case::four_shards(6_000_000, 4)]
-    #[case::eight_shards(12_000_000, 8)]
-    #[case::clamps_to_max(1_000_000_000, 16)]
-    fn pick_shard_count_picks_within_bounds(#[case] entries: usize, #[case] expected: usize) {
-        assert_eq!(pick_shard_count(entries), expected);
-    }
-
-    #[rstest]
-    #[case(1)]
-    #[case(4)]
-    #[case(16)]
-    fn shard_index_stays_in_bounds(#[case] shard_count: usize) {
-        for raw_id in 0..1000u64 {
-            let target_id = TargetId(raw_id);
-            assert!(target_id.shard_index(shard_count) < shard_count);
-        }
-    }
-
-    #[rstest]
-    #[case(1)]
-    #[case(4)]
-    #[case(8)]
-    fn sharded_field_routes_inserts_to_id_modulo_shard(#[case] shard_count: usize) {
-        let field: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(shard_count);
-        for raw_id in 0..200u64 {
-            let target_id = TargetId(raw_id);
-            field.insert(target_id, format!("v{raw_id}"));
-        }
-
-        for raw_id in 0..200u64 {
-            let target_id = TargetId(raw_id);
-            let expected_shard = target_id.shard_index(shard_count);
-            assert!(
-                field.shards()[expected_shard].contains_key(&target_id),
-                "id {raw_id} should be in shard {expected_shard}",
-            );
-            for (other_shard, shard) in field.shards().iter().enumerate() {
-                if other_shard != expected_shard {
-                    assert!(
-                        !shard.contains_key(&target_id),
-                        "id {raw_id} should NOT be in shard {other_shard}",
-                    );
-                }
-            }
-        }
-    }
-
-    #[rstest]
-    #[case(1)]
-    #[case(4)]
-    #[case(8)]
-    fn sharded_field_get_returns_inserted_values(#[case] shard_count: usize) {
-        let field: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(shard_count);
-        for raw_id in 0..50u64 {
-            field.insert(TargetId(raw_id), format!("v{raw_id}"));
-        }
-
-        for raw_id in 0..50u64 {
-            assert_eq!(
-                field.get(&TargetId(raw_id)).map(|v| v.clone()),
-                Some(format!("v{raw_id}"))
-            );
-        }
-        assert_eq!(field.len(), 50);
-        assert!(!field.is_empty());
-    }
-
-    #[rstest]
-    #[case(1)]
-    #[case(4)]
-    #[case(8)]
-    fn sharded_field_round_trips_through_json(#[case] shard_count: usize) {
-        let original: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(shard_count);
-        for raw_id in 0..200u64 {
-            original.insert(TargetId(raw_id), format!("v{raw_id}"));
-        }
-
-        let encoded = serde_json::to_vec(&original).unwrap();
-        let decoded: ShardedField<IdDashMap<TargetId, String>> =
-            serde_json::from_slice(&encoded).unwrap();
-
-        assert_eq!(decoded.shards().len(), 1);
-        assert_eq!(decoded.len(), 200);
-        for raw_id in 0..200u64 {
-            assert_eq!(
-                decoded.get(&TargetId(raw_id)).map(|v| v.clone()),
-                Some(format!("v{raw_id}"))
-            );
-        }
-    }
-
-    #[test]
-    fn sharded_field_new_with_zero_shards_panics() {
-        let result = std::panic::catch_unwind(|| {
-            let _: ShardedField<IdDashMap<TargetId, String>> = ShardedField::new(0);
-        });
-        assert!(result.is_err());
     }
 }

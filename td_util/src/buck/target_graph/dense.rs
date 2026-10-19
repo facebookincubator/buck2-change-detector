@@ -32,12 +32,15 @@
 use std::fs::File;
 use std::io::Write;
 use std::ops::Range;
+use std::sync::Arc;
 
 use anyhow::Context;
-use dashmap::mapref::multiple::RefMulti;
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::packed::Chunk;
+use super::packed::INDEX_BYTES;
+use super::packed::ReadRef;
 use super::*;
 
 /// Every layout of the graph file starts with this magic and the schema
@@ -62,6 +65,8 @@ const MAX_PART_BYTES: u64 = 1 << 30;
 const MAX_DIRECTORY_BYTES: usize = 64 << 20;
 /// Edge lists longer than this are mapped and sorted in parallel.
 const HUB_LIST: usize = 1 << 16;
+const HEX_HASH_TAG: u8 = 0;
+const TEXT_HASH_TAG: u8 = 1;
 
 /// Block sizes. Smaller blocks decode with more parallelism; larger blocks
 /// compress better.
@@ -176,6 +181,7 @@ fn unzigzag(x: u64) -> i64 {
     ((x >> 1) as i64) ^ -((x & 1) as i64)
 }
 
+#[derive(Clone, Copy)]
 struct Cursor<'a> {
     b: &'a [u8],
     i: usize,
@@ -400,10 +406,10 @@ impl IdIndex {
 
 /// One id space as numbered on disk: its strings in sorted order, then the
 /// ids that some field references but no string defines ("extras"), in id
-/// order. Holds read guards on the graph, so strings are never copied.
-struct Table<'g, K> {
+/// order. Borrows graph strings while assigning their disk indices.
+struct Table<'g, K: RawId> {
     name: &'static str,
-    refs: Vec<RefMulti<'g, K, String>>,
+    refs: Vec<ReadRef<'g, K, String>>,
     extras: Vec<u64>,
     /// The on-disk index of each string's id.
     index: IdIndex,
@@ -412,15 +418,12 @@ struct Table<'g, K> {
 }
 
 impl<'g, K: RawId> Table<'g, K> {
-    fn build(
-        name: &'static str,
-        field: &'g ShardedField<IdDashMap<K, String>>,
-    ) -> anyhow::Result<Self> {
-        let mut refs: Vec<RefMulti<'g, K, String>> = field.par_iter().collect();
-        refs.par_sort_unstable_by(|a, b| a.value().cmp(b.value()));
+    fn build(name: &'static str, field: &'g Map<K, String>) -> anyhow::Result<Self> {
+        let mut refs: Vec<ReadRef<'g, K, String>> = field.par_iter().collect();
+        refs.par_sort_unstable_by(|a, b| a.text_bytes().cmp(b.text_bytes()));
         let bad = refs
             .par_iter()
-            .filter(|r| id_of::<K>(r.value()) != *r.key())
+            .filter(|r| id_of::<K>(r.text()) != *r.key())
             .count();
         anyhow::ensure!(
             bad == 0,
@@ -457,15 +460,17 @@ impl<'g, K: RawId> Table<'g, K> {
     }
 
     /// The list values of `field` that this table has no string for.
-    fn missing_values<J: RawId>(&self, field: &ShardedField<IdDashMap<J, Vec<K>>>) -> Vec<u64> {
+    fn missing_values<J: RawId>(&self, field: &Map<J, Vec<K>>) -> Vec<u64> {
         field
             .par_iter()
             .flat_map_iter(|e| {
-                e.value()
-                    .iter()
-                    .map(|v| v.raw())
-                    .filter(|&id| !self.contains(id))
-                    .collect::<Vec<_>>()
+                let mut missing = Vec::new();
+                e.for_each_id(|id| {
+                    if !self.contains(id.raw()) {
+                        missing.push(id.raw());
+                    }
+                });
+                missing
             })
             .collect()
     }
@@ -512,15 +517,15 @@ struct Tables<'g> {
 /// writer collects the ids without a string in it; the reader stores each
 /// table's ids in on-disk order, so index i of a table is the id at position i.
 #[derive(Default)]
-struct Ids {
-    target: Vec<u64>,
-    rule: Vec<u64>,
-    oncall: Vec<u64>,
-    label: Vec<u64>,
-    glob: Vec<u64>,
-    package: Vec<u64>,
-    file: Vec<u64>,
-    cidep: Vec<u64>,
+struct Ids<T = Vec<u64>> {
+    target: T,
+    rule: T,
+    oncall: T,
+    label: T,
+    glob: T,
+    package: T,
+    file: T,
+    cidep: T,
 }
 
 impl<'g> Tables<'g> {
@@ -559,7 +564,7 @@ impl<'g> Tables<'g> {
     /// collected before any stream takes an index, so numbering is
     /// deterministic.
     fn missing(&self, g: &TargetGraph) -> Ids {
-        let mut missing = Ids::default();
+        let mut missing: Ids = Ids::default();
         macro_rules! lists {
             ($(($name:literal, $field:ident, $k:ident, $v:ident, $mode:ident)),* $(,)?) => {$(
                 missing
@@ -648,18 +653,18 @@ fn balanced_ranges(weights: &[u32], layout: Layout) -> Vec<(Range<usize>, u64)> 
 }
 
 /// How `Rows` walks a map in key order.
-enum Order<'f, K, V> {
+enum Order<'f, K: RawId, V: packed::Value> {
     /// By key-table index with point lookups, for a field that covers most of
     /// its table. Marks the indices that the field holds.
     ByTable(Vec<bool>),
     /// The field's entries, collected and sorted by key index.
-    Sorted(Vec<(u32, RefMulti<'f, K, V>)>),
+    Sorted(Vec<(u32, ReadRef<'f, K, V>)>),
 }
 
-/// The entries of a map in on-disk key order, cut into blocks. Values are
-/// never copied.
-struct Rows<'f, 't, 'g, K, V> {
-    field: &'f ShardedField<IdDashMap<K, V>>,
+/// The entries of a map in disk-key order, cut into blocks. Planning and
+/// encoding choose a borrowed view or an owned value for each field.
+struct Rows<'f, 't, 'g, K: RawId, V: packed::Value> {
+    field: &'f Map<K, V>,
     keys: &'t Table<'g, K>,
     order: Order<'f, K, V>,
     blocks: Vec<(Range<usize>, u64)>,
@@ -668,20 +673,20 @@ struct Rows<'f, 't, 'g, K, V> {
 impl<'f, 't, 'g, K, V> Rows<'f, 't, 'g, K, V>
 where
     K: RawId,
-    V: Send + Sync,
+    V: packed::Value,
 {
     fn new(
-        field: &'f ShardedField<IdDashMap<K, V>>,
+        field: &'f Map<K, V>,
         keys: &'t Table<'g, K>,
         layout: Layout,
-        weight: impl Fn(&V) -> usize + Sync,
+        weight: impl Fn(&ReadRef<'_, K, V>) -> usize + Sync,
     ) -> Self {
         let clamp = |w: usize| w.min(ABSENT as usize - 1) as u32;
         let n = keys.len();
         let (order, weights) = if field.len() * 2 > n {
             let weighted: Vec<(u32, u32)> = field
                 .par_iter()
-                .map(|e| (keys.index_of(e.key().raw()), clamp(weight(e.value()))))
+                .map(|e| (keys.index_of(e.key().raw()), clamp(weight(&e))))
                 .collect();
             let mut weights = vec![ABSENT; n];
             for (i, w) in weighted {
@@ -690,12 +695,12 @@ where
             let present = weights.iter().map(|&w| w != ABSENT).collect();
             (Order::ByTable(present), weights)
         } else {
-            let mut rows: Vec<(u32, RefMulti<'f, K, V>)> = field
+            let mut rows: Vec<(u32, ReadRef<'f, K, V>)> = field
                 .par_iter()
                 .map(|r| (keys.index_of(r.key().raw()), r))
                 .collect();
             rows.par_sort_unstable_by_key(|r| r.0);
-            let weights = rows.iter().map(|r| clamp(weight(r.1.value()))).collect();
+            let weights = rows.iter().map(|r| clamp(weight(&r.1))).collect();
             (Order::Sorted(rows), weights)
         };
         let blocks = balanced_ranges(&weights, layout);
@@ -707,12 +712,12 @@ where
         }
     }
 
-    /// Calls `f(key_index, value)` for each entry of a range, in order.
-    fn visit(&self, range: Range<usize>, mut f: impl FnMut(u32, &V)) {
+    /// Calls `f(key_index, row)` for each entry of a range, in order.
+    fn visit(&self, range: Range<usize>, mut f: impl FnMut(u32, &ReadRef<'_, K, V>)) {
         match &self.order {
             Order::Sorted(rows) => {
                 for (k, r) in &rows[range] {
-                    f(*k, r.value());
+                    f(*k, r);
                 }
             }
             Order::ByTable(present) => {
@@ -721,21 +726,21 @@ where
                         .field
                         .get(&K::from_raw(self.keys.id_at(i)))
                         .expect("the graph is not mutated while it is written");
-                    f(i as u32, r.value());
+                    f(i as u32, &r);
                 }
             }
         }
     }
 
     /// One block per range. The first index region holds the key gaps;
-    /// `encode(key_index, value, index_regions, data_regions)` appends the
+    /// `encode(key_index, row, index_regions, data_regions)` appends the
     /// rest of one entry.
     fn blocks<'s, const I: usize, const D: usize, F>(
         &'s self,
         encode: F,
     ) -> impl IndexedParallelIterator<Item = RawBlock> + 's
     where
-        F: Fn(u32, &V, &mut [Vec<u8>; I], &mut [Vec<u8>; D]) + Send + Sync + 's,
+        F: Fn(u32, &ReadRef<'_, K, V>, &mut [Vec<u8>; I], &mut [Vec<u8>; D]) + Send + Sync + 's,
     {
         self.blocks.par_iter().map(move |(range, entries)| {
             let mut keys = Vec::new();
@@ -768,7 +773,7 @@ fn string_blocks<'t, K: RawId>(
         let mut bytes = Vec::new();
         let mut prev: &[u8] = &[];
         for r in chunk {
-            let s = r.value().as_bytes();
+            let s = r.text_bytes();
             let p = prev
                 .iter()
                 .zip(s.iter())
@@ -788,29 +793,32 @@ fn string_blocks<'t, K: RawId>(
 }
 
 /// Appends one edge list as on-disk value indices in `mode`.
-fn put_list<V: RawId>(
+fn put_list<K: RawId, V: RawId>(
     out: &mut Vec<u8>,
     key: u32,
-    list: &[V],
+    list: &ReadRef<'_, K, Vec<V>>,
     values: &Table<'_, V>,
     mode: ListMode,
 ) {
     let sorted = || -> Vec<u32> {
-        if list.len() > HUB_LIST {
-            let mut indices: Vec<u32> = list.par_iter().map(|v| values.index_of(v.raw())).collect();
+        if list.ids_len() > HUB_LIST {
+            let mut indices: Vec<u32> = list
+                .value()
+                .par_iter()
+                .map(|v| values.index_of(v.raw()))
+                .collect();
             indices.par_sort_unstable();
             indices
         } else {
-            let mut indices: Vec<u32> = list.iter().map(|v| values.index_of(v.raw())).collect();
+            let mut indices = Vec::with_capacity(list.ids_len());
+            list.for_each_id(|v| indices.push(values.index_of(v.raw())));
             indices.sort_unstable();
             indices
         }
     };
     match mode {
         ListMode::Raw => {
-            for v in list {
-                put(out, values.index_of(v.raw()) as u64);
-            }
+            list.for_each_id(|v| put(out, values.index_of(v.raw()) as u64));
         }
         ListMode::Abs32 => {
             for x in sorted() {
@@ -1010,7 +1018,7 @@ impl<'w> FileWriter<'w> {
     fn list<K, V>(
         &mut self,
         name: &str,
-        field: &ShardedField<IdDashMap<K, Vec<V>>>,
+        field: &Map<K, Vec<V>>,
         keys: &Table<'_, K>,
         values: &Table<'_, V>,
         mode: ListMode,
@@ -1019,9 +1027,9 @@ impl<'w> FileWriter<'w> {
         K: RawId,
         V: RawId,
     {
-        let rows = Rows::new(field, keys, self.layout, Vec::len);
+        let rows = Rows::new(field, keys, self.layout, |row| row.ids_len());
         let blocks = rows.blocks::<1, 1, _>(|k, list, [counts], [out]| {
-            put(counts, list.len() as u64);
+            put(counts, list.ids_len() as u64);
             put_list(out, k, list, values, mode);
         });
         self.push(name.to_owned(), Some(mode), blocks)
@@ -1072,7 +1080,7 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
     );
     let bad_label_sets = label_set_id_to_labels
         .par_iter()
-        .filter(|e| LabelSetId::of(e.value()) != *e.key())
+        .filter(|e| LabelSetId::of(&e.value()) != *e.key())
         .count();
     anyhow::ensure!(
         bad_label_sets == 0,
@@ -1095,8 +1103,9 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
     let mut label_sets: Vec<(Vec<u32>, u64)> = label_set_id_to_labels
         .par_iter()
         .map(|e| {
-            let labels = e.value().iter().map(|x| tables.label.index_of(x.raw()));
-            (labels.collect(), e.key().raw())
+            let mut labels = Vec::with_capacity(e.ids_len());
+            e.for_each_id(|id| labels.push(tables.label.index_of(id.raw())));
+            (labels, e.key().raw())
         })
         .collect();
     label_sets.par_sort_unstable();
@@ -1123,6 +1132,7 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
 
     let rows = Rows::new(minimized_targets, &tables.target, layout, |_| 1);
     let blocks = rows.blocks::<0, 6, _>(|_, m, [], [rule, oncall, label_set, tag, hash, text]| {
+        let m = m.value();
         put(rule, tables.rule.index_of(m.rule_type.raw()) as u64);
         let oncall_index = m
             .oncall
@@ -1134,11 +1144,11 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
         put(label_set, set as u64);
         match m.target_hash.as_hex128() {
             Some(b) => {
-                tag.push(0);
+                tag.push(HEX_HASH_TAG);
                 hash.extend_from_slice(b);
             }
             None => {
-                tag.push(1);
+                tag.push(TEXT_HASH_TAG);
                 m.target_hash.with_str(|s| {
                     put(text, s.len() as u64);
                     text.extend_from_slice(s.as_bytes());
@@ -1177,15 +1187,13 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
         }),
     )?;
 
-    let rows = Rows::new(
-        package_id_to_errors,
-        &tables.package,
-        layout,
-        |m: &Vec<String>| m.iter().map(String::len).sum(),
-    );
+    let rows = Rows::new(package_id_to_errors, &tables.package, layout, |m| {
+        m.value().iter().map(String::len).sum()
+    });
     let blocks = rows.blocks::<1, 1, _>(|_, v, [counts], [messages]| {
+        let v = v.value();
         put(counts, v.len() as u64);
-        for s in v {
+        for s in v.as_ref() {
             put(messages, s.len() as u64);
             messages.extend_from_slice(s.as_bytes());
         }
@@ -1236,10 +1244,6 @@ fn decode_directory(raw: &[u8]) -> anyhow::Result<Directory> {
     );
     Ok(dir)
 }
-
-/// Checks whether the read was cancelled. The reader takes a trait object so
-/// that it is compiled once, here, and not again in every calling crate.
-type CheckCancelled<'a> = dyn Fn() -> anyhow::Result<()> + Sync + 'a;
 
 /// Reads the header, trailer and directory. Checks that the block parts tile
 /// the data region and that no part claims more than `MAX_PART_BYTES`.
@@ -1411,26 +1415,41 @@ impl<'a> Reader<'a> {
         Ok(ids)
     }
 
-    /// Decodes a string table into its id array (strings, then extras) and the
-    /// id -> string map.
-    fn table<K: RawId>(
-        self,
-        name: &str,
-    ) -> anyhow::Result<(Vec<u64>, ShardedField<IdDashMap<K, String>>)> {
+    /// Decode each block into an arena without allocating one String per row.
+    fn table<K: RawId>(self, name: &str) -> anyhow::Result<(Vec<u64>, Vec<Chunk>)> {
         let extras = self.extras(name)?;
         let stream = self.stream(&format!("str/{name}"))?;
-        let field = new_field::<K, String>(stream.entries());
-        let mut ids = Vec::with_capacity(stream.entries() + extras.len());
-        ids.resize(stream.entries(), 0u64);
-        stream.decode_blocks(&mut ids, |index, data, slot| {
+        let chunks = stream.packed_blocks(|index, data, n| {
             let mut index = cursors(index, 2)?;
             let mut data = cursors(data, 1)?;
             let [prefix, suffix] = index.as_mut_slice() else {
-                unreachable!("cursors returned two regions")
+                unreachable!()
             };
-            let bytes = &mut data[0];
-            let mut prev: Vec<u8> = Vec::new();
-            for id_slot in slot.iter_mut() {
+            let mut chunk = Chunk::new(n);
+            let (mut p, mut suffix_len) = (*prefix, *suffix);
+            let (mut previous, mut total, mut suffix_total) = (0usize, 0usize, 0usize);
+            for _ in 0..n {
+                let shared = p.index()?;
+                let suffix = suffix_len.index()?;
+                anyhow::ensure!(
+                    shared <= previous,
+                    "shared prefix longer than the previous string"
+                );
+                suffix_total = suffix_total
+                    .checked_add(suffix)
+                    .context("string size overflow")?;
+                anyhow::ensure!(
+                    suffix_total <= data[0].remaining(),
+                    "truncated string bytes"
+                );
+                previous = shared.checked_add(suffix).context("string size overflow")?;
+                total = total
+                    .checked_add(previous)
+                    .context("string arena overflow")?;
+            }
+            chunk.data.try_reserve_exact(total)?;
+            let mut prev = Vec::new();
+            for _ in 0..n {
                 let p = prefix.index()?;
                 anyhow::ensure!(
                     p <= prev.len(),
@@ -1438,18 +1457,32 @@ impl<'a> Reader<'a> {
                 );
                 let n = suffix.index()?;
                 prev.truncate(p);
-                prev.extend_from_slice(bytes.bytes(n)?);
-                let string = String::from_utf8(prev.clone()).context("string is not UTF-8")?;
-                let id: K = id_of(&string);
-                *id_slot = id.raw();
-                field.insert(id, string);
+                prev.extend_from_slice(data[0].bytes(n)?);
+                let string = std::str::from_utf8(&prev).context("string is not UTF-8")?;
+                let id: K = id_of(string);
+                chunk.data.extend_from_slice(&prev);
+                chunk.finish_row(id.raw());
             }
             anyhow::ensure!(all_done(&[&index, &data]), "trailing bytes");
-            Ok(())
+            Ok(chunk)
         })?;
-        stream.check_distinct(field.len())?;
+        let capacity = stream
+            .entries()
+            .checked_add(extras.len())
+            .context("ID table size overflow")?;
+        let mut ids = Vec::with_capacity(capacity);
+        ids.extend(chunks.iter().flat_map(|c| c.keys.iter().copied()));
         ids.extend(extras);
-        Ok((ids, field))
+        Ok((ids, chunks))
+    }
+
+    fn table_field<K: RawId>(
+        self,
+        name: &str,
+        chunks: Vec<Chunk>,
+    ) -> anyhow::Result<Map<K, String>> {
+        Map::from_chunks(chunks, self.check_cancelled)
+            .with_context(|| format!("building runtime field str/{name}"))
     }
 
     /// Decodes an edge list with the list mode that the directory stores.
@@ -1457,23 +1490,46 @@ impl<'a> Reader<'a> {
         self,
         name: &str,
         key_ids: &[u64],
-        value_ids: &[u64],
-    ) -> anyhow::Result<ShardedField<IdDashMap<K, Vec<V>>>> {
+        value_ids: Arc<Vec<u64>>,
+    ) -> anyhow::Result<Map<K, Vec<V>>> {
         let stream = self.stream(name)?;
         let mode = stream
             .stream
             .mode
             .with_context(|| format!("{name} has no list mode"))?;
-        let field = new_field::<K, Vec<V>>(stream.entries());
-        stream.decode_entries(1, 1, |key, index, data| {
+        let chunks = stream.packed_entries(1, 1, |key, index, data, chunk| {
             let values = &mut data[0];
             let n = index[0].count(values)?;
-            let mut list = Vec::with_capacity(n);
+            if chunk.keys.is_empty() {
+                let mut remaining = index[0];
+                let mut total = n;
+                while !remaining.done() {
+                    total = total
+                        .checked_add(remaining.index()?)
+                        .context("list arena overflow")?;
+                }
+                let minimum = if mode == ListMode::Abs32 {
+                    size_of::<u32>()
+                } else {
+                    1
+                };
+                anyhow::ensure!(
+                    total <= values.remaining() / minimum,
+                    "truncated list values"
+                );
+                chunk.data.try_reserve_exact(
+                    total
+                        .checked_mul(INDEX_BYTES)
+                        .context("list arena overflow")?,
+                )?;
+            }
             let mut prev = 0u64;
             for j in 0..n {
                 let i = match mode {
                     ListMode::Raw => values.get()?,
-                    ListMode::Abs32 => u32::from_le_bytes(values.array::<4>()?) as u64,
+                    ListMode::Abs32 => {
+                        u32::from_le_bytes(values.array::<{ size_of::<u32>() }>()?) as u64
+                    }
                     ListMode::Gaps | ListMode::GapsRel => {
                         let x = values.get()?;
                         let i = if j > 0 {
@@ -1491,53 +1547,64 @@ impl<'a> Reader<'a> {
                         i
                     }
                 };
-                list.push(V::from_raw(at(value_ids, i)?));
+                anyhow::ensure!(
+                    usize::try_from(i)? < value_ids.len(),
+                    "value index out of range"
+                );
+                chunk
+                    .data
+                    .extend_from_slice(&u32::try_from(i)?.to_le_bytes());
             }
-            field.insert(K::from_raw(at(key_ids, key as u64)?), list);
-            Ok(())
+            at(key_ids, key as u64)
         })?;
-        stream.check_distinct(field.len())?;
+        let field = Map::from_list_chunks(chunks, value_ids, self.check_cancelled)
+            .with_context(|| format!("building runtime field {}", stream.stream.name))?;
         Ok(field)
     }
 
-    /// Decodes the label sets into their ids in on-disk order and the id ->
-    /// labels map.
     fn label_sets(
         self,
         label_ids: &[u64],
-    ) -> anyhow::Result<(Vec<u64>, ShardedField<IdDashMap<LabelSetId, Vec<LabelId>>>)> {
+    ) -> anyhow::Result<(Vec<u64>, Map<LabelSetId, Vec<LabelId>>)> {
         let stream = self.stream("labelsets")?;
-        let field = new_field::<LabelSetId, Vec<LabelId>>(stream.entries());
-        let mut ids = vec![0u64; stream.entries()];
-        stream.decode_blocks(&mut ids, |index, data, slot| {
+        let chunks = stream.packed_blocks(|index, data, n| {
             let mut index = cursors(index, 1)?;
             let mut data = cursors(data, 1)?;
-            let (counts, values) = (&mut index[0], &mut data[0]);
-            for id_slot in slot.iter_mut() {
-                let n = counts.count(values)?;
-                let mut labels = Vec::with_capacity(n);
-                for _ in 0..n {
-                    labels.push(LabelId::from_raw(at(label_ids, values.get()?)?));
+            let mut chunk = Chunk::new(n);
+            let mut labels = Vec::new();
+            for _ in 0..n {
+                let count = index[0].count(&data[0])?;
+                labels.clear();
+                for _ in 0..count {
+                    labels.push(LabelId::from_raw(at(label_ids, data[0].get()?)?));
                 }
-                let id = LabelSetId::of(&labels);
-                *id_slot = id.raw();
-                field.insert(id, labels);
+                chunk.push(LabelSetId::of(&labels).raw(), &labels)?;
             }
             anyhow::ensure!(all_done(&[&index, &data]), "trailing bytes");
-            Ok(())
+            Ok(chunk)
         })?;
-        stream.check_distinct(field.len())?;
+        let ids = chunks.iter().flat_map(|c| c.keys.iter().copied()).collect();
+        let field = Map::from_chunks(chunks, self.check_cancelled)
+            .with_context(|| format!("building runtime field {}", stream.stream.name))?;
         Ok((ids, field))
     }
 
     fn minimized(
         self,
-        ids: &Ids,
+        ids: &ReadIds,
         label_set_ids: &[u64],
-    ) -> anyhow::Result<ShardedField<IdDashMap<TargetId, StoredMinimizedTarget>>> {
+    ) -> anyhow::Result<Map<TargetId, StoredMinimizedTarget>> {
         let stream = self.stream("minimized")?;
-        let field = new_field::<TargetId, StoredMinimizedTarget>(stream.entries());
-        stream.decode_entries(0, 6, |key, _, data| {
+        let chunks = stream.packed_entries(0, 6, |key, _, data, chunk| {
+            if chunk.keys.is_empty() {
+                chunk.data.try_reserve_exact(
+                    chunk
+                        .keys
+                        .capacity()
+                        .checked_mul(StoredMinimizedTarget::PACKED_HEX_SIZE)
+                        .context("target arena overflow")?,
+                )?;
+            }
             let [rules, oncalls, label_sets, tags, hashes, texts] = data else {
                 unreachable!("cursors returned six regions")
             };
@@ -1548,8 +1615,8 @@ impl<'a> Reader<'a> {
             };
             let label_set = LabelSetId::from_raw(at(label_set_ids, label_sets.get()?)?);
             let target_hash = match tags.bytes(1)?[0] {
-                0 => TargetHash::from_hex128(hashes.array::<16>()?),
-                1 => {
+                HEX_HASH_TAG => TargetHash::from_hex128(hashes.array::<{ size_of::<u128>() }>()?),
+                TEXT_HASH_TAG => {
                     let n = texts.index()?;
                     let text =
                         std::str::from_utf8(texts.bytes(n)?).context("target hash is not UTF-8")?;
@@ -1557,39 +1624,31 @@ impl<'a> Reader<'a> {
                 }
                 t => anyhow::bail!("unknown hash tag {t}"),
             };
-            field.insert(
-                TargetId::from_raw(at(&ids.target, key as u64)?),
-                StoredMinimizedTarget {
-                    rule_type,
-                    oncall,
-                    label_set,
-                    target_hash,
-                },
-            );
-            Ok(())
+            let value = StoredMinimizedTarget {
+                rule_type,
+                oncall,
+                label_set,
+                target_hash,
+            };
+            packed::Value::encode(&value, &mut chunk.data)?;
+            at(&ids.target, key as u64)
         })?;
-        stream.check_distinct(field.len())?;
+        let field = Map::from_chunks(chunks, self.check_cancelled)
+            .with_context(|| format!("building runtime field {}", stream.stream.name))?;
         Ok(field)
     }
 
-    fn sudo(self, target_ids: &[u64]) -> anyhow::Result<ShardedField<IdDashSet<TargetId>>> {
+    fn sudo(self, target_ids: &[u64]) -> anyhow::Result<Set<TargetId>> {
         let stream = self.stream("sudo")?;
-        let field = ShardedField::<IdDashSet<TargetId>>::new(pick_shard_count(stream.entries()));
-        stream.decode_entries(0, 0, |key, _, _| {
-            field.insert(TargetId::from_raw(at(target_ids, key as u64)?));
-            Ok(())
-        })?;
-        stream.check_distinct(field.len())?;
+        let chunks = stream.packed_entries(0, 0, |key, _, _, _| at(target_ids, key as u64))?;
+        let field = Set::from_chunks(chunks, self.check_cancelled)
+            .with_context(|| format!("building runtime field {}", stream.stream.name))?;
         Ok(field)
     }
 
-    fn errors(
-        self,
-        package_ids: &[u64],
-    ) -> anyhow::Result<ShardedField<IdDashMap<PackageId, Vec<String>>>> {
+    fn errors(self, package_ids: &[u64]) -> anyhow::Result<Map<PackageId, Vec<String>>> {
         let stream = self.stream("errors")?;
-        let field = new_field::<PackageId, Vec<String>>(stream.entries());
-        stream.decode_entries(1, 1, |key, index, data| {
+        let chunks = stream.packed_entries(1, 1, |key, index, data, chunk| {
             let messages = &mut data[0];
             let n = index[0].count(messages)?;
             let mut v = Vec::with_capacity(n);
@@ -1599,29 +1658,61 @@ impl<'a> Reader<'a> {
                     std::str::from_utf8(messages.bytes(len)?).context("message is not UTF-8")?;
                 v.push(message.to_owned());
             }
-            field.insert(PackageId::from_raw(at(package_ids, key as u64)?), v);
-            Ok(())
+            packed::Value::encode(&v, &mut chunk.data)?;
+            at(package_ids, key as u64)
         })?;
-        stream.check_distinct(field.len())?;
+        let field = Map::from_chunks(chunks, self.check_cancelled)
+            .with_context(|| format!("building runtime field {}", stream.stream.name))?;
         Ok(field)
     }
 }
 
 impl Checked<'_> {
-    fn entries(&self) -> usize {
-        self.stream.blocks.iter().map(|b| b.entries as usize).sum()
+    fn packed_blocks(
+        &self,
+        decode: impl Fn(&[u8], &[u8], usize) -> anyhow::Result<Chunk> + Sync,
+    ) -> anyhow::Result<Vec<Chunk>> {
+        self.stream
+            .blocks
+            .par_iter()
+            .zip(self.indexes.par_iter())
+            .enumerate()
+            .map(|(i, (block, index))| {
+                (self.reader.check_cancelled)()?;
+                let data = read_part(self.reader.file, &block.data)?;
+                decode(index, &data, block.entries as usize).with_context(|| format!("block {i}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .with_context(|| format!("decoding {}", self.stream.name))
+    }
+    fn packed_entries(
+        &self,
+        index_regions: usize,
+        data_regions: usize,
+        entry: impl Fn(usize, &mut [Cursor<'_>], &mut [Cursor<'_>], &mut Chunk) -> anyhow::Result<u64>
+        + Sync,
+    ) -> anyhow::Result<Vec<Chunk>> {
+        self.packed_blocks(|index, data, n| {
+            let mut index = cursors(index, 1 + index_regions)?;
+            let mut data = cursors(data, data_regions)?;
+            let (key_gaps, index) = index.split_first_mut().expect("key region");
+            let mut keys = Keys::default();
+            let mut chunk = Chunk::new(n);
+            for _ in 0..n {
+                let key = keys.next(key_gaps)?;
+                let id = entry(key, index, &mut data, &mut chunk)?;
+                chunk.finish_row(id);
+            }
+            anyhow::ensure!(
+                key_gaps.done() && all_done(&[&*index, &data]),
+                "trailing bytes"
+            );
+            Ok(chunk)
+        })
     }
 
-    /// Every entry has its own key, so a decoded field holds one entry per
-    /// key. Fewer means two blocks repeated a key and one overwrote the other.
-    fn check_distinct(&self, decoded: usize) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            decoded == self.entries(),
-            "{}: {decoded} distinct keys for {} entries",
-            self.stream.name,
-            self.entries()
-        );
-        Ok(())
+    fn entries(&self) -> usize {
+        self.stream.blocks.iter().map(|b| b.entries as usize).sum()
     }
 
     /// Decodes every block in parallel. `decode(index, data, slots)` gets the
@@ -1649,33 +1740,6 @@ impl Checked<'_> {
             })
             .with_context(|| format!("decoding {}", self.stream.name))
     }
-
-    /// Decodes every entry of a keyed stream. The first index region holds
-    /// the key gaps; `entry(key_index, index_regions, data_regions)` decodes
-    /// the rest of one entry.
-    fn decode_entries(
-        &self,
-        index_regions: usize,
-        data_regions: usize,
-        entry: impl Fn(usize, &mut [Cursor<'_>], &mut [Cursor<'_>]) -> anyhow::Result<()> + Sync,
-    ) -> anyhow::Result<()> {
-        let mut slots = vec![(); self.entries()];
-        self.decode_blocks(&mut slots, |index, data, slot| {
-            let mut index = cursors(index, 1 + index_regions)?;
-            let mut data = cursors(data, data_regions)?;
-            let (key_gaps, index) = index.split_first_mut().expect("the key region");
-            let mut keys = Keys::default();
-            for _ in slot.iter() {
-                let key = keys.next(key_gaps)?;
-                entry(key, index, &mut data)?;
-            }
-            anyhow::ensure!(
-                key_gaps.done() && all_done(&[&*index, &data]),
-                "trailing bytes"
-            );
-            Ok(())
-        })
-    }
 }
 
 /// The first region of a block part.
@@ -1690,17 +1754,10 @@ fn first_region(part: &[u8]) -> anyhow::Result<&[u8]> {
     c.bytes(first)
 }
 
-fn new_field<K: ShardKey, V>(entries: usize) -> ShardedField<IdDashMap<K, V>> {
-    let n = pick_shard_count(entries);
-    ShardedField::from_shards(
-        (0..n)
-            .map(|_| IdDashMap::with_capacity_and_hasher(entries / n + 1, BuildNoHash::default()))
-            .collect(),
-    )
-}
+type ReadIds = Ids<Arc<Vec<u64>>>;
 
-/// Reads a graph written by `write`, checking `check_cancelled` before every
-/// block.
+/// Reads a graph written by `write`, checking cancellation during decoding
+/// and runtime field assembly.
 pub(super) fn read(
     file: &File,
     check_cancelled: &CheckCancelled<'_>,
@@ -1727,29 +1784,38 @@ pub(super) fn read(
             ))
         },
     );
-    let (target, target_id_to_label) = target?;
+    let (target, target_chunks) = target?;
     let (
-        (rule, rule_type_id_to_string),
-        (oncall, oncall_id_to_string),
-        (label, label_id_to_string),
-        (glob, glob_pattern_id_to_string),
-        (package, package_id_to_path),
-        (file_ids, file_id_to_path),
-        (cidep, ci_deps_pattern_id_to_string),
+        (rule, rule_chunks),
+        (oncall, oncall_chunks),
+        (label, label_chunks),
+        (glob, glob_chunks),
+        (package, package_chunks),
+        (file_ids, file_chunks),
+        (cidep, cidep_chunks),
     ) = rest?;
-    let ids = Ids {
-        target,
-        rule,
-        oncall,
-        label,
-        glob,
-        package,
-        file: file_ids,
-        cidep,
+    let ids = ReadIds {
+        target: Arc::new(target),
+        rule: Arc::new(rule),
+        oncall: Arc::new(oncall),
+        label: Arc::new(label),
+        glob: Arc::new(glob),
+        package: Arc::new(package),
+        file: Arc::new(file_ids),
+        cidep: Arc::new(cidep),
     };
 
-    // Every other stream depends only on the tables, so all of them decode at
-    // once. Minimized targets also need the label sets.
+    // Edge decoding needs the dictionaries, not the string-field indexes.
+    // Build those indexes alongside the remaining streams, and expose the
+    // graph only after every field has finished validation and construction.
+    let mut target_id_to_label = None;
+    let mut rule_type_id_to_string = None;
+    let mut oncall_id_to_string = None;
+    let mut label_id_to_string = None;
+    let mut glob_pattern_id_to_string = None;
+    let mut package_id_to_path = None;
+    let mut file_id_to_path = None;
+    let mut ci_deps_pattern_id_to_string = None;
     let mut sets_and_targets = None;
     let mut targets_with_sudo_label = None;
     let mut package_id_to_errors = None;
@@ -1757,7 +1823,15 @@ pub(super) fn read(
         ($(($name:literal, $field:ident, $k:ident, $v:ident, $mode:ident)),* $(,)?) => {{
             $(let mut $field = None;)*
             rayon::scope(|s| {
-                $(s.spawn(|_| $field = Some(r.list($name, &ids.$k, &ids.$v)));)*
+                s.spawn(|_| target_id_to_label = Some(r.table_field("target", target_chunks)));
+                s.spawn(|_| rule_type_id_to_string = Some(r.table_field("rule", rule_chunks)));
+                s.spawn(|_| oncall_id_to_string = Some(r.table_field("oncall", oncall_chunks)));
+                s.spawn(|_| label_id_to_string = Some(r.table_field("label", label_chunks)));
+                s.spawn(|_| glob_pattern_id_to_string = Some(r.table_field("glob", glob_chunks)));
+                s.spawn(|_| package_id_to_path = Some(r.table_field("package", package_chunks)));
+                s.spawn(|_| file_id_to_path = Some(r.table_field("file", file_chunks)));
+                s.spawn(|_| ci_deps_pattern_id_to_string = Some(r.table_field("cidep", cidep_chunks)));
+                $(s.spawn(|_| $field = Some(r.list($name, &ids.$k, ids.$v.clone())));)*
                 s.spawn(|_| {
                     sets_and_targets = Some(r.label_sets(&ids.label).and_then(
                         |(set_ids, sets)| Ok((sets, r.minimized(&ids, &set_ids)?)),
@@ -1769,16 +1843,16 @@ pub(super) fn read(
             let (label_set_id_to_labels, minimized_targets) =
                 sets_and_targets.expect("spawned above")?;
             TargetGraph {
-                target_id_to_label,
-                rule_type_id_to_string,
-                oncall_id_to_string,
-                label_id_to_string,
+                target_id_to_label: target_id_to_label.expect("spawned above")?,
+                rule_type_id_to_string: rule_type_id_to_string.expect("spawned above")?,
+                oncall_id_to_string: oncall_id_to_string.expect("spawned above")?,
+                label_id_to_string: label_id_to_string.expect("spawned above")?,
                 minimized_targets,
                 label_set_id_to_labels,
-                glob_pattern_id_to_string,
-                package_id_to_path,
-                file_id_to_path,
-                ci_deps_pattern_id_to_string,
+                glob_pattern_id_to_string: glob_pattern_id_to_string.expect("spawned above")?,
+                package_id_to_path: package_id_to_path.expect("spawned above")?,
+                file_id_to_path: file_id_to_path.expect("spawned above")?,
+                ci_deps_pattern_id_to_string: ci_deps_pattern_id_to_string.expect("spawned above")?,
                 package_id_to_errors: package_id_to_errors.expect("spawned above")?,
                 targets_with_sudo_label: targets_with_sudo_label.expect("spawned above")?,
                 $($field: $field.expect("spawned above")?,)*
@@ -1925,16 +1999,13 @@ mod tests {
         sudo: BTreeSet<u64>,
     }
 
-    fn strings<K: RawId>(f: &ShardedField<IdDashMap<K, String>>) -> BTreeMap<u64, String> {
+    fn strings<K: RawId>(f: &Map<K, String>) -> BTreeMap<u64, String> {
         f.iter()
-            .map(|e| (e.key().raw(), e.value().clone()))
+            .map(|e| (e.key().raw(), e.to_owned_value()))
             .collect()
     }
 
-    fn lists<K: RawId, V: RawId>(
-        f: &ShardedField<IdDashMap<K, Vec<V>>>,
-        sorted: bool,
-    ) -> BTreeMap<u64, Vec<u64>> {
+    fn lists<K: RawId, V: RawId>(f: &Map<K, Vec<V>>, sorted: bool) -> BTreeMap<u64, Vec<u64>> {
         f.iter()
             .map(|e| {
                 let mut v: Vec<u64> = e.value().iter().map(|x| x.raw()).collect();
@@ -2009,7 +2080,7 @@ mod tests {
             ],
             errors: package_id_to_errors
                 .iter()
-                .map(|e| (e.key().raw(), e.value().clone()))
+                .map(|e| (e.key().raw(), e.to_owned_value()))
                 .collect(),
             sudo: targets_with_sudo_label.iter().map(|k| k.raw()).collect(),
         }
@@ -2075,11 +2146,71 @@ mod tests {
         assert_eq!(bytes, encode(&decode(&bytes).expect("read"), TINY));
     }
 
+    #[rstest]
+    #[case::default_layout(LAYOUT)]
+    #[case::tiny_blocks(TINY)]
+    fn loaded_mutations_write_the_same_graph_as_owned_mutations(#[case] layout: Layout) {
+        let fresh = sample_graph();
+        let loaded = decode(&encode(&fresh, layout)).expect("read base");
+        for graph in [&fresh, &loaded] {
+            // Inserting before existing strings renumbers the disk dictionary,
+            // but must not change the meaning of retained runtime indices.
+            let new = graph.store_target("fbcode//0:new");
+            let rule = graph.store_rule_type("0:new_rule");
+            let label = graph.store_label("0:new_label");
+            graph.store_minimized_target(
+                new,
+                MinimizedBuckTarget {
+                    rule_type: rule,
+                    oncall: None,
+                    labels: vec![label],
+                    target_hash: TargetHash::new("non-hex ✓"),
+                },
+            );
+            graph.add_target_to_package(graph.store_package("fbcode//0"), new);
+            let edited = target("fbcode//a:t01");
+            let removals = IdDashMap::default();
+            for old in graph.get_deps(edited).unwrap_or_default() {
+                removals.entry(old).or_insert_with(Vec::new).push(edited);
+            }
+            let additions = IdDashMap::default();
+            additions.insert(new, vec![edited]);
+            graph.batch_update_rdeps(additions, removals);
+            graph.set_deps(edited, vec![new]);
+            let removed = target("fbcode//a:t03");
+            graph.remove_targets_batch(&[removed].into_iter().collect());
+            let restored = graph.store_target("fbcode//a:t03");
+            graph.store_minimized_target(
+                restored,
+                MinimizedBuckTarget {
+                    rule_type: rule,
+                    oncall: None,
+                    labels: vec![],
+                    target_hash: TargetHash::new("restored"),
+                },
+            );
+            graph.add_target_to_package(graph.store_package("fbcode//a"), restored);
+            graph.add_rdep(new, restored);
+        }
+        assert_eq!(snapshot(&fresh), snapshot(&loaded));
+        let expected = encode(&fresh, layout);
+        let actual = encode(&loaded, layout);
+        assert_eq!(expected, actual);
+        assert_eq!(
+            snapshot(&loaded),
+            snapshot(&decode(&actual).expect("read updated graph"))
+        );
+    }
+
     #[test]
     fn a_target_with_an_unknown_label_set_is_a_write_error() {
         let graph = sample_graph();
         let t = target("fbcode//a:t01");
-        let mut stored = graph.minimized_targets.get(&t).expect("target").clone();
+        let mut stored = graph
+            .minimized_targets
+            .get(&t)
+            .expect("target")
+            .to_owned_value();
         stored.label_set = LabelSetId(12345);
         graph.minimized_targets.insert(t, stored);
         let err = write_with(&graph, &mut Vec::new(), LAYOUT).expect_err("must fail");
@@ -2187,6 +2318,44 @@ mod tests {
             .iter()
             .map(|s| 2 * s.blocks.len())
             .sum()
+    }
+
+    #[test]
+    fn repeated_string_keys_across_blocks_are_rejected() {
+        let graph = TargetGraph::new();
+        for name in ["a", "b", "c", "d", "e", "f"] {
+            graph.store_target(&format!("root//example:{name}"));
+        }
+        // No other field references these IDs, so only the string index can
+        // reject the repeated keys.
+        let bytes = encode(&graph, TINY);
+        let file = file_with(&bytes);
+        let dir = read_directory(&file).expect("directory");
+        let stream = dir.stream("str/target").expect("target strings");
+        assert_eq!(stream.blocks[0].entries, stream.blocks[1].entries);
+        let first_index = read_part(&file, &stream.blocks[0].index).expect("index");
+        let first_data = read_part(&file, &stream.blocks[0].data).expect("data");
+        let first_part: usize = dir
+            .streams
+            .iter()
+            .take_while(|s| s.name != "str/target")
+            .map(|s| 2 * s.blocks.len())
+            .sum();
+        let corrupt = relayout(
+            &bytes,
+            &|part, raw| {
+                if part == first_part + 2 {
+                    raw.clone_from(&first_index);
+                } else if part == first_part + 3 {
+                    raw.clone_from(&first_data);
+                }
+            },
+            &|_| {},
+        );
+        let error = decode(&corrupt).expect_err("duplicate string keys must fail");
+        let message = format!("{error:#}");
+        assert!(message.contains("str/target"), "{message}");
+        assert!(message.contains("duplicate packed key"), "{message}");
     }
 
     #[test]
