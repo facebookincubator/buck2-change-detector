@@ -233,7 +233,9 @@ pub struct TargetGraph {
 
 impl TargetGraph {
     /// Writes the graph in the binary layout of graph schema `SCHEMA_VERSION`.
-    pub fn write_framed(&self, writer: &mut dyn Write) -> anyhow::Result<()> {
+    ///
+    /// The write runs on a thread pool of its own, so `writer` must be `Send`.
+    pub fn write_framed(&self, writer: &mut (dyn Write + Send)) -> anyhow::Result<()> {
         dense::write(self, writer)
     }
 
