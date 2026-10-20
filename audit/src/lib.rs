@@ -15,6 +15,7 @@
 
 use anyhow::anyhow;
 use clap::Parser;
+use td_util::command::BuckClient;
 use td_util::command::display_command;
 use td_util::workflow_error::WorkflowError;
 
@@ -70,7 +71,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         AuditMode::Config(common) => (common, audit_config_arguments()),
     };
 
-    let mut command = std::process::Command::new(common.buck);
+    let mut command = BuckClient::SupertdAudit.command(common.buck);
     command.args(arguments);
 
     if common.dry_run {

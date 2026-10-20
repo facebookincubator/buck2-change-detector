@@ -20,6 +20,7 @@ use std::process::Command;
 
 use anyhow::anyhow;
 use clap::Parser;
+use td_util::command::BuckClient;
 use td_util::command::display_command;
 use td_util::command::spawn;
 use td_util::file_io::file_writer;
@@ -58,6 +59,7 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         args.output,
         args.dry_run,
         args.isolation_dir,
+        BuckClient::SupertdTargets,
         &args.arguments,
     )
 }
@@ -65,10 +67,11 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
 fn build_targets_command(
     buck: &str,
     isolation_dir: Option<String>,
+    client: BuckClient,
     targets_args: &[&str],
     arguments: &[String],
 ) -> Command {
-    let mut command = Command::new(buck);
+    let mut command = client.command(buck);
     if let Some(prefix) = isolation_dir {
         command.args(["--isolation-dir", &prefix]);
     }
@@ -77,16 +80,28 @@ fn build_targets_command(
     command
 }
 
-pub fn build_command(buck: &str, isolation_dir: Option<String>, arguments: &[String]) -> Command {
-    build_targets_command(buck, isolation_dir, &targets_arguments(), arguments)
+pub fn build_command(
+    buck: &str,
+    isolation_dir: Option<String>,
+    client: BuckClient,
+    arguments: &[String],
+) -> Command {
+    build_targets_command(buck, isolation_dir, client, &targets_arguments(), arguments)
 }
 
 pub fn build_command_v2(
     buck: &str,
     isolation_dir: Option<String>,
+    client: BuckClient,
     arguments: &[String],
 ) -> Command {
-    build_targets_command(buck, isolation_dir, &targets_arguments_v2(), arguments)
+    build_targets_command(
+        buck,
+        isolation_dir,
+        client,
+        &targets_arguments_v2(),
+        arguments,
+    )
 }
 
 /// This function runs the `buck2 targets` command, utilizing various arguments to optimize its behavior for BTD/Citadel.
@@ -99,15 +114,17 @@ pub fn build_command_v2(
 ///   If the file has a .zst extension, output will be automatically compressed.
 /// * `dry_run` - If set to `true`, the command will print the command that would have been executed instead of executing it, without executing it.
 /// * `isolation_dir` - If set, the buck invocation will use this isolation prefix.
+/// * `client` - The component Buck attributes the invocation to.
 /// * `arguments` - Additional arguments typically provided as patterns to be passed to the `buck2 targets` command.
 pub fn run(
     buck: &str,
     output_file: Option<PathBuf>,
     dry_run: bool,
     isolation_dir: Option<String>,
+    client: BuckClient,
     arguments: &[String],
 ) -> Result<(), WorkflowError> {
-    let command = build_command(buck, isolation_dir, arguments);
+    let command = build_command(buck, isolation_dir, client, arguments);
 
     if dry_run {
         println!("{}", display_command(&command));

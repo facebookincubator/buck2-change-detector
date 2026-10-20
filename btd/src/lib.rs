@@ -42,6 +42,7 @@ use btd_run_stats::BTDRunStats;
 use clap::Parser;
 use rustc_hash::FxHashSet;
 use serde::Serialize;
+use td_util::command::BuckClient;
 use td_util::file_io::file_writer;
 use td_util::json;
 use td_util::logging::elapsed;
@@ -201,7 +202,11 @@ pub fn main(args: Args) -> Result<(), WorkflowError> {
         return Err(anyhow::anyhow!(OutputError::TextModeWithOutput).into());
     }
 
-    let mut buck2 = Buck2::new(args.buck.clone(), args.isolation_dir);
+    let mut buck2 = Buck2::new(
+        args.buck.clone(),
+        args.isolation_dir,
+        BuckClient::SupertdBtd,
+    );
 
     // All the arguments we should pass on to Buck, when we call it using sensible arguments
     let buck_args = args

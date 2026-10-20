@@ -23,6 +23,7 @@ use std::sync::Mutex;
 
 use anyhow::Context as _;
 use anyhow::anyhow;
+use td_util::command::BuckClient;
 use tempfile::TempDir;
 use tracing::info;
 use tracing::warn;
@@ -298,17 +299,19 @@ impl Drop for OwnedChild {
 }
 
 impl BuckCommand {
-    /// Construct a Buck `targets` command with diagnostics before caller arguments.
+    /// Construct a Buck `targets` command with client identity and diagnostics
+    /// before caller arguments.
     pub fn targets(
         program: impl AsRef<OsStr>,
         isolation_dir: Option<&str>,
+        client: BuckClient,
         diagnostics: BuckDiagnostics,
     ) -> anyhow::Result<Self> {
         let mut command = Command::new(program);
         if let Some(isolation_dir) = isolation_dir {
             command.args(["--isolation-dir", isolation_dir]);
         }
-        command.arg("targets");
+        command.arg("targets").arg(client.metadata_arg());
         let build_id = match diagnostics {
             BuckDiagnostics::Inherit => None,
             BuckDiagnostics::QuietWithUi => {
@@ -658,7 +661,13 @@ mod tests {
             "trap '' TERM; exec 4<gate; (printf 'ready\\n'; read value <&4) & wait",
         )
         .unwrap();
-        let mut command = BuckCommand::targets("/bin/sh", None, BuckDiagnostics::Inherit).unwrap();
+        let mut command = BuckCommand::targets(
+            "/bin/sh",
+            None,
+            BuckClient::SupertdBtd,
+            BuckDiagnostics::Inherit,
+        )
+        .unwrap();
         command.current_dir(gate.directory.path());
         command.stdout(Stdio::piped());
         if cancellable {
@@ -1111,9 +1120,13 @@ mod tests {
 
     #[test]
     fn quiet_command_places_native_flags_before_caller_arguments() {
-        let mut command =
-            BuckCommand::targets("buck2", Some("isolation"), BuckDiagnostics::QuietWithUi)
-                .expect("should construct Buck command");
+        let mut command = BuckCommand::targets(
+            "buck2",
+            Some("isolation"),
+            BuckClient::SupertdGraphSelect,
+            BuckDiagnostics::QuietWithUi,
+        )
+        .expect("should construct Buck command");
         command.args(["--", "//example:target"]);
 
         let arguments = command
@@ -1122,23 +1135,29 @@ mod tests {
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(
-            arguments[0..5],
+            arguments[0..6],
             [
                 "--isolation-dir",
                 "isolation",
                 "targets",
+                "--client-metadata=id=supertd_graph_select",
                 "--console=simple",
                 "--verbose=0",
             ]
         );
-        assert!(arguments[5].starts_with("--write-build-id="));
-        assert_eq!(arguments[6..], ["--", "//example:target"]);
+        assert!(arguments[6].starts_with("--write-build-id="));
+        assert_eq!(arguments[7..], ["--", "//example:target"]);
     }
 
     #[test]
     fn reads_trimmed_build_id() {
-        let command = BuckCommand::targets("buck2", None, BuckDiagnostics::QuietWithUi)
-            .expect("should construct Buck command");
+        let command = BuckCommand::targets(
+            "buck2",
+            None,
+            BuckClient::SupertdGraphSelect,
+            BuckDiagnostics::QuietWithUi,
+        )
+        .expect("should construct Buck command");
         let output = command
             .build_id
             .as_ref()

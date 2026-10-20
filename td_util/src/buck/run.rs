@@ -15,6 +15,7 @@ use std::process::Command;
 use anyhow::Context as _;
 use audit::audit_cell_arguments;
 use audit::audit_config_arguments;
+use td_util::command::BuckClient;
 use td_util::command::create_at_file_arg;
 use td_util::command::with_command;
 use thiserror::Error;
@@ -39,6 +40,8 @@ pub struct Buck2 {
     root: Option<PathBuf>,
     /// The isolation directory to always use when invoking buck
     isolation_dir: Option<String>,
+    /// The component Buck attributes every invocation to.
+    client: BuckClient,
     /// How the incremental graph update's `targets` command reports diagnostics.
     targets_diagnostics: BuckDiagnostics,
     targets_cancellation: Option<Cancellation>,
@@ -51,11 +54,12 @@ enum Buck2Error {
 }
 
 impl Buck2 {
-    pub fn new(program: String, isolation_dir: Option<String>) -> Self {
+    pub fn new(program: String, isolation_dir: Option<String>, client: BuckClient) -> Self {
         Self {
             program,
             root: None,
             isolation_dir,
+            client,
             targets_diagnostics: BuckDiagnostics::Inherit,
             targets_cancellation: None,
         }
@@ -71,6 +75,7 @@ impl Buck2 {
         Ok(BuckCommand::targets(
             &self.program,
             self.isolation_dir.as_deref(),
+            self.client,
             self.targets_diagnostics,
         )?
         .with_cancellation(self.targets_cancellation.clone()))
@@ -88,7 +93,7 @@ impl Buck2 {
     }
 
     pub fn command(&self) -> Command {
-        let mut command = Command::new(&self.program);
+        let mut command = self.client.command(&self.program);
         if let Some(isolation_dir) = &self.isolation_dir {
             command.args(["--isolation-dir", isolation_dir]);
         }
@@ -345,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_owners_command() {
-        let mut buck = Buck2::new("buck2".to_string(), None);
+        let mut buck = Buck2::new("buck2".to_string(), None, BuckClient::SupertdBtd);
         let changes = vec![ProjectRelativePath::new(
             "fbcode/target_determinator/td_util/src/buck/run.rs",
         )];
@@ -398,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_owners_command_with_equals_in_path() {
-        let mut buck = Buck2::new("buck2".to_string(), None);
+        let mut buck = Buck2::new("buck2".to_string(), None, BuckClient::SupertdBtd);
 
         let path_with_equals = "fbcode/test/foo/param=value/test.txt";
         let files_to_check = vec![ProjectRelativePath::new(path_with_equals)];
