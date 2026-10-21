@@ -2,7 +2,7 @@ diff --git a/.buckconfig b/.buckconfig
 --- a/.buckconfig
 +++ b/.buckconfig
 @@ -6,4 +6,4 @@
- file_watcher = notify
+ file_watcher = fs_hash_crawler
 
  [random_key]
 -value=1
