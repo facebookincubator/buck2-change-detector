@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hasher;
 use std::io::Write;
@@ -183,6 +184,7 @@ impl LabelSetId {
 pub type IdDashMap<K, V> = DashMap<K, V, BuildNoHash>;
 pub type IdDashSet<K> = DashSet<K, BuildNoHash>;
 pub type IdHashSet<K> = HashSet<K, BuildNoHash>;
+pub type IdHashMap<K, V> = HashMap<K, V, BuildNoHash>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinimizedBuckTarget {
