@@ -1128,6 +1128,14 @@ impl TargetGraph {
             .map(|v| v.to_owned_value())
     }
 
+    /// Whether the graph has a package at `package_id`: one that holds targets
+    /// or recorded errors, and whose path is stored.
+    pub fn is_known_package(&self, package_id: PackageId) -> bool {
+        self.package_id_to_path.contains_key(&package_id)
+            && (self.package_id_to_targets.contains_key(&package_id)
+                || self.package_id_to_errors.contains_key(&package_id))
+    }
+
     pub fn iter_packages_with_targets(&self) -> impl Iterator<Item = (PackageId, String)> + '_ {
         self.package_id_to_targets.iter().filter_map(|entry| {
             let package_id = *entry.key();
