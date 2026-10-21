@@ -23,6 +23,20 @@ use crate::zstd::has_zstd_magic;
 use crate::zstd::is_zstd;
 
 pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
+    file_writer_with_zstd_workers(file_path, 1)
+}
+
+/// Buffer in front of a multithreaded zstd encoder (64 KiB).
+const ZSTD_WORKER_WRITE_BUFFER_SIZE: usize = 64 * 1024;
+
+/// `file_writer`, but a `.zst` output is compressed by `workers` zstd worker
+/// threads. The output is still one zstd frame, so every reader of
+/// `file_writer`'s output reads it; only the bytes differ. `workers <= 1`
+/// compresses on the writing thread, like `file_writer`.
+pub fn file_writer_with_zstd_workers(
+    file_path: &Path,
+    workers: u32,
+) -> anyhow::Result<Box<dyn Write>> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -31,8 +45,30 @@ pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
         .with_context(|| format!("Unable to open file `{}` for writing", file_path.display()))?;
 
     if is_zstd(file_path) {
-        let encoder = zstd::Encoder::new(file, zstd::DEFAULT_COMPRESSION_LEVEL)?.auto_finish();
-        Ok(Box::new(BufWriter::with_capacity(BUFFER_SIZE, encoder)))
+        let mut encoder = zstd::Encoder::new(file, zstd::DEFAULT_COMPRESSION_LEVEL)?;
+        if workers > 1 {
+            match encoder.multithread(workers) {
+                // The encoder copies its input into job buffers, so a
+                // large block goes to it directly: a `BufWriter` passes
+                // through any write at least its own size, and a small
+                // buffer only gathers writes smaller than that.
+                Ok(()) => {
+                    return Ok(Box::new(BufWriter::with_capacity(
+                        ZSTD_WORKER_WRITE_BUFFER_SIZE,
+                        encoder.auto_finish(),
+                    )));
+                }
+                // A zstd without worker support still compresses correctly.
+                Err(error) => tracing::warn!(
+                    "zstd cannot compress `{}` on {workers} threads, using one: {error}",
+                    file_path.display()
+                ),
+            }
+        }
+        Ok(Box::new(BufWriter::with_capacity(
+            BUFFER_SIZE,
+            encoder.auto_finish(),
+        )))
     } else {
         Ok(Box::new(BufWriter::with_capacity(BUFFER_SIZE, file)))
     }
@@ -126,6 +162,23 @@ mod tests {
         let mut decompressed = String::new();
         std::io::Read::read_to_string(&mut decoder, &mut decompressed).unwrap();
         assert_eq!(decompressed, DATA);
+    }
+
+    #[test]
+    pub fn test_zstd_encoding_with_workers_round_trips() {
+        let out_dir = TempDir::new().unwrap();
+        let out_path = out_dir.path().join("test_artifact.zst");
+        let payload = DATA.repeat(100_000);
+
+        let mut writer = file_writer_with_zstd_workers(&out_path, 4).unwrap();
+        writer.write_all(payload.as_bytes()).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+
+        let mut reader = file_reader(&out_path).unwrap();
+        let mut decompressed = String::new();
+        std::io::Read::read_to_string(&mut reader, &mut decompressed).unwrap();
+        assert_eq!(decompressed, payload);
     }
 
     #[test]
