@@ -23,7 +23,8 @@ use crate::zstd::has_zstd_magic;
 use crate::zstd::is_zstd;
 
 pub fn file_writer(file_path: &Path) -> anyhow::Result<Box<dyn Write>> {
-    file_writer_with_zstd_workers(file_path, 1)
+    let writer = file_writer_with_zstd_workers(file_path, 1)?;
+    Ok(writer)
 }
 
 /// Buffer in front of a multithreaded zstd encoder (64 KiB).
@@ -32,11 +33,12 @@ const ZSTD_WORKER_WRITE_BUFFER_SIZE: usize = 64 * 1024;
 /// `file_writer`, but a `.zst` output is compressed by `workers` zstd worker
 /// threads. The output is still one zstd frame, so every reader of
 /// `file_writer`'s output reads it; only the bytes differ. `workers <= 1`
-/// compresses on the writing thread, like `file_writer`.
+/// compresses on the writing thread, like `file_writer`. The writer is
+/// `Send`, so a caller can write from a thread of its own.
 pub fn file_writer_with_zstd_workers(
     file_path: &Path,
     workers: u32,
-) -> anyhow::Result<Box<dyn Write>> {
+) -> anyhow::Result<Box<dyn Write + Send>> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
