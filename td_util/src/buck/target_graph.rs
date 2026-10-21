@@ -825,6 +825,24 @@ impl TargetGraph {
         }
     }
 
+    /// The position of a target among the targets the graph was loaded with:
+    /// a dense index below `loaded_targets_len`, fixed for the life of the
+    /// graph, which a per-target table can use instead of a hash map. A
+    /// target stored since the load has none.
+    pub fn loaded_target_position(&self, target_id: TargetId) -> Option<usize> {
+        self.target_id_to_label.loaded_position(&target_id)
+    }
+
+    /// The number of positions `loaded_target_position` can return.
+    pub fn loaded_targets_len(&self) -> usize {
+        self.target_id_to_label.loaded_positions()
+    }
+
+    /// The target at a position below `loaded_targets_len`.
+    pub fn loaded_target_at(&self, position: usize) -> TargetId {
+        self.target_id_to_label.key_at_loaded_position(position)
+    }
+
     pub fn get_all_targets(&self) -> impl Iterator<Item = TargetId> + '_ {
         self.target_id_to_label.iter().map(|entry| *entry.key())
     }

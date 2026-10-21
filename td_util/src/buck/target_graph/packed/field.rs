@@ -264,6 +264,28 @@ impl<K: Key, V: Value> Map<K, V> {
         self.base.as_ref().and_then(|b| b.find(key.raw()))
     }
 
+    /// The position of `key` among the rows the map was loaded with, below
+    /// `loaded_positions`, or `None` for a key stored since the load. A
+    /// loaded row keeps its position when its value changes or is removed.
+    pub(in super::super) fn loaded_position(&self, key: &K) -> Option<usize> {
+        self.base_row(*key)
+    }
+
+    /// The number of positions `loaded_position` can return.
+    pub(in super::super) fn loaded_positions(&self) -> usize {
+        self.base.as_ref().map_or(0, |b| b.len())
+    }
+
+    /// The key at a loaded position.
+    pub(in super::super) fn key_at_loaded_position(&self, position: usize) -> K {
+        K::from_raw(
+            self.base
+                .as_ref()
+                .expect("a loaded position implies loaded rows")
+                .key(position),
+        )
+    }
+
     fn mark_override(&self, row: usize) {
         let bit = 1u64 << (row % OVERRIDE_WORD_BITS);
         let word = &self.overridden[row / OVERRIDE_WORD_BITS];
