@@ -829,6 +829,11 @@ impl TargetGraph {
         self.target_id_to_label.iter().map(|entry| *entry.key())
     }
 
+    /// `get_all_targets`, in parallel.
+    pub fn par_all_targets(&self) -> impl ParallelIterator<Item = TargetId> + '_ {
+        self.target_id_to_label.par_iter().map(|entry| *entry.key())
+    }
+
     pub fn store_minimized_target(&self, target_id: TargetId, target: MinimizedBuckTarget) {
         let MinimizedBuckTarget {
             rule_type,
