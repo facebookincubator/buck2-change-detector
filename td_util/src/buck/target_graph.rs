@@ -36,6 +36,11 @@ use packed::Set;
 
 pub const CI_HINT_RULE_TYPE: &str = "ci_hint";
 
+/// Whether a rule type's short name (after the last `:`) is `ci_hint`.
+fn is_ci_hint_rule_type_name(full: &str) -> bool {
+    full.rsplit_once(':').map_or(full, |(_, short)| short) == CI_HINT_RULE_TYPE
+}
+
 /// Version of the serialized graph and its persisted-state contract.
 /// Version 15 stores the graph in the layout of `dense`.
 /// Increment for incompatible layout or graph-maintenance changes.
@@ -535,10 +540,18 @@ impl TargetGraph {
     pub fn is_ci_hint_rule_type(&self, rule_type_id: RuleTypeId) -> bool {
         self.rule_type_id_to_string
             .get(&rule_type_id)
-            .is_some_and(|full| {
-                let full = full.text();
-                full.rsplit_once(':').map_or(full, |(_, short)| short) == CI_HINT_RULE_TYPE
-            })
+            .is_some_and(|full| is_ci_hint_rule_type_name(full.text()))
+    }
+
+    /// The ids of the rule types whose short name is `ci_hint`, so a walk
+    /// that classifies millions of targets can test a set of a few ids
+    /// instead of reading a rule type string per target.
+    pub fn ci_hint_rule_type_ids(&self) -> IdHashSet<RuleTypeId> {
+        self.rule_type_id_to_string
+            .iter()
+            .filter(|entry| is_ci_hint_rule_type_name(entry.text()))
+            .map(|entry| *entry.key())
+            .collect()
     }
 
     pub fn get_deps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
