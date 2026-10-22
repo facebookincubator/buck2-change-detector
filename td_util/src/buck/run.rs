@@ -251,12 +251,10 @@ impl Buck2 {
         extra_args: &[String],
         packages: &[Package],
     ) -> anyhow::Result<String> {
-        self.run_with_atfile(
-            audit_package_values_arguments(),
-            packages,
-            extra_args,
-            "audit package-values",
-        )
+        // PACKAGE files can read config. Do not inherit a previous invocation's
+        // configuration, even when this caller supplies no flags.
+        let arguments = [&["audit", "package-values"][..], HASH_NORMALIZED_CONFIGS].concat();
+        self.run_with_atfile(arguments, packages, extra_args, "audit package-values")
     }
 }
 
@@ -278,15 +276,6 @@ const HASH_NORMALIZED_CONFIGS: &[&str] = &[
     "--config=user.schedule_type=",
     "--config=user.sandcastle=",
 ];
-
-/// Static arguments for `buck2 audit package-values`, which emits package-keyed
-/// JSON by default (it rejects `--json`). Uses `--reuse-current-config` and no
-/// hash-normalized configs: package values are static `PACKAGE`-file data,
-/// independent of the build configuration, so reusing the daemon's config avoids
-/// invalidating it.
-pub fn audit_package_values_arguments() -> Vec<&'static str> {
-    vec!["audit", "package-values", "--reuse-current-config"]
-}
 
 pub fn targets_arguments() -> Vec<&'static str> {
     const PREFIX: &[&str] = &[

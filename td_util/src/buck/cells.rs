@@ -225,6 +225,12 @@ impl CellInfo {
         }
     }
 
+    /// Canonical cell roots, including nested cells excluded by a parent-cell
+    /// recursive target pattern.
+    pub fn cell_roots(&self) -> impl Iterator<Item = (&CellName, &ProjectRelativePath)> {
+        self.paths.iter().map(|(cell, path)| (cell, path))
+    }
+
     /// Whether a valid cell path names one of its cell's configured build files.
     pub fn is_target_file_path(&self, path: &str) -> anyhow::Result<bool> {
         let (cell, _) = path
