@@ -462,6 +462,15 @@ impl TargetGraph {
             .map(|v| v.to_owned_value())
     }
 
+    /// Whether any rdep of the target satisfies `pred`, read without cloning
+    /// the stored rdeps. Stops at the first match. `pred` can run while a read
+    /// lock on the target's rdeps is held, so it must not write the rdeps.
+    pub fn any_rdep(&self, target_id: TargetId, pred: impl FnMut(TargetId) -> bool) -> bool {
+        self.target_id_to_rdeps
+            .get(&target_id)
+            .is_some_and(|rdeps| rdeps.any_id(pred))
+    }
+
     /// Appends the target's rdeps and ci_hint-affected targets to `out` without
     /// cloning the stored vectors. `out` is not cleared, so a caller can reuse
     /// one buffer across a traversal. Same contents as `get_all_dependents`.
@@ -486,17 +495,6 @@ impl TargetGraph {
         self.target_id_to_deps
             .get(&target_id)
             .is_some_and(|deps| !deps.is_empty())
-    }
-
-    /// Whether anything depends on the target via an rdep or ci_hint edge.
-    pub fn has_dependents(&self, target_id: TargetId) -> bool {
-        self.target_id_to_rdeps
-            .get(&target_id)
-            .is_some_and(|rdeps| !rdeps.is_empty())
-            || self
-                .ci_hint_to_affected
-                .get(&target_id)
-                .is_some_and(|affected| !affected.is_empty())
     }
 
     /// The target's rule type id, read without cloning its `MinimizedBuckTarget`.
@@ -2065,6 +2063,25 @@ mod tests {
         let graph = TargetGraph::new();
         let unknown_id = graph.store_target("fbcode//foo:unknown");
         assert!(!graph.is_ci_hint_target(unknown_id));
+    }
+
+    #[test]
+    fn any_rdep_stops_at_the_first_match() {
+        let graph = TargetGraph::new();
+        let [dep, first, second, leaf] = ["dep", "first", "second", "leaf"]
+            .map(|name| graph.store_target(&format!("fbcode//foo:{name}")));
+        graph.add_rdep(dep, first);
+        graph.add_rdep(dep, second);
+
+        let mut seen = Vec::new();
+        assert!(graph.any_rdep(dep, |rdep| {
+            seen.push(rdep);
+            true
+        }));
+        assert_eq!(seen, [first]);
+        assert!(graph.any_rdep(dep, |rdep| rdep == second));
+        assert!(!graph.any_rdep(dep, |rdep| rdep == leaf));
+        assert!(!graph.any_rdep(leaf, |_| true), "a target without rdeps");
     }
 
     struct CiHintFixture {

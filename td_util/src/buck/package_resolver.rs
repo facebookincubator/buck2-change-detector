@@ -78,24 +78,6 @@ impl<T> PackageResolver<T> {
         res
     }
 
-    /// Whether a value exists at this package or an ancestor, stopping at the first match.
-    pub fn has_at_or_above(&self, package_path: &str) -> bool {
-        let mut node = self;
-        if node.value.is_some() {
-            return true;
-        }
-        for part in Self::package_path_parts(package_path) {
-            let Some(child) = node.children.get(part) else {
-                return false;
-            };
-            if child.value.is_some() {
-                return true;
-            }
-            node = child;
-        }
-        false
-    }
-
     /// Like `get`, but takes the package path as a plain string (no interning)
     /// and visits the values top-down instead of collecting them.
     pub fn for_each_at_or_above<'a>(&'a self, package_path: &str, mut f: impl FnMut(&'a T)) {
@@ -139,20 +121,5 @@ mod tests {
         assert_eq!(p.get(&Package::new("foo//bar/baz")), vec![&1, &2]);
         assert_eq!(p.get(&Package::new("foo//bar/baz/qux")), vec![&1, &2]);
         assert_eq!(p.get(&Package::new("other//bar")), Vec::<&i32>::new());
-    }
-
-    #[test]
-    fn test_has_at_or_above_respects_package_boundaries() {
-        let mut p = PackageResolver::new();
-        assert!(!p.has_at_or_above("foo//bar"));
-        p.insert(&Package::new("foo//bar"), 1);
-        assert!(p.has_at_or_above("foo//bar"));
-        assert!(p.has_at_or_above("foo//bar/sub"));
-        assert!(!p.has_at_or_above("foo//bard"));
-        assert!(!p.has_at_or_above("foo//"));
-        assert!(!p.has_at_or_above("other//bar"));
-        p.insert(&Package::new("foo//"), 2);
-        assert!(p.has_at_or_above("foo//"));
-        assert!(p.has_at_or_above("foo//other"));
     }
 }

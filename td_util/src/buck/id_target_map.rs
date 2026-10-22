@@ -106,21 +106,6 @@ impl<T> IdTargetMap<T> {
             .for_each_at_or_above(package, |values| values.iter().for_each(&mut f));
     }
 
-    /// Whether any value is registered for the target `label`.
-    pub fn has_matching(&self, label: &str) -> bool {
-        let target_id: TargetId = label.parse().expect("TargetId parsing is infallible");
-        if self.literal.contains_key(&target_id) {
-            return true;
-        }
-        if self.non_recursive_pattern.is_empty() && self.recursive_pattern.is_empty() {
-            return false;
-        }
-        let package = package_of_label(label);
-        let package_id: PackageId = package.parse().expect("PackageId parsing is infallible");
-        self.non_recursive_pattern.contains_key(&package_id)
-            || self.recursive_pattern.has_at_or_above(package)
-    }
-
     /// All values registered for the target `label`, in `for_each_matching` order.
     pub fn get(&self, label: &str) -> Vec<&T> {
         let mut res = Vec::new();
@@ -177,11 +162,6 @@ mod tests {
                 .collect::<Vec<_>>();
             let actual: Vec<usize> = by_id.get(label).into_iter().copied().collect();
             assert_eq!(actual, expected, "values matching `{label}`");
-            assert_eq!(
-                by_id.has_matching(label),
-                !expected.is_empty(),
-                "has_matching(`{label}`)"
-            );
         }
     }
 
