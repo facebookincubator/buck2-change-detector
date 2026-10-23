@@ -23,7 +23,9 @@ pub enum Event {
     /// Terminal event for an inline orchestrator run (`supertd orchestrator`),
     /// emitted from `orchestrator::main` on success. Carries the per-phase
     /// wall-clock breakdown (setup, BTD, VerifiableMatcher, Ranker, Verse,
-    /// Scheduler) plus the total. This closes the gap where the inline path
+    /// Scheduler), `ranker_ods_wait_ms` (the wait for the ranker's ODS send
+    /// after the phases; null when no send started), and the total, which
+    /// includes that wait. This closes the gap where the inline path
     /// previously emitted no per-component completion event: the
     /// `BTD_SUCCESS`/`VERIFIABLE_MATCHER_SUCCESS`/`RANKER_SUCCESS`/`VERSE_SUCCESS`
     /// events fire only from the individual CLI subcommands, not the inlined
@@ -32,7 +34,8 @@ pub enum Event {
     INLINE_ORCHESTRATOR_SUCCESS,
     /// Terminal event for an inline orchestrator run that failed in some phase.
     /// Carries the same per-phase breakdown (phases not reached read 0, so the
-    /// failing phase is identifiable) plus the error.
+    /// failing phase is identifiable), `ranker_ods_wait_ms`, and the total,
+    /// plus the error.
     INLINE_ORCHESTRATOR_FAILURE,
     /// Emitted once after base-graph preparation finishes, whether it succeeds
     /// or fails, before publication. Schema v2 includes cache diagnostics and
