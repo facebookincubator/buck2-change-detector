@@ -1069,6 +1069,21 @@ impl TargetGraph {
         }
     }
 
+    /// Removes `importers` from the importers of `imported` in one pass over
+    /// its list, and returns whether no importer remains.
+    pub fn remove_file_importers(&self, imported: FileId, importers: &IdHashSet<FileId>) -> bool {
+        let Some(mut rdeps) = self.file_id_to_rdeps.get_mut(&imported) else {
+            return true;
+        };
+        rdeps.retain(|importer| !importers.contains(importer));
+        let orphaned = rdeps.is_empty();
+        if orphaned {
+            drop(rdeps);
+            self.file_id_to_rdeps.discard(&imported);
+        }
+        orphaned
+    }
+
     pub fn clear_file_deps(&self, importer: FileId) {
         if let Some((_, deps)) = self.file_id_to_deps.remove(&importer) {
             for dep in deps {
@@ -2329,6 +2344,35 @@ mod tests {
         assert_eq!(deps.len(), 2);
         assert!(deps.contains(&defs_bzl));
         assert!(deps.contains(&utils_bzl));
+    }
+
+    #[test]
+    fn removing_file_importers_reports_when_none_remain() {
+        let graph = FileDepGraphBuilder::new()
+            .add_import("fbcode//a/TARGETS", "fbcode//defs.bzl")
+            .add_import("fbcode//b/TARGETS", "fbcode//defs.bzl")
+            .add_import("fbcode//c/TARGETS", "fbcode//defs.bzl")
+            .build();
+        let defs_bzl = graph.store_file("fbcode//defs.bzl");
+        let file = |path: &str| graph.store_file(path);
+
+        let orphaned = graph.remove_file_importers(
+            defs_bzl,
+            &IdHashSet::from_iter([file("fbcode//a/TARGETS"), file("fbcode//b/TARGETS")]),
+        );
+
+        assert!(!orphaned);
+        assert_eq!(
+            graph.get_file_rdeps(defs_bzl),
+            Some(vec![file("fbcode//c/TARGETS")])
+        );
+        assert!(
+            graph.remove_file_importers(
+                defs_bzl,
+                &IdHashSet::from_iter([file("fbcode//c/TARGETS")])
+            )
+        );
+        assert_eq!(graph.get_file_rdeps(defs_bzl), None);
     }
 
     #[test]
