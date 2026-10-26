@@ -82,42 +82,10 @@ pub fn read_file_lines_par_iter<T: for<'a> Deserialize<'a> + Send>(
     Ok(rdr.lines().par_bridge().map(parse_line::<T>))
 }
 
-/// Read JSON lines from a reader. The order of entries is not guaranteed.
-/// Use this when you want explicit control over file opening (e.g., with file_io::file_reader).
-pub fn read_reader_lines_parallel<T: for<'a> Deserialize<'a> + Send>(
-    reader: impl BufRead + Send,
-) -> anyhow::Result<Vec<T>> {
-    reader
-        .lines()
-        .par_bridge()
-        .map(parse_line::<T>)
-        .collect::<anyhow::Result<Vec<T>>>()
-}
-
-pub fn read_reader_lines_parallel_bytes<R, T>(mut reader: R) -> anyhow::Result<Vec<T>>
-where
-    R: Read + Send,
-    T: for<'a> Deserialize<'a> + Send,
-{
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .context("Failed to read input bytes for parallel JSON-lines parsing")?;
-    bytes
-        .par_split(|&b| b == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            serde_json::from_slice::<T>(line)
-                .with_context(|| format!("When parsing line: {}", String::from_utf8_lossy(line)))
-        })
-        .collect::<anyhow::Result<Vec<T>>>()
-}
-
-/// Like [`read_reader_lines_parallel_bytes`], but reads the input in
-/// fixed-size chunks and parses each one on the rayon pool, so reading (and
-/// decompression) overlaps with parsing.
+/// Read JSON lines from a reader in chunks and parse each chunk on the rayon
+/// pool, so reading (and decompression) overlaps with parsing.
 ///
-/// Compared to the slurp-then-parse variant this:
+/// Compared to reading the whole input before parsing, this:
 /// - bounds peak memory at a fixed multiple of the chunk size rather than
 ///   the full decompressed size, and
 /// - hides read latency behind parsing -- on workloads where the parser pool
