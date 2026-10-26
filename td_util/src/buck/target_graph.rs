@@ -1057,18 +1057,6 @@ impl TargetGraph {
             .push(importer);
     }
 
-    pub fn remove_from_file_rdeps(&self, imported: FileId, importer: FileId) {
-        if let Some(mut rdeps) = self.file_id_to_rdeps.get_mut(&imported) {
-            if let Some(pos) = rdeps.iter().position(|&id| id == importer) {
-                rdeps.swap_remove(pos);
-            }
-            if rdeps.is_empty() {
-                drop(rdeps);
-                self.file_id_to_rdeps.discard(&imported);
-            }
-        }
-    }
-
     /// Removes `importers` from the importers of `imported` in one pass over
     /// its list, and returns whether no importer remains.
     pub fn remove_file_importers(&self, imported: FileId, importers: &IdHashSet<FileId>) -> bool {
