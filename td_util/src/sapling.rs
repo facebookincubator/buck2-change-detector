@@ -20,6 +20,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+use anyhow::Context as _;
 use tempfile::NamedTempFile;
 use tokio::process::Command as AsyncCommand;
 
@@ -38,38 +39,27 @@ pub fn sl_status(from_hash: &str, to_hash: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8(output.stdout)?)
 }
 
-/// Returns the exclusive commit distance between `from_hash` and
-/// `to_hash` (commits strictly after `from_hash`, up to and including
-/// `to_hash`). `None` on shell failure.
-pub fn sl_log_count(from_hash: &str, to_hash: &str) -> Option<i64> {
-    let stdout = run_sl(&[
-        "log",
-        "--rev",
-        &format!("{from_hash}::{to_hash}"),
-        "-T",
-        "x",
-    ])?;
-    Some(count_from_log_output(&stdout))
-}
-
-/// Returns the Unix epoch seconds of the last public commit in `::rev`,
-/// which is `rev` itself when `rev` is public.
-///
-/// Queries `last(public() & ::<rev>)`. Uses the `%s` strftime
-/// template so the output is just the integer seconds (rather than
-/// `{date|hgdate}` which adds the timezone offset and forces a split).
-/// `None` on shell failure or if the output isn't parseable.
-pub fn sl_log_timestamp(rev: &str) -> Option<i64> {
-    let stdout = run_sl(&[
-        "log",
-        "--rev",
-        &format!("last(public() & ::{rev})"),
-        "-T",
-        "{date(date, '%s')}",
-        "--limit",
-        "1",
-    ])?;
-    stdout.trim().parse::<i64>().ok()
+/// The number of commits strictly after `from_hash`, up to and including
+/// `to_hash`, on the `from_hash::to_hash` range, run in `cwd` (or the process
+/// working directory when `None`). The range is empty, and the result is 0,
+/// also when `from_hash` is not an ancestor of `to_hash`.
+pub async fn commit_distance(
+    from_hash: &str,
+    to_hash: &str,
+    cwd: Option<&Path>,
+) -> anyhow::Result<i64> {
+    let stdout = run_sl_async(
+        &[
+            "log",
+            "--rev",
+            &format!("{from_hash}::{to_hash}"),
+            "-T",
+            "x",
+        ],
+        cwd,
+    )
+    .await?;
+    Ok(count_from_log_output(&stdout))
 }
 
 /// A public cache anchor. Its hash and timestamp come from the same SCM record.
@@ -79,9 +69,10 @@ pub struct PublicAncestor {
     pub timestamp: i64,
 }
 
-/// Resolve the public ancestor used by timestamp-based saved-state lookup.
-/// Keep the historical `last` selector: changing ancestor policy on merges is
-/// independent of returning a consistent hash and timestamp.
+/// The hash and timestamp of the last public commit in `::rev`, which is `rev`
+/// itself when `rev` is public. Keep the historical `last` selector: changing
+/// ancestor policy on merges is independent of returning a consistent hash and
+/// timestamp.
 pub async fn public_ancestor_identity(
     rev: &str,
     cwd: Option<&Path>,
@@ -231,9 +222,8 @@ pub async fn diff_git(
 
 /// Raw `sl status --rev A --rev B -amr --root-relative`: the tree difference
 /// between two commits' manifests (two `--rev` flags), unlike
-/// [`status_range`]'s `A::B` range form. This is the inter-run changeset
-/// shape: the two run commits sit on different heads, so a range revset
-/// between them is not what BTD needs.
+/// [`status_range`]'s `A::B` range form. The two commits do not need to share
+/// a line of history, for example two runs on different heads.
 pub async fn status_between(a: &str, b: &str, cwd: Option<&Path>) -> anyhow::Result<String> {
     run_sl_async(
         &["status", "--rev", a, "--rev", b, "-amr", "--root-relative"],
@@ -300,14 +290,6 @@ fn count_from_log_output(stdout: &str) -> i64 {
     inclusive.saturating_sub(1) as i64
 }
 
-fn run_sl(args: &[&str]) -> Option<String> {
-    let output = Command::new("sl").args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout).ok()
-}
-
 /// Run `sl <args>` with `HGPLAIN=1` for deterministic output, optionally in
 /// `cwd`, returning stdout. Errors if `sl` fails to spawn or exits non-zero.
 async fn run_sl_async(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
@@ -316,15 +298,23 @@ async fn run_sl_async(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<Strin
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
-    let output = cmd.output().await?;
+    // Debug formatting keeps an argument that contains a tab or a newline,
+    // such as a template, on one line of the error text.
+    let command = || format!("sl {args:?}");
+    let output = cmd
+        .output()
+        .await
+        .with_context(|| format!("running {}", command()))?;
     if !output.status.success() {
         anyhow::bail!(
-            "sl {} failed:\n{}",
-            args.join(" "),
+            "{} failed ({}):\n{}",
+            command(),
+            output.status,
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(String::from_utf8(output.stdout)?)
+    String::from_utf8(output.stdout)
+        .with_context(|| format!("decoding the output of {}", command()))
 }
 
 fn write_temp(contents: &str) -> anyhow::Result<NamedTempFile> {
