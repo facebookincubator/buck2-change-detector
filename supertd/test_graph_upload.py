@@ -36,7 +36,7 @@ def test_graph_upload_validates_base_without_checkout(
     base = "." if phase == "malformed" else "a" * 40
     head = "b" * 40
     # Mock SCM, not the publisher. A public base must reach graph validation
-    # even though the working copy is a different, non-public revision.
+    # even though the working copy is a different revision.
     sl = tmp_path / "sl"
     sl.write_text(
         f"#!{sys.executable}\n"
@@ -45,7 +45,6 @@ def test_graph_upload_validates_base_without_checkout(
         "args = sys.argv[1:]\n"
         "rev = args[args.index('-r') + 1]\n"
         f"if rev == '.':\n    print({head!r})\n"
-        "elif rev == '. & public()':\n    pass\n"
         f"elif rev == {base!r}:\n"
         + (
             "    sys.exit('unknown revision')\n"

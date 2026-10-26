@@ -100,10 +100,7 @@ fn parse_public_ancestor(stdout: &str) -> anyhow::Result<PublicAncestor> {
     let timestamp = fields
         .next()
         .ok_or_else(|| anyhow::anyhow!("missing timestamp"))?;
-    anyhow::ensure!(
-        hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "invalid public ancestor hash: {hash}"
-    );
+    validate_commit_hash(hash)?;
     anyhow::ensure!(fields.next().is_none(), "multiple public ancestor records");
     Ok(PublicAncestor {
         commit_hash: hash.to_owned(),
@@ -158,17 +155,6 @@ pub async fn revision_is_public(hash: &str, cwd: Option<&Path>) -> anyhow::Resul
         "draft" | "secret" => Ok(false),
         other => anyhow::bail!("unexpected commit phase for {hash}: {other:?}"),
     }
-}
-
-/// Whether the current commit is public, run in `cwd` (or the process working
-/// directory when `None`).
-pub async fn current_revision_is_public(cwd: Option<&Path>) -> anyhow::Result<bool> {
-    let stdout = run_sl_async(
-        &["log", "-r", ". & public()", "-T", "x", "--limit", "1"],
-        cwd,
-    )
-    .await?;
-    Ok(!stdout.trim().is_empty())
 }
 
 /// Raw `sl status -amr --root-relative` for the working copy (changes
@@ -230,20 +216,6 @@ pub async fn status_between(a: &str, b: &str, cwd: Option<&Path>) -> anyhow::Res
         cwd,
     )
     .await
-}
-
-/// The commit's public ancestor (`max(public() & ::rev)`): for a rebased
-/// diff run, its rebase target. Errors when the revision does not resolve,
-/// which for a another run's commit usually means it was never pulled; see
-/// [`pull_commit`].
-pub async fn public_ancestor(rev: &str, cwd: Option<&Path>) -> anyhow::Result<String> {
-    let revset = format!("max(public() & ::{rev})");
-    let stdout = run_sl_async(&["log", "-r", &revset, "-T", "{node}"], cwd).await?;
-    let node = stdout.trim();
-    if node.is_empty() {
-        anyhow::bail!("no public ancestor for {rev}");
-    }
-    Ok(node.to_owned())
 }
 
 /// `sl pull -r <rev>`: make another run's commit resolvable locally. Cheap
