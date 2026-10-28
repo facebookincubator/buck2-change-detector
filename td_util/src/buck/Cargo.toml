@@ -30,5 +30,4 @@ zstd = { version = "0.13.3", features = ["experimental", "zstdmt"] }
 
 [dev-dependencies]
 rstest = "0.18"
-stacker = "0.1.25"
 tempfile = "3.1.0"

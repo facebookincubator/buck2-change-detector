@@ -241,17 +241,21 @@ pub struct TargetGraph {
 impl TargetGraph {
     /// Writes the graph in the binary layout of graph schema `SCHEMA_VERSION`.
     ///
-    /// The write runs on a thread pool of its own, so `writer` must be `Send`.
-    pub fn write_framed(&self, writer: &mut (dyn Write + Send)) -> anyhow::Result<()> {
+    /// The write runs nested parallel loops on the caller's rayon pool, so
+    /// that pool needs deep worker stacks, such as the global pool after
+    /// [`td_util::rayon_pool::init_global`].
+    pub fn write_framed(&self, writer: &mut dyn Write) -> anyhow::Result<()> {
         dense::write(self, writer)
     }
 
+    /// Reads a graph written by `write_framed`. See `read_framed_cancellable`.
     pub fn read_framed(file: &std::fs::File) -> anyhow::Result<Self> {
         Self::read_framed_cancellable(file, &|| Ok(()))
     }
 
     /// Reads a graph written by `write_framed`, checking cancellation before
-    /// decoding each block.
+    /// decoding each block. Like the write, the read runs nested parallel
+    /// loops on the caller's rayon pool.
     pub fn read_framed_cancellable(
         file: &std::fs::File,
         check_cancelled: &(dyn Fn() -> anyhow::Result<()> + Sync),

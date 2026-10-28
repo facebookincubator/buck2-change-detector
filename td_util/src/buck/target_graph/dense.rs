@@ -855,8 +855,9 @@ fn compress_part(regions: &[Vec<u8>]) -> anyhow::Result<(Vec<u8>, u64)> {
 
 /// Compresses one frame with its content size and a checksum. Dense indices
 /// make a flipped byte decode to another valid id, so corruption must be
-/// caught before decoding. Each frame gets a fresh zstd context, so a
-/// context holds its tens of MB only while it compresses one frame.
+/// caught before decoding. Each frame gets a fresh zstd context: a context
+/// kept per thread would hold tens of MB on every pool thread for the life of
+/// the process.
 fn compress_frame(raw: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut compressor =
         zstd::bulk::Compressor::new(ZSTD_LEVEL).context("creating a zstd compressor")?;
@@ -1035,28 +1036,9 @@ impl<'w> FileWriter<'w> {
     }
 }
 
-/// Stack size of the graph writer's worker threads.
-///
-/// A rayon thread that waits inside a join runs other queued jobs on its own
-/// stack, so the stack depth of the writer's parallel loops depends on
-/// scheduling. In local writes of a production graph, the deepest measured
-/// worker stack used 170-250 KiB, but production graphs overflowed the default
-/// 2 MiB worker stack in about 1 of 1,000 writes. 16 MiB is an empirical margin
-/// for the current loops, not a bound; revisit it if the writer adds nesting.
-const WRITER_STACK_BYTES: usize = 16 << 20;
-
 /// Writes `graph`. The graph must not be mutated while it is written.
-///
-/// The write runs in its own thread pool with the caller's thread count, so
-/// its stack size does not depend on the caller's rayon configuration.
-pub(super) fn write(graph: &TargetGraph, writer: &mut (dyn Write + Send)) -> anyhow::Result<()> {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(rayon::current_num_threads())
-        .stack_size(WRITER_STACK_BYTES)
-        .thread_name(|i| format!("graph-write-{i}"))
-        .build()
-        .context("creating the graph writer's thread pool")?
-        .install(|| write_with(graph, writer, LAYOUT))
+pub(super) fn write(graph: &TargetGraph, writer: &mut dyn Write) -> anyhow::Result<()> {
+    write_with(graph, writer, LAYOUT)
 }
 
 fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> anyhow::Result<()> {
@@ -2130,37 +2112,6 @@ mod tests {
         let graph = sample_graph();
         let loaded = decode(&encode(&graph, layout)).expect("read");
         assert_eq!(snapshot(&loaded), snapshot(&graph));
-    }
-
-    /// Stack that must be left on a writing thread. Any thread with the
-    /// default 2 MiB stack has less. The value is fixed, so lowering
-    /// `WRITER_STACK_BYTES` to 8 MiB or less fails the test.
-    const REQUIRED_STACK_BYTES: usize = 8 << 20;
-
-    /// Fails the test if a write runs on a thread with less than
-    /// `REQUIRED_STACK_BYTES` of stack left.
-    struct StackCheckingWriter(Vec<u8>);
-
-    impl Write for StackCheckingWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let remaining =
-                stacker::remaining_stack().expect("the platform reports the stack bounds");
-            assert!(
-                remaining >= REQUIRED_STACK_BYTES,
-                "written with {remaining} bytes of stack left"
-            );
-            self.0.write(buf)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.0.flush()
-        }
-    }
-
-    #[test]
-    fn the_write_runs_on_the_writers_large_stacks() {
-        let mut out = StackCheckingWriter(Vec::new());
-        sample_graph().write_framed(&mut out).expect("write");
     }
 
     #[test]
