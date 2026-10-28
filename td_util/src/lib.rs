@@ -23,6 +23,7 @@ pub mod no_hash;
 pub mod operation_event;
 pub mod prelude;
 pub mod project;
+pub mod rayon_pool;
 pub mod sapling;
 pub mod string;
 pub mod supertd_events;

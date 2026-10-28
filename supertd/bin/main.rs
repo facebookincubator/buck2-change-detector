@@ -18,8 +18,10 @@ use clap::FromArgMatches;
 use clap::Parser;
 use fbinit::FacebookInit;
 use td_util::cli::get_args;
+use td_util::logging::Phase;
 use td_util::logging::init_logger_start_time;
 use td_util::supertd_events::tracing::info;
+use td_util::workflow_error::WorkflowError;
 
 /// Generic binary for the pieces of the new target-determinator framework.
 #[allow(clippy::large_enum_variant)] // Only one instance, so not a big deal
@@ -119,6 +121,18 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
     };
 
     info!("Supertd started");
+
+    // Before any use of the global rayon pool, which would build it with
+    // default stacks. After argument parsing, so that `--help` and the
+    // `--version` flags, also the graph cache's `graph build --version`
+    // probe, build no pool.
+    {
+        let mut phase = Phase::main("rayon_pool");
+        if let Err(err) = td_util::rayon_pool::init_global() {
+            phase.done_with("failed");
+            return WorkflowError::infra_failure(format!("{err:#}")).report();
+        }
+    }
 
     let ret = match args {
         Args::Audit(args) => audit::main(args),
