@@ -538,8 +538,9 @@ pub fn write_json_lines_parallel<W: Write, T: Serialize + Sync>(
     writer.flush().context("flushing JSON lines")
 }
 
-/// [`write_json_lines_parallel`] into a writer the caller buffers and
-/// flushes, for a caller that writes many batches to one output.
+/// [`write_json_lines_parallel`] into a writer that the caller buffers, and
+/// flushes or finishes after its last batch, for a caller that writes many
+/// batches to one output.
 pub fn write_json_lines_parallel_into<W: Write, T: Serialize + Sync>(
     writer: &mut W,
     xs: &[T],

@@ -107,7 +107,7 @@ impl GraphSize {
             .collect::<Vec<_>>();
 
         let writer: Box<dyn Write> = match output_path {
-            Some(path) => file_writer(path)?,
+            Some(path) => Box::new(file_writer(path)?),
             None => Box::new(stdout().lock()),
         };
         if output == OutputFormat::Json {
