@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Context as _;
 use itertools::Itertools;
@@ -59,6 +60,7 @@ impl CellData {
 
 #[derive(Debug)]
 pub struct CellInfo {
+    root: PathBuf,
     cells: HashMap<CellName, CellData>,
     /// Sorted by path length, so the longest is first
     paths: Vec<(CellName, ProjectRelativePath)>,
@@ -87,13 +89,14 @@ impl CellInfo {
         // because of https://github.com/rust-lang/rust/issues/67295.
 
         // Some sample values that we use in various tests, roughly modelled on internal defaults.
+        let root = std::env::current_dir().expect("test working directory exists");
         let value = serde_json::json!(
             {
-                "root": "/Users/ndmitchell/repo",
-                "foo": "/Users/ndmitchell/repo/foo",
-                "bar": "/Users/ndmitchell/repo/bar",
-                "fbcode": "/Users/ndmitchell/repo/fbcode",
-                "prelude": "/Users/ndmitchell/repo/fbcode/prelude",
+                "root": root,
+                "foo": root.join("foo"),
+                "bar": root.join("bar"),
+                "fbcode": root.join("fbcode"),
+                "prelude": root.join("fbcode/prelude"),
               }
         );
         let mut res = CellInfo::parse(&value.to_string()).unwrap();
@@ -113,7 +116,7 @@ impl CellInfo {
         Self::parse(&data)
     }
 
-    fn parse_cells_data(data: &str) -> anyhow::Result<HashMap<CellName, CellData>> {
+    fn parse_cells_data(data: &str) -> anyhow::Result<(PathBuf, HashMap<CellName, CellData>)> {
         let json: HashMap<String, String> = serde_json::from_str(data)?;
 
         // We need to find the shortest path, as that will be the prefix and we want project relative paths
@@ -141,7 +144,7 @@ impl CellInfo {
                 }
             }
         }
-        Ok(cells)
+        Ok((PathBuf::from(prefix), cells))
     }
 
     fn create_paths(cells: &HashMap<CellName, CellData>) -> Vec<(CellName, ProjectRelativePath)> {
@@ -154,9 +157,13 @@ impl CellInfo {
     }
 
     pub fn parse(data: &str) -> anyhow::Result<Self> {
-        let cells = Self::parse_cells_data(data)?;
+        let (root, cells) = Self::parse_cells_data(data)?;
         let paths = Self::create_paths(&cells);
-        Ok(Self { cells, paths })
+        Ok(Self { root, cells, paths })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     pub fn load_config_data(&mut self, file: &Path) -> anyhow::Result<()> {
@@ -210,7 +217,11 @@ impl CellInfo {
     pub fn unresolve(&self, path: &ProjectRelativePath) -> anyhow::Result<CellPath> {
         // because we know self.paths has the longest match first, we just find the first match
         for (cell, prefix) in &self.paths {
-            if let Some(x) = path.as_str().strip_prefix(prefix.as_str()) {
+            if let Some(x) = path
+                .as_str()
+                .strip_prefix(prefix.as_str())
+                .filter(|x| prefix.as_str().is_empty() || x.is_empty() || x.starts_with('/'))
+            {
                 let x = x.strip_prefix('/').unwrap_or(x);
                 return Ok(cell.join(&CellRelativePath::new(x)));
             }

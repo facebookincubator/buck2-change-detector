@@ -23,6 +23,7 @@ pub mod ignore_set;
 pub mod invalidation_patterns;
 pub mod labels;
 pub mod owners;
+pub mod package_canonicalizer;
 pub mod package_resolver;
 pub mod process;
 pub mod run;

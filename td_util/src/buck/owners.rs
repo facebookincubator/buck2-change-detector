@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -15,6 +16,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::package_canonicalizer::PackageCanonicalizer;
 use crate::types::ProjectRelativePath;
 use crate::types::TargetLabel;
 
@@ -74,6 +76,18 @@ pub fn read_changed_file_owners(input_path: &Path) -> anyhow::Result<Option<Owne
 }
 
 impl Owners {
+    pub fn canonicalize_targets(&mut self, canonicalizer: &PackageCanonicalizer<'_>) {
+        for targets in self.0.values_mut() {
+            for target in targets.iter_mut() {
+                if let Some(label) = canonicalizer.canonical_label(target.as_str()) {
+                    *target = TargetLabel::new(&label);
+                }
+            }
+            let mut seen = HashSet::new();
+            targets.retain(|target| seen.insert(target.clone()));
+        }
+    }
+
     /// Create a new Owners from a JSON string returned by Buck2
     pub fn from_json(json_str: &str) -> anyhow::Result<Self> {
         let raw_map: IndexMap<String, Vec<String>> = serde_json::from_str(json_str)?;

@@ -1045,6 +1045,7 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
     // Naming every field makes adding one to `TargetGraph` a compile error
     // here until the layout covers it. `list_streams!` covers the lists.
     let TargetGraph {
+        canonicalization_stats: _,
         target_id_to_label: _,
         rule_type_id_to_string: _,
         oncall_id_to_string: _,
@@ -1843,6 +1844,7 @@ pub(super) fn read(
             let (label_set_id_to_labels, minimized_targets) =
                 sets_and_targets.expect("spawned above")?;
             TargetGraph {
+                canonicalization_stats: Default::default(),
                 target_id_to_label: target_id_to_label.expect("spawned above")?,
                 rule_type_id_to_string: rule_type_id_to_string.expect("spawned above")?,
                 oncall_id_to_string: oncall_id_to_string.expect("spawned above")?,
@@ -2020,6 +2022,7 @@ mod tests {
     fn snapshot(g: &TargetGraph) -> Snapshot {
         // Naming every field makes a new field a compile error here.
         let TargetGraph {
+            canonicalization_stats: _,
             target_id_to_label,
             rule_type_id_to_string,
             oncall_id_to_string,

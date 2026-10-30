@@ -24,6 +24,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
 
+use crate::package_canonicalizer::CanonicalizationStats;
 use crate::types::Package;
 use crate::types::PatternType;
 use crate::types::TargetHash;
@@ -43,8 +44,9 @@ fn is_ci_hint_rule_type_name(full: &str) -> bool {
 
 /// Version of the serialized graph and its persisted-state contract.
 /// Version 15 stores the graph in the layout of `dense`.
+/// Version 16 canonicalizes directory-symlink target labels at ingestion.
 /// Increment for incompatible layout or graph-maintenance changes.
-pub const SCHEMA_VERSION: u32 = 15;
+pub const SCHEMA_VERSION: u32 = 16;
 
 /// Keeps decoding and runtime construction independent of the caller's closure type.
 type CheckCancelled<'a> = dyn Fn() -> anyhow::Result<()> + Sync + 'a;
@@ -213,6 +215,8 @@ struct StoredMinimizedTarget {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct TargetGraph {
+    #[serde(skip)]
+    canonicalization_stats: CanonicalizationStats,
     target_id_to_label: Map<TargetId, String>,
     rule_type_id_to_string: Map<RuleTypeId, String>,
     oncall_id_to_string: Map<OncallId, String>,
@@ -267,6 +271,14 @@ impl TargetGraph {
 impl TargetGraph {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn canonicalization_stats(&self) -> CanonicalizationStats {
+        self.canonicalization_stats
+    }
+
+    pub fn set_canonicalization_stats(&mut self, stats: CanonicalizationStats) {
+        self.canonicalization_stats = stats;
     }
 
     pub fn len(&self) -> usize {
