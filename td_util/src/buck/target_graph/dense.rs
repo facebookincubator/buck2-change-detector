@@ -1246,22 +1246,37 @@ fn decode_directory(raw: &[u8]) -> anyhow::Result<Directory> {
     Ok(dir)
 }
 
-/// Reads the header, trailer and directory. Checks that the block parts tile
-/// the data region and that no part claims more than `MAX_PART_BYTES`.
-fn read_directory(file: &File) -> anyhow::Result<Directory> {
+/// Whether `file` starts with the header that `write` writes: the magic bytes
+/// and graph schema `SCHEMA_VERSION`. A file shorter than the header does not.
+pub(super) fn has_current_header(file: &File) -> anyhow::Result<bool> {
+    Ok(read_header(file)? == Some((MAGIC, SCHEMA_VERSION)))
+}
+
+/// The magic bytes and the schema at the start of a graph file, or `None` when
+/// the file is shorter than the header.
+fn read_header(file: &File) -> anyhow::Result<Option<([u8; 4], u32)>> {
     let mut head = [0u8; HEADER_BYTES as usize];
     match read_exact_at(file, &mut head, 0) {
         Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            anyhow::bail!("graph file too small: shorter than its {HEADER_BYTES}-byte header")
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e).context("reading graph file header"),
     }
     let (magic, version) = head.split_at(MAGIC.len());
+    Ok(Some((
+        magic.try_into().expect("4-byte magic"),
+        u32::from_le_bytes(version.try_into().expect("4-byte version")),
+    )))
+}
+
+/// Reads the header, trailer and directory. Checks that the block parts tile
+/// the data region and that no part claims more than `MAX_PART_BYTES`.
+fn read_directory(file: &File) -> anyhow::Result<Directory> {
+    let Some((magic, version)) = read_header(file)? else {
+        anyhow::bail!("graph file too small: shorter than its {HEADER_BYTES}-byte header")
+    };
     if magic != MAGIC {
         anyhow::bail!("graph file magic mismatch: expected {MAGIC:?}, got {magic:?}");
     }
-    let version = u32::from_le_bytes(version.try_into().expect("4-byte version"));
     if version != SCHEMA_VERSION {
         // Callers outside this crate classify a schema mismatch by this exact
         // text, which every earlier layout also used.

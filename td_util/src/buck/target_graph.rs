@@ -257,6 +257,15 @@ impl TargetGraph {
         Self::read_framed_cancellable(file, &|| Ok(()))
     }
 
+    /// Whether `file` starts with the header that `write_framed` writes for
+    /// graph schema `SCHEMA_VERSION`. Reads only the header; on some platforms
+    /// the read moves the file cursor, so rewind before reading the file again.
+    /// A caller that reuses the bytes of a graph file as current output can
+    /// check this, because a reader may some day also accept older schemas.
+    pub fn has_current_framed_header(file: &std::fs::File) -> anyhow::Result<bool> {
+        dense::has_current_header(file)
+    }
+
     /// Reads a graph written by `write_framed`, checking cancellation before
     /// decoding each block. Like the write, the read runs nested parallel
     /// loops on the caller's rayon pool.
@@ -1673,6 +1682,35 @@ mod tests {
         bytes[4..8].copy_from_slice(&version.to_le_bytes());
         let error = read_framed_bytes(&bytes).unwrap_err();
         assert!(error.to_string().contains("framed file version"), "{error}");
+    }
+
+    #[rstest]
+    #[case::current(None, true)]
+    #[case::older_schema(Some(SCHEMA_VERSION - 1), false)]
+    fn only_current_framed_files_have_a_current_header(
+        #[case] schema: Option<u32>,
+        #[case] expected: bool,
+    ) {
+        let mut bytes = Vec::new();
+        TargetGraph::new().write_framed(&mut bytes).unwrap();
+        if let Some(schema) = schema {
+            bytes[4..8].copy_from_slice(&schema.to_le_bytes());
+        }
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&bytes).unwrap();
+        assert_eq!(
+            TargetGraph::has_current_framed_header(&file).unwrap(),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case::shorter_than_the_header(b"TGRF\x0f\x00".as_slice())]
+    #[case::not_a_graph(b"not a graph file".as_slice())]
+    fn other_files_have_no_current_header(#[case] contents: &[u8]) {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(contents).unwrap();
+        assert!(!TargetGraph::has_current_framed_header(&file).unwrap());
     }
 
     #[test]
