@@ -1392,17 +1392,7 @@ impl<'a> Reader<'a> {
             .enumerate()
             .map(|(i, b)| {
                 (self.check_cancelled)()?;
-                let index = read_part(self.file, &b.index)?;
-                // Each entry has exactly one varint in the first region, so
-                // counting the bytes that end a varint counts the entries.
-                let first = first_region(&index)?;
-                let found = first.iter().filter(|&&byte| byte < 0x80).count() as u64;
-                anyhow::ensure!(
-                    found == b.entries && first.last().is_none_or(|&byte| byte < 0x80),
-                    "block {i}: the index holds {found} entries, the directory claims {}",
-                    b.entries
-                );
-                Ok(index)
+                read_index(self.file, b).with_context(|| format!("block {i}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()
             .with_context(|| format!("reading {name}"))?;
@@ -1695,8 +1685,9 @@ impl Checked<'_> {
             .enumerate()
             .map(|(i, (block, index))| {
                 (self.reader.check_cancelled)()?;
-                let data = read_part(self.reader.file, &block.data)?;
-                decode(index, &data, block.entries as usize).with_context(|| format!("block {i}"))
+                read_part(self.reader.file, &block.data)
+                    .and_then(|data| decode(index, &data, block.entries as usize))
+                    .with_context(|| format!("block {i}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()
             .with_context(|| format!("decoding {}", self.stream.name))
@@ -1751,11 +1742,36 @@ impl Checked<'_> {
             .enumerate()
             .try_for_each(|(i, (slot, (b, index)))| {
                 (self.reader.check_cancelled)()?;
-                let data = read_part(self.reader.file, &b.data)?;
-                decode(index, &data, slot).with_context(|| format!("block {i}"))
+                read_part(self.reader.file, &b.data)
+                    .and_then(|data| decode(index, &data, slot))
+                    .with_context(|| format!("block {i}"))
             })
             .with_context(|| format!("decoding {}", self.stream.name))
     }
+}
+
+/// Reads the index part of a block and checks its entry count against the
+/// directory.
+fn read_index(file: &File, block: &Block) -> anyhow::Result<Vec<u8>> {
+    let index = read_part(file, &block.index)?;
+    // Each entry has exactly one varint in the first region, so counting the
+    // bytes that end a varint counts the entries.
+    let first = first_region(&index)?;
+    let found = first.iter().filter(|&&byte| byte < 0x80).count() as u64;
+    anyhow::ensure!(
+        found == block.entries && first.last().is_none_or(|&byte| byte < 0x80),
+        "the index holds {found} entries, the directory claims {}",
+        block.entries
+    );
+    Ok(index)
+}
+
+/// Checks one block without decoding it. Its index part is freed before its
+/// data part is read.
+fn verify_block(file: &File, block: &Block) -> anyhow::Result<()> {
+    drop(read_index(file, block)?);
+    read_part(file, &block.data)?;
+    Ok(())
 }
 
 /// The first region of a block part.
@@ -1879,6 +1895,75 @@ pub(super) fn read(
     let graph = list_streams!(read_lists);
     check_cancelled()?;
     Ok(graph)
+}
+
+/// The id tables that `read` loads. `verify_covers_every_stream_the_writer_writes`
+/// keeps this copy of `read`'s names in step with the writer.
+const TABLES: [&str; 8] = [
+    "target", "rule", "oncall", "label", "glob", "package", "file", "cidep",
+];
+
+/// Whether a stream is an edge list, which must also store its list mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamKind {
+    Plain,
+    List,
+}
+
+/// Every stream that `read` decodes. `verify_covers_every_stream_the_writer_writes`
+/// keeps this copy of `read`'s names in step with the writer.
+fn streams_read() -> Vec<(String, StreamKind)> {
+    let mut streams: Vec<(String, StreamKind)> = TABLES
+        .iter()
+        .flat_map(|table| {
+            [
+                (format!("str/{table}"), StreamKind::Plain),
+                (format!("extra/{table}"), StreamKind::Plain),
+            ]
+        })
+        .collect();
+    macro_rules! lists {
+        ($(($name:literal, $field:ident, $k:ident, $v:ident, $mode:ident)),* $(,)?) => {
+            streams.extend([$(($name.to_owned(), StreamKind::List)),*]);
+        };
+    }
+    list_streams!(lists);
+    streams.extend(
+        ["labelsets", "minimized", "sudo", "errors"]
+            .map(|name| (name.to_owned(), StreamKind::Plain)),
+    );
+    streams
+}
+
+/// Checks, without decoding entries, that `file` is a complete graph of this
+/// schema: the header, trailer and directory, the tiling of the block parts,
+/// and the presence and list mode of every stream that `read` decodes. For
+/// each block of those streams it checks the entry count of the index part
+/// and the content checksum of both parts; parts of other streams are only
+/// tiled. Unless a damaged part matches its 32-bit checksum by chance, every
+/// block that `read` decodes is then as its writer wrote it, so `read` can
+/// still reject the file only for entries that its writer encoded wrongly.
+pub(super) fn verify(file: &File, check_cancelled: &CheckCancelled<'_>) -> anyhow::Result<()> {
+    check_cancelled()?;
+    let dir = read_directory(file)?;
+    streams_read().par_iter().try_for_each(|(name, kind)| {
+        let stream = dir.stream(name)?;
+        anyhow::ensure!(
+            *kind == StreamKind::Plain || stream.mode.is_some(),
+            "{name} has no list mode"
+        );
+        // One pass per block: nothing that a block holds outlives its check.
+        stream
+            .blocks
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(i, block)| {
+                check_cancelled()?;
+                verify_block(file, block).with_context(|| format!("block {i}"))
+            })
+            .with_context(|| format!("verifying {name}"))
+    })?;
+    check_cancelled()
 }
 
 #[cfg(test)]
@@ -2116,6 +2201,34 @@ mod tests {
         file
     }
 
+    /// How a test loads a file: a full read, or the integrity check that
+    /// must reject the same damage.
+    #[derive(Clone, Copy, Debug)]
+    enum Loader {
+        Read,
+        Verify,
+    }
+
+    impl Loader {
+        /// Loads `bytes`, failing the test if the loader panics.
+        fn load(self, bytes: &[u8]) -> anyhow::Result<()> {
+            let file = file_with(bytes);
+            std::panic::catch_unwind(AssertUnwindSafe(|| self.load_file(&file, &|| Ok(()))))
+                .unwrap_or_else(|_| panic!("{self:?} panicked"))
+        }
+
+        fn load_file(
+            self,
+            file: &File,
+            check_cancelled: &CheckCancelled<'_>,
+        ) -> anyhow::Result<()> {
+            match self {
+                Self::Read => read(file, check_cancelled).map(drop),
+                Self::Verify => verify(file, check_cancelled),
+            }
+        }
+    }
+
     /// Decodes `bytes`, failing the test if the reader panics.
     fn decode(bytes: &[u8]) -> anyhow::Result<TargetGraph> {
         let file = file_with(bytes);
@@ -2235,19 +2348,21 @@ mod tests {
         assert!(format!("{err:#}").contains("label set"), "{err:#}");
     }
 
-    #[test]
-    fn read_honors_cancellation() {
+    #[rstest]
+    fn loading_honors_cancellation(#[values(Loader::Read, Loader::Verify)] loader: Loader) {
         let file = file_with(&encode(&sample_graph(), TINY));
         let checks = AtomicUsize::new(0);
-        let err = read(&file, &|| {
-            if checks.fetch_add(1, Ordering::Relaxed) >= 5 {
-                anyhow::bail!("cancelled by reader owner");
-            }
-            Ok(())
-        })
-        .expect_err("cancelled read fails");
-        assert!(
-            format!("{err:#}").contains("cancelled by reader owner"),
+        let err = loader
+            .load_file(&file, &|| {
+                if checks.fetch_add(1, Ordering::Relaxed) >= 5 {
+                    anyhow::bail!("cancelled by reader owner");
+                }
+                Ok(())
+            })
+            .expect_err("cancelled load fails");
+        assert_eq!(
+            err.root_cause().to_string(),
+            "cancelled by reader owner",
             "{err:#}"
         );
     }
@@ -2260,18 +2375,23 @@ mod tests {
     fn a_damaged_header_or_trailer_is_rejected(
         #[case] damage: &dyn Fn(&mut Vec<u8>),
         #[case] message: &str,
+        #[values(Loader::Read, Loader::Verify)] loader: Loader,
     ) {
         let mut bytes = encode(&sample_graph(), TINY);
         damage(&mut bytes);
-        let err = decode(&bytes).expect_err("a damaged file must not load");
+        let err = loader
+            .load(&bytes)
+            .expect_err("a damaged file must not load");
         assert!(format!("{err:#}").starts_with(message), "{err:#}");
     }
 
-    #[test]
-    fn other_schema_reports_the_shared_version_message() {
+    #[rstest]
+    fn other_schema_reports_the_shared_version_message(
+        #[values(Loader::Read, Loader::Verify)] loader: Loader,
+    ) {
         let mut bytes = encode(&sample_graph(), LAYOUT);
         bytes[4..8].copy_from_slice(&(SCHEMA_VERSION - 1).to_le_bytes());
-        let err = decode(&bytes).expect_err("other schema must not load");
+        let err = loader.load(&bytes).expect_err("other schema must not load");
         assert_eq!(
             format!("{err:#}"),
             format!(
@@ -2281,12 +2401,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn truncated_files_are_rejected() {
+    #[rstest]
+    fn truncated_files_are_rejected(#[values(Loader::Read, Loader::Verify)] loader: Loader) {
         let bytes = encode(&sample_graph(), TINY);
         for len in (0..bytes.len()).step_by(7) {
             assert!(
-                decode(&bytes[..len]).is_err(),
+                loader.load(&bytes[..len]).is_err(),
                 "a {len}-byte prefix must not load"
             );
         }
@@ -2422,10 +2542,12 @@ mod tests {
     #[case::overlapping_parts("deps", "do not tile", &|s: &mut Stream| s.blocks[0].data.offset = HEADER_BYTES)]
     #[case::frame_size_mismatch("deps", "frame declares", &|s: &mut Stream| s.blocks[0].data.uncomp += 1)]
     #[case::list_mode_missing("ci_srcs", "list mode", &|s: &mut Stream| s.mode = None)]
+    #[case::missing_stream("sudo", "missing stream sudo", &|s: &mut Stream| s.name = "renamed".to_owned())]
     fn tampered_directory_is_rejected_before_allocating(
         #[case] stream: &str,
         #[case] message: &str,
         #[case] edit: &dyn Fn(&mut Stream),
+        #[values(Loader::Read, Loader::Verify)] loader: Loader,
     ) {
         let bytes = encode(&sample_graph(), TINY);
         let tampered = relayout(&bytes, &|_, _| {}, &|dir| {
@@ -2436,7 +2558,9 @@ mod tests {
                 .expect("stream");
             edit(s);
         });
-        let err = decode(&tampered).expect_err("a tampered directory must not load");
+        let err = loader
+            .load(&tampered)
+            .expect_err("a tampered directory must not load");
         assert!(format!("{err:#}").contains(message), "{err:#}");
     }
 
@@ -2531,5 +2655,68 @@ mod tests {
     #[case::empty(&[], None)]
     fn varint_decoding(#[case] bytes: &[u8], #[case] expected: Option<u64>) {
         assert_eq!(Cursor::new(bytes).get().ok(), expected);
+    }
+
+    #[rstest]
+    #[case::default_layout(LAYOUT)]
+    #[case::tiny_blocks(TINY)]
+    fn verify_accepts_what_the_writer_writes(#[case] layout: Layout) {
+        Loader::Verify
+            .load(&encode(&sample_graph(), layout))
+            .expect("a written graph verifies");
+        Loader::Verify
+            .load(&encode(&TargetGraph::new(), layout))
+            .expect("an empty graph verifies");
+    }
+
+    #[test]
+    fn verify_covers_every_stream_the_writer_writes() {
+        let bytes = encode(&sample_graph(), TINY);
+        let written: BTreeSet<String> = read_directory(&file_with(&bytes))
+            .expect("directory")
+            .streams
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        let verified: BTreeSet<String> = streams_read().into_iter().map(|(name, _)| name).collect();
+        assert_eq!(verified, written);
+    }
+
+    /// For single-byte changes across a written file (every byte of its first
+    /// and last 64 bytes, and every fourth byte between them), verification
+    /// rejects the file exactly when `read` does.
+    #[test]
+    fn verify_rejects_a_changed_byte_exactly_when_read_does() {
+        let bytes = encode(&sample_graph(), TINY);
+        let original = snapshot(&decode(&bytes).expect("original decodes"));
+        let positions: Vec<usize> = (0..bytes.len())
+            .filter(|&p| p < 64 || p + 64 >= bytes.len() || p % 4 == 0)
+            .collect();
+        let mut rejected = 0;
+        for &position in &positions {
+            let mut changed = bytes.clone();
+            changed[position] ^= 0x10;
+            let verified = Loader::Verify.load(&changed);
+            let read = decode(&changed);
+            assert_eq!(
+                verified.is_ok(),
+                read.is_ok(),
+                "byte {position}: verify {verified:?}, read {:?}",
+                read.as_ref().err()
+            );
+            match read {
+                // A change that both accept leaves the decoded content intact,
+                // for example a larger zstd window.
+                Ok(graph) => assert!(snapshot(&graph) == original, "byte {position}"),
+                Err(_) => rejected += 1,
+            }
+        }
+        // Most changes alter content; this keeps the comparison from passing
+        // on files that neither side reads.
+        assert!(
+            rejected * 10 >= positions.len() * 9,
+            "only {rejected} of {} changed bytes rejected",
+            positions.len()
+        );
     }
 }

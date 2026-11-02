@@ -275,6 +275,21 @@ impl TargetGraph {
     ) -> anyhow::Result<Self> {
         dense::read(file, check_cancelled)
     }
+
+    /// Checks that `file` holds a complete graph written by `write_framed`
+    /// without decoding its entries, at a fraction of the cost of
+    /// `read_framed_cancellable`: the file layout and directory, every stream
+    /// that the read decodes, and for each block of those streams its entry
+    /// count and the content checksums of its parts. It does not parse the
+    /// contents of the blocks, so a file whose blocks a faulty writer encoded
+    /// wrongly can pass and still fail to decode. Cancellation is checked
+    /// before each block.
+    pub fn verify_framed_cancellable(
+        file: &std::fs::File,
+        check_cancelled: &(dyn Fn() -> anyhow::Result<()> + Sync),
+    ) -> anyhow::Result<()> {
+        dense::verify(file, check_cancelled)
+    }
 }
 
 impl TargetGraph {
