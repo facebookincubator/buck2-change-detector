@@ -206,6 +206,30 @@ pub async fn diff_git(
     run_sl_async(&args, cwd).await
 }
 
+/// [`diff_git`] with `context_lines` of context around each change. A count
+/// larger than any file makes every hunk span its whole file, so both versions
+/// of each file can be rebuilt from a single invocation.
+pub async fn diff_git_with_context(
+    base: &str,
+    diff: &str,
+    files: &[&str],
+    context_lines: u32,
+    cwd: Option<&Path>,
+) -> anyhow::Result<String> {
+    let revset = format!("{base}::{diff}");
+    let context = format!("--unified={context_lines}");
+    let mut args = vec![
+        "diff",
+        "--rev",
+        revset.as_str(),
+        "--git",
+        "--binary",
+        context.as_str(),
+    ];
+    args.extend_from_slice(files);
+    run_sl_async(&args, cwd).await
+}
+
 /// Raw `sl status --rev A --rev B -amr --root-relative`: the tree difference
 /// between two commits' manifests (two `--rev` flags), unlike
 /// [`status_range`]'s `A::B` range form. The two commits do not need to share
