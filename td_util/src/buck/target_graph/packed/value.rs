@@ -121,20 +121,14 @@ pub(super) fn ids<K: Key>(bytes: &[u8]) -> impl Iterator<Item = K> + '_ {
         .map(|b| K::from_raw(u64::from_le_bytes(*b)))
 }
 pub(super) fn view_ids<K: Key>(view: View<'_>) -> impl Iterator<Item = K> + '_ {
-    view.bytes
-        .chunks_exact(if view.ids.is_some() {
-            INDEX_BYTES
+    view.bytes.chunks_exact(view.id_bytes()).map(move |bytes| {
+        let raw = if let Some(ids) = view.ids {
+            ids[u32::from_le_bytes(bytes.try_into().expect("validated index")) as usize]
         } else {
-            WORD_BYTES
-        })
-        .map(move |bytes| {
-            let raw = if let Some(ids) = view.ids {
-                ids[u32::from_le_bytes(bytes.try_into().expect("validated index")) as usize]
-            } else {
-                u64::from_le_bytes(bytes.try_into().expect("validated ID"))
-            };
-            K::from_raw(raw)
-        })
+            u64::from_le_bytes(bytes.try_into().expect("validated ID"))
+        };
+        K::from_raw(raw)
+    })
 }
 
 impl Value for Vec<String> {

@@ -30,8 +30,11 @@ use crate::types::PatternType;
 use crate::types::TargetHash;
 use crate::types::TargetPattern;
 
+mod delta;
 mod dense;
 mod packed;
+pub use delta::DeltaFieldSummary;
+pub use delta::DeltaSummary;
 use packed::Map;
 use packed::Set;
 
@@ -289,6 +292,24 @@ impl TargetGraph {
         check_cancelled: &(dyn Fn() -> anyhow::Result<()> + Sync),
     ) -> anyhow::Result<()> {
         dense::verify(file, check_cancelled)
+    }
+
+    /// Writes the changes this graph holds over the snapshot it was read
+    /// from, bound to `base_identity`, the caller's identity of that snapshot:
+    /// 1 to 4096 bytes. The graph must not be mutated while it is written.
+    pub fn write_delta(
+        &self,
+        base_identity: &[u8],
+        writer: &mut dyn Write,
+    ) -> anyhow::Result<DeltaSummary> {
+        delta::write(self, base_identity, writer)
+    }
+
+    /// Applies a delta written by `write_delta` with the same
+    /// `base_identity` (1 to 4096 bytes). This graph must have been read from
+    /// that snapshot and not changed since. On error the graph is unchanged.
+    pub fn apply_delta(&self, delta: &[u8], base_identity: &[u8]) -> anyhow::Result<DeltaSummary> {
+        delta::apply(self, delta, base_identity)
     }
 }
 

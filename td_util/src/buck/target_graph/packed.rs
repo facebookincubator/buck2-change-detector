@@ -15,7 +15,11 @@
 //! mutable replacement rows contain stable IDs instead. Value validation occurs
 //! before the field is exposed, so borrowed access can rely on these invariants.
 //! The on-disk codec must still validate its own representation before building
-//! these blocks. Runtime bytes are not a second serialized graph format.
+//! these blocks. Snapshots never contain runtime bytes. A graph delta (see
+//! `delta`) stores changed values in the runtime value encoding, bound to one
+//! schema and one base snapshot, and validates each value before it applies it.
+//! A change to that encoding is a change to the delta format: it needs a new
+//! `DELTA_VERSION`, and a delta test pins the encoding.
 mod field;
 mod value;
 
@@ -23,6 +27,7 @@ use std::sync::Arc;
 
 pub(super) use field::Map;
 pub(super) use field::ReadRef;
+pub(super) use field::RowChange;
 pub(super) use field::Set;
 use rayon::prelude::*;
 pub(super) use value::Value;
@@ -93,6 +98,20 @@ struct Column {
 pub(super) struct View<'a> {
     bytes: &'a [u8],
     ids: Option<&'a [u64]>,
+}
+impl View<'_> {
+    /// The bytes of one ID: an index into `ids`, or the ID itself.
+    fn id_bytes(&self) -> usize {
+        if self.ids.is_some() {
+            INDEX_BYTES
+        } else {
+            WORD_BYTES
+        }
+    }
+    /// The number of IDs in a list view.
+    fn ids_len(&self) -> usize {
+        self.bytes.len() / self.id_bytes()
+    }
 }
 impl Column {
     fn from_chunks(mut chunks: Vec<Chunk>, check: &CheckCancelled<'_>) -> anyhow::Result<Self> {

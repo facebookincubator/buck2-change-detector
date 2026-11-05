@@ -120,6 +120,21 @@ macro_rules! list_streams {
     };
 }
 
+/// Whether `list_streams!` stores the edge-list field `name` sorted, so its
+/// order carries no meaning; `None` for any other field.
+#[cfg(test)]
+pub(super) fn list_is_sorted(name: &str) -> Option<bool> {
+    macro_rules! sorted {
+        ($(($stream:literal, $field:ident, $keys:ident, $values:ident, $mode:ident)),* $(,)?) => {
+            match name {
+                $($stream => Some(ListMode::$mode != ListMode::Raw),)*
+                _ => None,
+            }
+        };
+    }
+    list_streams!(sorted)
+}
+
 // ---------- directory ----------
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,7 +178,7 @@ impl Directory {
 // ---------- varints and regions ----------
 
 #[inline]
-fn put(buf: &mut Vec<u8>, mut v: u64) {
+pub(super) fn put(buf: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         buf.push((v as u8) | 0x80);
         v >>= 7;
@@ -182,13 +197,13 @@ fn unzigzag(x: u64) -> i64 {
 }
 
 #[derive(Clone, Copy)]
-struct Cursor<'a> {
+pub(super) struct Cursor<'a> {
     b: &'a [u8],
     i: usize,
 }
 
 impl<'a> Cursor<'a> {
-    fn new(b: &'a [u8]) -> Self {
+    pub(super) fn new(b: &'a [u8]) -> Self {
         Self { b, i: 0 }
     }
 
@@ -213,7 +228,7 @@ impl<'a> Cursor<'a> {
 
     /// A varint used as a length or position.
     #[inline]
-    fn index(&mut self) -> anyhow::Result<usize> {
+    pub(super) fn index(&mut self) -> anyhow::Result<usize> {
         Ok(usize::try_from(self.get()?)?)
     }
 
@@ -230,7 +245,7 @@ impl<'a> Cursor<'a> {
         Ok(n)
     }
 
-    fn bytes(&mut self, n: usize) -> anyhow::Result<&'a [u8]> {
+    pub(super) fn bytes(&mut self, n: usize) -> anyhow::Result<&'a [u8]> {
         let end = self
             .i
             .checked_add(n)
@@ -241,18 +256,18 @@ impl<'a> Cursor<'a> {
         Ok(s)
     }
 
-    fn array<const N: usize>(&mut self) -> anyhow::Result<[u8; N]> {
+    pub(super) fn array<const N: usize>(&mut self) -> anyhow::Result<[u8; N]> {
         Ok(self
             .bytes(N)?
             .try_into()
             .expect("bytes returns exactly N bytes"))
     }
 
-    fn remaining(&self) -> usize {
+    pub(super) fn remaining(&self) -> usize {
         self.b.len() - self.i
     }
 
-    fn done(&self) -> bool {
+    pub(super) fn done(&self) -> bool {
         self.i == self.b.len()
     }
 }
@@ -351,7 +366,7 @@ fn all_done(parts: &[&[Cursor<'_>]]) -> bool {
 }
 
 /// The id of a string. Ids are hashes of their strings.
-fn id_of<K: RawId>(s: &str) -> K {
+pub(super) fn id_of<K: RawId>(s: &str) -> K {
     match s.parse() {
         Ok(id) => id,
         Err(never) => match never {},
@@ -858,7 +873,7 @@ fn compress_part(regions: &[Vec<u8>]) -> anyhow::Result<(Vec<u8>, u64)> {
 /// caught before decoding. Each frame gets a fresh zstd context: a context
 /// kept per thread would hold tens of MB on every pool thread for the life of
 /// the process.
-fn compress_frame(raw: &[u8]) -> anyhow::Result<Vec<u8>> {
+pub(super) fn compress_frame(raw: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut compressor =
         zstd::bulk::Compressor::new(ZSTD_LEVEL).context("creating a zstd compressor")?;
     compressor.include_checksum(true)?;
@@ -868,7 +883,7 @@ fn compress_frame(raw: &[u8]) -> anyhow::Result<Vec<u8>> {
 
 /// The content size that a frame declares. The frame must also carry a
 /// checksum, which decompression then verifies.
-fn frame_size(comp: &[u8]) -> anyhow::Result<u64> {
+pub(super) fn frame_size(comp: &[u8]) -> anyhow::Result<u64> {
     let size = zstd::zstd_safe::get_frame_content_size(comp)
         .ok()
         .flatten()
@@ -882,7 +897,7 @@ fn frame_size(comp: &[u8]) -> anyhow::Result<u64> {
 }
 
 /// Decompresses a frame whose declared `size` the caller has checked.
-fn decompress_frame(comp: &[u8], size: u64) -> anyhow::Result<Vec<u8>> {
+pub(super) fn decompress_frame(comp: &[u8], size: u64) -> anyhow::Result<Vec<u8>> {
     let mut out = Vec::new();
     out.try_reserve_exact(usize::try_from(size)?)?;
     let mut decompressor = zstd::bulk::Decompressor::new()?;
@@ -1967,7 +1982,7 @@ pub(super) fn verify(file: &File, check_cancelled: &CheckCancelled<'_>) -> anyho
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
     use std::panic::AssertUnwindSafe;
@@ -1984,7 +1999,7 @@ mod tests {
         values: 4,
     };
 
-    fn target(label: &str) -> TargetId {
+    pub(in super::super) fn target(label: &str) -> TargetId {
         label.parse().expect("id parsing is infallible")
     }
 
@@ -1992,7 +2007,7 @@ mod tests {
     /// every id space, a target hash that is not 32 hex characters, non-ASCII
     /// strings, order-sensitive lists, sudo, errors, ci_hint edges and file
     /// imports.
-    fn sample_graph() -> TargetGraph {
+    pub(in super::super) fn sample_graph() -> TargetGraph {
         let g = TargetGraph::new();
         let rule = g.store_rule_type("prelude//rules.bzl:cxx_library");
         let hint_rule = g.store_rule_type(&format!("prelude//rules.bzl:{CI_HINT_RULE_TYPE}"));
@@ -2091,7 +2106,7 @@ mod tests {
     /// Every field in a canonical form. Unordered edge lists are sorted, so
     /// they compare as multisets; ordered lists keep their order.
     #[derive(Debug, PartialEq)]
-    struct Snapshot {
+    pub(in super::super) struct Snapshot {
         strings: Vec<BTreeMap<u64, String>>,
         minimized: BTreeMap<u64, String>,
         label_sets: BTreeMap<u64, Vec<u64>>,
@@ -2119,7 +2134,7 @@ mod tests {
             .collect()
     }
 
-    fn snapshot(g: &TargetGraph) -> Snapshot {
+    pub(in super::super) fn snapshot(g: &TargetGraph) -> Snapshot {
         // Naming every field makes a new field a compile error here.
         let TargetGraph {
             canonicalization_stats: _,
@@ -2230,7 +2245,7 @@ mod tests {
     }
 
     /// Decodes `bytes`, failing the test if the reader panics.
-    fn decode(bytes: &[u8]) -> anyhow::Result<TargetGraph> {
+    pub(in super::super) fn decode(bytes: &[u8]) -> anyhow::Result<TargetGraph> {
         let file = file_with(bytes);
         std::panic::catch_unwind(AssertUnwindSafe(|| TargetGraph::read_framed(&file)))
             .unwrap_or_else(|_| panic!("the reader panicked"))

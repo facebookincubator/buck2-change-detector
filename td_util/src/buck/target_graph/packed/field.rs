@@ -16,6 +16,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
+use anyhow::Context;
 use dashmap::mapref::entry::VacantEntry;
 use dashmap::mapref::multiple::RefMulti;
 use dashmap::mapref::one::Ref;
@@ -26,12 +27,11 @@ use serde::Serialize;
 
 use super::super::CheckCancelled;
 use super::super::IdDashMap;
+use super::super::IdHashMap;
 use super::Column;
-use super::INDEX_BYTES;
 use super::Key;
 use super::Value;
 use super::View;
-use super::WORD_BYTES;
 
 const OVERRIDE_WORD_BITS: usize = u64::BITS as usize;
 
@@ -113,14 +113,7 @@ impl<K: Key> ReadRef<'_, K, String> {
 impl<K: Key, I: Key> ReadRef<'_, K, Vec<I>> {
     pub(in super::super) fn ids_len(&self) -> usize {
         match &self.source {
-            Source::Native(bytes) => {
-                bytes.bytes.len()
-                    / if bytes.ids.is_some() {
-                        INDEX_BYTES
-                    } else {
-                        WORD_BYTES
-                    }
-            }
+            Source::Native(bytes) => bytes.ids_len(),
             _ => self.changed_value().len(),
         }
     }
@@ -447,6 +440,47 @@ impl<K: Key, V: Value> Map<K, V> {
     pub(in super::super) fn discard(&self, key: &K) -> bool {
         self.take(key).is_some()
     }
+
+    /// Whether the map was read from a snapshot, so that its changes have a
+    /// base to be relative to.
+    pub(in super::super) fn is_loaded(&self) -> bool {
+        self.base.is_some()
+    }
+
+    /// Whether the map holds no change since it was loaded or created.
+    pub(in super::super) fn is_unchanged(&self) -> bool {
+        self.changes.is_empty()
+    }
+
+    /// The rows that differ from the loaded rows, sorted by key: the encoded
+    /// value of a row stored or changed since the load, or a removal of a
+    /// loaded row. A change that leaves a loaded row equal to its loaded value
+    /// is not returned; the second result counts those.
+    pub(in super::super) fn changed_rows(&self) -> anyhow::Result<(Vec<(u64, RowChange)>, usize)> {
+        let mut rows = Vec::with_capacity(self.changes.len());
+        let mut unchanged = 0;
+        for r in self.changes.iter() {
+            let key = *r.key();
+            let loaded = self
+                .base
+                .as_ref()
+                .and_then(|base| base.find(key).map(|row| base.value(row)));
+            match (r.value(), loaded) {
+                (Some(value), Some(view)) if V::decode_view(view) == *value => unchanged += 1,
+                (Some(value), _) => {
+                    let mut bytes = Vec::new();
+                    value.encode(&mut bytes)?;
+                    rows.push((key, RowChange::Stored(bytes)));
+                }
+                (None, Some(_)) => rows.push((key, RowChange::Removed)),
+                (None, None) => {
+                    anyhow::bail!("a removal is recorded for a row that was never loaded")
+                }
+            }
+        }
+        rows.sort_unstable_by_key(|r| r.0);
+        Ok((rows, unchanged))
+    }
 }
 impl<K: Key, I: Key> Map<K, Vec<I>> {
     /// Packed rows have no vector capacity slack. Only owned rows can shrink.
@@ -467,6 +501,179 @@ impl<K: Key, I: Key> Map<K, Vec<I>> {
         column.ids = Some(ids);
         Self::from_column(column, check)
     }
+
+    /// `changed_rows` for a list whose order carries no meaning: a changed
+    /// loaded row is a patch of the IDs removed from and added to it, as
+    /// multisets, when that is smaller than the row. A change that only
+    /// reorders a loaded row counts as unchanged.
+    pub(in super::super) fn changed_unordered_rows(
+        &self,
+    ) -> anyhow::Result<(Vec<(u64, RowChange)>, usize)> {
+        // Diffing reads a changed row's whole loaded row; long rows dominate,
+        // so diff rows in parallel. `None` marks a change that leaves the row
+        // unchanged.
+        let changes: Vec<(u64, Option<RowChange>)> = self
+            .changes
+            .par_iter()
+            .map(|r| {
+                let key = *r.key();
+                let loaded = self
+                    .base
+                    .as_ref()
+                    .and_then(|base| base.find(key).map(|row| base.value(row)));
+                let stored = |value: &Vec<I>| -> anyhow::Result<RowChange> {
+                    let mut bytes = Vec::new();
+                    value.encode(&mut bytes)?;
+                    Ok(RowChange::Stored(bytes))
+                };
+                let change = match (r.value(), loaded) {
+                    (Some(value), Some(view)) => {
+                        let loaded: Vec<u64> = super::value::view_ids::<I>(view)
+                            .map(|id| id.raw())
+                            .collect();
+                        let current: Vec<u64> = value.iter().map(|id| id.raw()).collect();
+                        match list_patch(&loaded, &current) {
+                            None => None,
+                            Some((removed, added))
+                                if removed.len() + added.len() < current.len() =>
+                            {
+                                Some(RowChange::Patched { removed, added })
+                            }
+                            Some(_) => Some(stored(value)?),
+                        }
+                    }
+                    (Some(value), None) => Some(stored(value)?),
+                    (None, Some(_)) => Some(RowChange::Removed),
+                    (None, None) => {
+                        anyhow::bail!("a removal is recorded for a row that was never loaded")
+                    }
+                };
+                Ok((key, change))
+            })
+            .collect::<anyhow::Result<_>>()?;
+        let unchanged = changes.iter().filter(|c| c.1.is_none()).count();
+        let mut rows: Vec<(u64, RowChange)> = changes
+            .into_iter()
+            .filter_map(|(key, change)| Some((key, change?)))
+            .collect();
+        rows.sort_unstable_by_key(|r| r.0);
+        Ok((rows, unchanged))
+    }
+
+    /// The loaded row of `key` without one occurrence of each of `removed`,
+    /// followed by `added`. Fails unless `key` is loaded and its loaded row
+    /// holds every removed ID.
+    pub(in super::super) fn patched_loaded_row(
+        &self,
+        key: K,
+        removed: &[u64],
+        added: &[u64],
+    ) -> anyhow::Result<Vec<I>> {
+        let base = self.base.as_ref().context("a patch needs a loaded row")?;
+        let row = base.find(key.raw()).context("a patch needs a loaded row")?;
+        let mut pending: IdHashMap<u64, usize> = IdHashMap::default();
+        for &id in removed {
+            *pending.entry(id).or_default() += 1;
+        }
+        let view = base.value(row);
+        let mut out: Vec<I> = Vec::with_capacity(view.ids_len() + added.len());
+        for id in super::value::view_ids::<I>(view) {
+            match pending.get_mut(&id.raw()) {
+                Some(count) if *count > 0 => *count -= 1,
+                _ => out.push(id),
+            }
+        }
+        anyhow::ensure!(
+            pending.values().all(|&count| count == 0),
+            "a patch removes IDs that the loaded row does not hold"
+        );
+        out.extend(added.iter().map(|&id| I::from_raw(id)));
+        Ok(out)
+    }
+}
+
+/// A changed row relative to its loaded row.
+pub(in super::super) enum RowChange {
+    Removed,
+    /// The row in the runtime value encoding.
+    Stored(Vec<u8>),
+    /// IDs removed from and added to the loaded row of an unordered list.
+    Patched {
+        removed: Vec<u64>,
+        added: Vec<u64>,
+    },
+}
+
+/// The multisets removed from and added to `loaded` to give `current`, or
+/// `None` when they hold the same IDs. Pairs equal positions, or matches
+/// `current` as a subsequence of `loaded`, whichever leaves fewer IDs (the
+/// first covers swap removals and appends, the second order-keeping
+/// removals), then cancels IDs that the pairing both removes and adds, so a
+/// mix of both kinds of edit still gives the exact multiset difference. The
+/// linear pairing keeps the sort small for the usual small edits of long
+/// rows.
+fn list_patch(loaded: &[u64], current: &[u64]) -> Option<(Vec<u64>, Vec<u64>)> {
+    if loaded == current {
+        return None;
+    }
+    let positional = {
+        let common = loaded.len().min(current.len());
+        let mut removed: Vec<u64> = loaded[common..].to_vec();
+        let mut added: Vec<u64> = current[common..].to_vec();
+        for (a, b) in loaded[..common].iter().zip(&current[..common]) {
+            if a != b {
+                removed.push(*a);
+                added.push(*b);
+            }
+        }
+        (removed, added)
+    };
+    let subsequence = {
+        let (mut i, mut j) = (0, 0);
+        let mut removed = Vec::new();
+        while i < loaded.len() && j < current.len() {
+            if loaded[i] == current[j] {
+                j += 1;
+            } else {
+                removed.push(loaded[i]);
+            }
+            i += 1;
+        }
+        removed.extend_from_slice(&loaded[i..]);
+        (removed, current[j..].to_vec())
+    };
+    let size = |p: &(Vec<u64>, Vec<u64>)| p.0.len() + p.1.len();
+    let (mut removed, mut added) = if size(&positional) <= size(&subsequence) {
+        positional
+    } else {
+        subsequence
+    };
+    removed.sort_unstable();
+    added.sort_unstable();
+    let (mut net_removed, mut net_added) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < removed.len() && j < added.len() {
+        match removed[i].cmp(&added[j]) {
+            std::cmp::Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+            std::cmp::Ordering::Less => {
+                net_removed.push(removed[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                net_added.push(added[j]);
+                j += 1;
+            }
+        }
+    }
+    net_removed.extend_from_slice(&removed[i..]);
+    net_added.extend_from_slice(&added[j..]);
+    if net_removed.is_empty() && net_added.is_empty() {
+        return None;
+    }
+    Some((net_removed, net_added))
 }
 impl<K: Key> Map<K, String> {
     /// Keys identify string contents. Probe loaded maps before entry() to avoid
@@ -550,6 +757,10 @@ impl<K: Key> Set<K> {
     pub(in super::super) fn iter(&self) -> impl Iterator<Item = SetRef<'_, K>> {
         self.0.iter().map(SetRef)
     }
+    /// The map of members to `()` that backs the set.
+    pub(in super::super) fn as_map(&self) -> &Map<K, ()> {
+        &self.0
+    }
 }
 impl<K: Key> Serialize for Set<K> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -599,6 +810,32 @@ mod tests {
     use crate::target_graph::TargetGraph;
     use crate::target_graph::TargetId;
     use crate::types::TargetHash;
+
+    #[rstest]
+    #[case::append(&[1, 2, 3], &[1, 2, 3, 4], &[], &[4])]
+    #[case::swap_removal(&[1, 2, 3, 4, 5], &[1, 5, 3, 4], &[2], &[])]
+    #[case::order_keeping_removal(&[1, 2, 3, 4, 5], &[1, 3, 5], &[2, 4], &[])]
+    #[case::swap_and_order_keeping_removal(&[1, 2, 3, 4, 5, 6, 7], &[1, 7, 3, 5, 6, 8], &[2, 4], &[8])]
+    #[case::duplicate_removed_once(&[1, 2, 2, 3], &[1, 2, 3], &[2], &[])]
+    #[case::duplicate_added(&[1, 2], &[1, 2, 2], &[], &[2])]
+    fn list_patches_are_exact_multiset_differences(
+        #[case] loaded: &[u64],
+        #[case] current: &[u64],
+        #[case] removed: &[u64],
+        #[case] added: &[u64],
+    ) {
+        assert_eq!(
+            list_patch(loaded, current),
+            Some((removed.to_vec(), added.to_vec()))
+        );
+    }
+
+    #[test]
+    fn reordered_or_equal_lists_need_no_patch() {
+        assert_eq!(list_patch(&[1, 2, 3], &[1, 2, 3]), None);
+        assert_eq!(list_patch(&[1, 2, 3], &[3, 1, 2]), None);
+        assert_eq!(list_patch(&[1, 2, 2], &[2, 1, 2]), None);
+    }
 
     #[test]
     fn json_visitors_preserve_duplicate_and_error_contracts() -> anyhow::Result<()> {
