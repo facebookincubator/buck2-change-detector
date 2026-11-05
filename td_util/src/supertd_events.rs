@@ -215,9 +215,15 @@ macro_rules! scuba {
     };
 }
 
-/// Flushes the `supertd_events` Scuba client when dropped.
+/// Flushes the `supertd_events` Scuba client and emits deferred log summaries when dropped.
 ///
 /// Make sure this value is in scope for the duration of the program so that we
 /// flush the client upon program exit.
 #[must_use]
 pub struct ScubaClientGuard(());
+
+impl Drop for ScubaClientGuard {
+    fn drop(&mut self) {
+        crate::logging::symlink_packages::finish();
+    }
+}

@@ -19,6 +19,8 @@ use std::time::Instant;
 use serde::Serialize;
 use tracing::info;
 
+pub mod symlink_packages;
+
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn init_logger_start_time() {

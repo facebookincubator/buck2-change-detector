@@ -298,7 +298,7 @@ impl TargetGraph {
     }
 
     pub fn canonicalization_stats(&self) -> CanonicalizationStats {
-        self.canonicalization_stats
+        self.canonicalization_stats.clone()
     }
 
     pub fn set_canonicalization_stats(&mut self, stats: CanonicalizationStats) {

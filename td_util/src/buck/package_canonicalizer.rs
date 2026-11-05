@@ -27,19 +27,22 @@ use crate::cells::CellInfo;
 use crate::types::CellPath;
 use crate::types::ProjectRelativePath;
 
-#[derive(Debug, Default, Clone, Copy, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct CanonicalizationStats {
     pub labels_rewritten: usize,
     pub packages_resolved_through_symlink: usize,
     pub resolver_errors: usize,
+    pub alias_packages_sample: Vec<String>,
 }
 
 const RESOLVER_ERROR_SAMPLE_LIMIT: usize = 10;
+const ALIAS_PACKAGE_SAMPLE_LIMIT: usize = 50;
 
 #[derive(Default)]
 struct ResolverDiagnostics {
     kinds: BTreeMap<String, usize>,
     samples: Vec<(Option<ErrorKind>, String)>,
+    alias_packages_sample: Vec<String>,
 }
 
 /// Resolves directory aliases once per package, without changing ordinary cell spellings.
@@ -81,6 +84,12 @@ impl<'a> PackageCanonicalizer<'a> {
                 .packages_resolved_through_symlink
                 .load(Ordering::Relaxed),
             resolver_errors: self.resolver_errors.load(Ordering::Relaxed),
+            alias_packages_sample: self
+                .diagnostics
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .alias_packages_sample
+                .clone(),
         }
     }
 
@@ -106,6 +115,7 @@ impl<'a> PackageCanonicalizer<'a> {
                     Ok(Some(canonical)) => {
                         self.packages_resolved_through_symlink
                             .fetch_add(1, Ordering::Relaxed);
+                        self.record_alias(package, &canonical);
                         Some(canonical)
                     }
                     Ok(None) => None,
@@ -133,13 +143,29 @@ impl<'a> PackageCanonicalizer<'a> {
         }
     }
 
+    fn record_alias(&self, alias: &str, canonical: &str) {
+        td_util::logging::symlink_packages::record(alias, canonical);
+        let mut diagnostics = self
+            .diagnostics
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if diagnostics.alias_packages_sample.len() < ALIAS_PACKAGE_SAMPLE_LIMIT {
+            diagnostics
+                .alias_packages_sample
+                .push(format!("{alias} -> {canonical}"));
+        }
+    }
+
     fn record_error(&self, package: Option<&str>, path: &str, error: &anyhow::Error) {
         self.resolver_errors.fetch_add(1, Ordering::Relaxed);
         let kind = error
             .downcast_ref::<std::io::Error>()
             .map(|error| error.kind());
         let path = path.to_owned();
-        let mut diagnostics = self.diagnostics.lock().expect("resolver diagnostics lock");
+        let mut diagnostics = self
+            .diagnostics
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let kind_name = kind.map_or_else(|| "NonIo".to_owned(), |kind| format!("{kind:?}"));
         *diagnostics.kinds.entry(kind_name).or_default() += 1;
         if diagnostics.samples.len() < RESOLVER_ERROR_SAMPLE_LIMIT
@@ -175,7 +201,10 @@ impl<'a> PackageCanonicalizer<'a> {
 impl Drop for PackageCanonicalizer<'_> {
     fn drop(&mut self) {
         if self.resolver_errors.load(Ordering::Relaxed) > 0 {
-            let diagnostics = self.diagnostics.lock().expect("resolver diagnostics lock");
+            let diagnostics = self
+                .diagnostics
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             info!(resolver_error_kinds = ?diagnostics.kinds, "Package canonicalization error breakdown");
         }
     }
@@ -274,9 +303,132 @@ mod root_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs;
+    use std::io;
+    use std::io::Write;
     use std::os::unix::fs::symlink;
+    use std::sync::Arc;
 
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn names_resolved_aliases_in_logs_and_event_samples() {
+        // This fixture shares the process-wide log cap with other resolver fixtures.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("code/real/pkg")).unwrap();
+        symlink("real", tmp.path().join("code/logged_alias")).unwrap();
+        let cells = CellInfo::parse(
+            &serde_json::json!({"root": tmp.path(), "code": tmp.path().join("code")}).to_string(),
+        )
+        .unwrap();
+        // With one live dispatcher, tracing-core caches a new callsite's interest from the
+        // registering thread's default, so a parallel test could disable this callsite.
+        let _second_dispatcher =
+            tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_target(false)
+            .with_writer({
+                let buffer = buffer.clone();
+                move || buffer.clone()
+            })
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..2 {
+                let canonicalizer = PackageCanonicalizer::new(&cells).unwrap();
+                for label in ["code//logged_alias/pkg:lib", "code//logged_alias/pkg:other"] {
+                    assert_eq!(
+                        canonicalizer.canonical_label(label),
+                        Some(label.replace("logged_alias", "real")),
+                    );
+                }
+                let data = serde_json::to_value(canonicalizer.stats()).unwrap();
+                assert_eq!(
+                    data["alias_packages_sample"],
+                    serde_json::json!(["code//logged_alias/pkg -> code//real/pkg"]),
+                );
+                assert_eq!(data["labels_rewritten"], 2);
+                assert_eq!(data["packages_resolved_through_symlink"], 1);
+                assert_eq!(data["resolver_errors"], 0);
+            }
+        });
+        assert_eq!(
+            String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap(),
+            " INFO canonicalized symlink package code//logged_alias/pkg -> code//real/pkg\n",
+        );
+    }
+
+    #[test]
+    fn caps_alias_samples_without_losing_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("code/real")).unwrap();
+        symlink("real", tmp.path().join("code/sample_alias")).unwrap();
+        let cells = CellInfo::parse(
+            &serde_json::json!({"root": tmp.path(), "code": tmp.path().join("code")}).to_string(),
+        )
+        .unwrap();
+        let canonicalizer = PackageCanonicalizer::new(&cells).unwrap();
+        for index in 0..ALIAS_PACKAGE_SAMPLE_LIMIT + 3 {
+            for _ in 0..2 {
+                assert_eq!(
+                    canonicalizer.canonical_label(&format!("code//sample_alias/pkg{index}:lib")),
+                    Some(format!("code//real/pkg{index}:lib")),
+                );
+            }
+        }
+        let stats = canonicalizer.stats();
+        assert_eq!(stats.labels_rewritten, (ALIAS_PACKAGE_SAMPLE_LIMIT + 3) * 2);
+        assert_eq!(
+            stats.packages_resolved_through_symlink,
+            ALIAS_PACKAGE_SAMPLE_LIMIT + 3
+        );
+        assert_eq!(stats.resolver_errors, 0);
+        assert_eq!(
+            stats.alias_packages_sample,
+            (0..ALIAS_PACKAGE_SAMPLE_LIMIT)
+                .map(|index| format!("code//sample_alias/pkg{index} -> code//real/pkg{index}"))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn poisoned_diagnostics_do_not_block_resolution() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("code/real")).unwrap();
+        symlink("real", tmp.path().join("code/poisoned_alias")).unwrap();
+        let cells = CellInfo::parse(
+            &serde_json::json!({"root": tmp.path(), "code": tmp.path().join("code")}).to_string(),
+        )
+        .unwrap();
+        let canonicalizer = PackageCanonicalizer::new(&cells).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = canonicalizer.diagnostics.lock().unwrap();
+            panic!("poison diagnostics");
+        }));
+        assert_eq!(
+            canonicalizer.canonical_label("code//poisoned_alias:lib"),
+            Some("code//real:lib".to_owned()),
+        );
+        assert_eq!(
+            canonicalizer.stats().alias_packages_sample,
+            ["code//poisoned_alias -> code//real"],
+        );
+    }
 
     #[test]
     fn preserves_labels_when_a_path_component_is_a_file() {
