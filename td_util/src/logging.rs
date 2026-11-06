@@ -42,16 +42,26 @@ pub fn step(name: &str) {
 }
 
 pub fn rss_mb() -> u64 {
+    status_mb("VmRSS:").unwrap_or(0)
+}
+
+/// The peak resident set size of this process, or `None` where the system
+/// does not report it.
+pub fn peak_rss_mb() -> Option<u64> {
+    status_mb("VmHWM:")
+}
+
+/// A memory field of `/proc/self/status`, in MiB.
+fn status_mb(field: &str) -> Option<u64> {
     std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|s| {
             s.lines()
-                .find(|l| l.starts_with("VmRSS:"))
+                .find(|l| l.starts_with(field))
                 .and_then(|l| l.split_whitespace().nth(1))
                 .and_then(|v| v.parse::<u64>().ok())
         })
         .map(|kb| kb / 1024)
-        .unwrap_or(0)
 }
 
 /// Structured logging helpers for parallel pipelines.

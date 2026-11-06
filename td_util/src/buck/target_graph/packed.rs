@@ -30,6 +30,7 @@ pub(super) use field::ReadRef;
 pub(super) use field::RowChange;
 pub(super) use field::Set;
 use rayon::prelude::*;
+pub(super) use value::TextValue;
 pub(super) use value::Value;
 
 use super::CheckCancelled;
@@ -275,6 +276,7 @@ mod tests {
     use super::super::RawId;
     use super::super::TargetId;
     use super::*;
+    use crate::ci_attributes::CiAttributesJson;
 
     #[test]
     fn duplicate_keys_are_rejected_in_probe_and_sorted_indexes() {
@@ -336,6 +338,21 @@ mod tests {
             );
         }
         assert!(map.get(&TargetId::from_raw(1)).is_none());
+        Ok(())
+    }
+    /// A graph load builds its CI attributes field with `Map::from_chunks`,
+    /// so a stored row that `CiAttributesJson::validate` rejects fails the
+    /// load.
+    #[test]
+    fn a_load_rejects_a_ci_attributes_row_with_whitespace_around_it() -> anyhow::Result<()> {
+        let mut chunk = Chunk::new(1);
+        chunk.push(1, &String::from(r#" {"args":{}}"#))?;
+        let error = Map::<TargetId, CiAttributesJson>::from_chunks(vec![chunk], &|| Ok(()))
+            .expect_err("a padded row fails the load");
+        assert!(
+            format!("{error:#}").contains("CI attributes have whitespace around the JSON object"),
+            "{error:#}"
+        );
         Ok(())
     }
     #[test]

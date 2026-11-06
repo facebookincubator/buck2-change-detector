@@ -30,6 +30,7 @@ use super::super::IdDashMap;
 use super::super::IdHashMap;
 use super::Column;
 use super::Key;
+use super::TextValue;
 use super::Value;
 use super::View;
 
@@ -96,17 +97,17 @@ impl<'a, K: Key, V: Value> ReadRef<'a, K, V> {
         }
     }
 }
-impl<K: Key> ReadRef<'_, K, String> {
+impl<K: Key, V: TextValue> ReadRef<'_, K, V> {
     pub(in super::super) fn text_bytes(&self) -> &[u8] {
         match &self.source {
             Source::Native(bytes) => bytes.bytes,
-            _ => self.changed_value().as_bytes(),
+            _ => self.changed_value().text().as_bytes(),
         }
     }
     pub(in super::super) fn text(&self) -> &str {
         match &self.source {
             Source::Native(bytes) => std::str::from_utf8(bytes.bytes).expect("validated text"),
-            _ => self.changed_value().as_str(),
+            _ => self.changed_value().text(),
         }
     }
 }

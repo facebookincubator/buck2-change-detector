@@ -24,6 +24,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use td_util::no_hash::BuildNoHash;
 
+use crate::ci_attributes::CiAttributesJson;
 use crate::package_canonicalizer::CanonicalizationStats;
 use crate::types::Package;
 use crate::types::PatternType;
@@ -48,8 +49,9 @@ fn is_ci_hint_rule_type_name(full: &str) -> bool {
 /// Version of the serialized graph and its persisted-state contract.
 /// Version 15 stores the graph in the layout of `dense`.
 /// Version 16 canonicalizes directory-symlink target labels at ingestion.
+/// Version 17 stores the CI attributes of CI targets.
 /// Increment for incompatible layout or graph-maintenance changes.
-pub const SCHEMA_VERSION: u32 = 16;
+pub const SCHEMA_VERSION: u32 = 17;
 
 /// Keeps decoding and runtime construction independent of the caller's closure type.
 type CheckCancelled<'a> = dyn Fn() -> anyhow::Result<()> + Sync + 'a;
@@ -243,6 +245,8 @@ pub struct TargetGraph {
     targets_with_sudo_label: Set<TargetId>,
     ci_hint_to_affected: Map<TargetId, Vec<TargetId>>,
     affected_to_ci_hints: Map<TargetId, Vec<TargetId>>,
+    /// The CI attributes of the CI targets that have them.
+    target_id_to_ci_attributes: Map<TargetId, CiAttributesJson>,
 }
 
 impl TargetGraph {
@@ -469,6 +473,41 @@ impl TargetGraph {
         iter_ci_deps_recursive_patterns,
         target_id_to_ci_deps_recursive_patterns
     );
+
+    /// Stores the CI attributes of a target, or removes them when
+    /// `attributes` is `None`. Returns whether the stored attributes changed.
+    pub fn store_ci_attributes(
+        &self,
+        target_id: TargetId,
+        attributes: Option<CiAttributesJson>,
+    ) -> bool {
+        let Some(json) = attributes else {
+            return self.target_id_to_ci_attributes.discard(&target_id);
+        };
+        // The stored row stays borrowed only within this statement.
+        let unchanged = self
+            .target_id_to_ci_attributes
+            .get(&target_id)
+            .is_some_and(|stored| stored.text_bytes() == json.as_str().as_bytes());
+        if !unchanged {
+            self.target_id_to_ci_attributes.insert(target_id, json);
+        }
+        !unchanged
+    }
+
+    pub fn get_ci_attributes(&self, target_id: TargetId) -> Option<CiAttributesJson> {
+        self.target_id_to_ci_attributes
+            .get(&target_id)
+            .map(|v| v.to_owned_value())
+    }
+
+    pub fn has_ci_attributes(&self, target_id: TargetId) -> bool {
+        self.target_id_to_ci_attributes.contains_key(&target_id)
+    }
+
+    pub fn ci_attributes_len(&self) -> usize {
+        self.target_id_to_ci_attributes.len()
+    }
 
     /// Creates the same edges as `add_rdep(dep, target_id)` for every dep, but
     /// takes the forward-edge vector as is, so a vector built at the right size
@@ -700,6 +739,7 @@ impl TargetGraph {
             .discard(&target_id);
         self.target_id_to_ci_deps_recursive_patterns
             .discard(&target_id);
+        self.target_id_to_ci_attributes.discard(&target_id);
         self.targets_with_sudo_label.discard(&target_id);
         self.minimized_targets.discard(&target_id);
     }
@@ -879,6 +919,7 @@ impl TargetGraph {
                 .discard(&target_id);
             self.target_id_to_ci_deps_recursive_patterns
                 .discard(&target_id);
+            self.target_id_to_ci_attributes.discard(&target_id);
             self.targets_with_sudo_label.discard(&target_id);
             self.minimized_targets.discard(&target_id);
         }
@@ -1196,6 +1237,7 @@ impl TargetGraph {
             ),
             ("ci_hint_to_affected", self.ci_hint_to_affected_len()),
             ("affected_to_ci_hints", self.affected_to_ci_hints_len()),
+            ("ci_attributes", self.ci_attributes_len()),
         ];
 
         tracing::info!("TargetGraph DashMap sizes:");
@@ -2577,6 +2619,53 @@ mod tests {
         assert!(graph.get_ci_hint_affected(ci_hint_id).is_none());
         assert!(graph.get_affecting_ci_hints(dest_id).is_none());
         assert!(graph.get_minimized_target(ci_hint_id).is_none());
+    }
+
+    /// Both ways to remove a target drop its CI attributes, and other
+    /// targets keep theirs.
+    #[test]
+    fn removing_a_target_drops_its_ci_attributes() {
+        let graph = TargetGraph::new();
+        let attributes = || serde_json::from_str::<CiAttributesJson>(r#"{"args":{}}"#).ok();
+        let [single, batched, survivor] = [
+            "fbcode//a:single",
+            "fbcode//a:batched",
+            "fbcode//a:survivor",
+        ]
+        .map(|label| {
+            let id = store_target_with_rule_type(&graph, label, crate::ci_attributes::CI_SKYCASTLE);
+            graph.store_ci_attributes(id, attributes());
+            id
+        });
+
+        graph.remove_target(single);
+        graph.remove_targets_batch(&[batched].into_iter().collect());
+
+        assert_eq!(graph.get_ci_attributes(single), None);
+        assert_eq!(graph.get_ci_attributes(batched), None);
+        assert_eq!(graph.get_ci_attributes(survivor), attributes());
+    }
+
+    /// The graph stores `CI_ATTRIBUTES`, and only `SCHEMA_VERSION` separates
+    /// cached graphs. A cached graph keeps the attributes of the version that
+    /// built it, so a change of `CI_ATTRIBUTES` needs a new `SCHEMA_VERSION`.
+    /// Change both values here together.
+    #[test]
+    fn ci_attributes_change_with_the_schema_version() {
+        assert_eq!(
+            (SCHEMA_VERSION, crate::ci_attributes::CI_ATTRIBUTES),
+            (
+                17,
+                [
+                    "args",
+                    "artifact_flags",
+                    "workflow_deps",
+                    "ci_diff_gk",
+                    "ci_diff_source_predicate",
+                    "ci_phabricator_diff_tags",
+                ]
+            )
+        );
     }
 
     #[test]

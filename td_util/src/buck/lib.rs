@@ -14,6 +14,7 @@
 use td_util::supertd_events;
 pub mod cancellation;
 pub mod cells;
+pub mod ci_attributes;
 pub mod config;
 mod deserializers;
 pub mod flattened_select;

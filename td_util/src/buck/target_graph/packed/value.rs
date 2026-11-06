@@ -20,6 +20,7 @@ use super::INDEX_BYTES;
 use super::Key;
 use super::View;
 use super::WORD_BYTES;
+use crate::ci_attributes::CiAttributesJson;
 use crate::types::TargetHash;
 
 const INLINE_IDS: usize = 16;
@@ -54,6 +55,34 @@ impl Value for String {
         std::str::from_utf8(bytes)
             .expect("validated string")
             .to_owned()
+    }
+}
+/// A value stored as its UTF-8 text, so that a row reads as text without
+/// materializing the value.
+pub(in super::super) trait TextValue: Value {
+    fn text(&self) -> &str;
+}
+impl TextValue for String {
+    fn text(&self) -> &str {
+        self
+    }
+}
+impl TextValue for CiAttributesJson {
+    fn text(&self) -> &str {
+        self.as_str()
+    }
+}
+impl Value for CiAttributesJson {
+    fn encode(&self, out: &mut dyn Write) -> std::io::Result<()> {
+        out.write_all(self.as_str().as_bytes())
+    }
+    fn validate(bytes: &[u8]) -> anyhow::Result<()> {
+        CiAttributesJson::validate(bytes)
+    }
+    fn decode(bytes: &[u8]) -> Self {
+        CiAttributesJson::from_validated(
+            std::str::from_utf8(bytes).expect("validated CI attributes"),
+        )
     }
 }
 impl<K: Key> Value for Vec<K> {
@@ -248,5 +277,37 @@ impl Value for StoredMinimizedTarget {
                 TargetHash::new(std::str::from_utf8(&bytes[HASH_OFFSET..]).expect("validated hash"))
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decoding a stored CI attributes row panics unless `validate` accepted
+    /// it, and each accepted row decodes to its own text, so a comparison of
+    /// row text and a comparison of decoded values agree.
+    #[test]
+    fn every_ci_attributes_row_that_validates_decodes_to_its_own_text() {
+        let rows: [&[u8]; 9] = [
+            br#"{"args":{"a":[1,{"b":null}]}}"#,
+            b"{\"args\":\"\\u00e9 \\ud83d\\ude00\"}",
+            "{\"args\":\"\u{e9}\"}".as_bytes(),
+            b"{\"args\":\"\xff\"}",
+            b"{\"args\":\"\\ud800\"}",
+            br#"{"args":"#,
+            b"[]",
+            br#" {"args":{}}"#,
+            b"{\"args\":{}}\n",
+        ];
+        let mut accepted = 0;
+        for row in rows {
+            if <CiAttributesJson as Value>::validate(row).is_ok() {
+                accepted += 1;
+                let decoded = <CiAttributesJson as Value>::decode(row);
+                assert_eq!(decoded.as_str().as_bytes(), row);
+            }
+        }
+        assert_eq!(accepted, 3);
     }
 }

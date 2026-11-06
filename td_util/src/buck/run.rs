@@ -11,6 +11,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::LazyLock;
 
 use anyhow::Context as _;
 use audit::audit_cell_arguments;
@@ -315,19 +316,33 @@ pub fn targets_arguments_v2() -> Vec<&'static str> {
         .collect()
 }
 
+/// The attributes that BTDv2 reads from every target, including
+/// `ci_attributes::CI_ATTRIBUTES`, which the graph stores for CI targets.
+static OUTPUT_ATTRIBUTE_V2: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "--output-attribute=^buck\\.deps$|^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^buck\\.target_hash$|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$|{}",
+        crate::ci_attributes::ci_attributes_regex()
+    )
+});
+
 /// Options shared by BTDv2 `buck2 targets` invocations, excluding the subcommand.
 pub fn targets_options_v2() -> Vec<&'static str> {
-    const OPTIONS: &[&str] = &[
-        "--streaming",
-        "--keep-going",
-        "--no-cache",
-        "--show-unconfigured-target-hash",
-        "--json-lines",
-        "--output-attribute=^buck\\.deps$|^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^buck\\.target_hash$|^name$|^labels$|^ci_srcs$|^ci_srcs_must_match$|^ci_deps$",
-        "--imports",
-        "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
-    ];
-    [OPTIONS, HASH_NORMALIZED_CONFIGS].concat()
+    [
+        &[
+            "--streaming",
+            "--keep-going",
+            "--no-cache",
+            "--show-unconfigured-target-hash",
+            "--json-lines",
+        ][..],
+        &[OUTPUT_ATTRIBUTE_V2.as_str()],
+        &[
+            "--imports",
+            "--package-values-regex=^citadel\\.labels$|^test_config_unification\\.rollout$",
+        ],
+        HASH_NORMALIZED_CONFIGS,
+    ]
+    .concat()
 }
 
 #[cfg(test)]

@@ -60,7 +60,8 @@ use super::*;
 
 const MAGIC: [u8; 4] = *b"TGRD";
 /// Version of the layout above. A reader rejects every other version.
-const DELTA_VERSION: u32 = 1;
+/// Version 2 adds the `ci_attributes` field.
+const DELTA_VERSION: u32 = 2;
 const REMOVED: u8 = 0;
 const STORED: u8 = 1;
 const PATCHED: u8 = 2;
@@ -107,6 +108,7 @@ macro_rules! delta_fields {
             ("hint_to_affected", ci_hint_to_affected, unordered),
             ("affected_to_hints", affected_to_ci_hints, unordered),
             ("sudo", targets_with_sudo_label, set),
+            ("ci_attributes", target_id_to_ci_attributes, whole),
         }
     };
 }
@@ -738,6 +740,7 @@ mod tests {
     use super::super::dense::tests::snapshot;
     use super::super::dense::tests::target;
     use super::*;
+    use crate::ci_attributes::CiAttributesJson;
 
     const IDENTITY: &[u8] = b"schema=15;bytes=1;blake3=00";
 
@@ -753,7 +756,7 @@ mod tests {
 
     /// Changes every field of a loaded graph: new and removed targets with new
     /// strings, moved edges with rdeps, labels, ci_srcs, package errors, sudo,
-    /// file imports and ci_hint edges.
+    /// file imports, ci_hint edges and CI attributes.
     fn mutate(graph: &TargetGraph) {
         let new = graph.store_target("fbcode//0:new ✓");
         let rule = graph.store_rule_type("0:new_rule");
@@ -801,6 +804,11 @@ mod tests {
         graph.add_ci_hint_edge(hint, relabelled);
         let defs = graph.store_file("fbcode/0/new.bzl");
         graph.add_file_import(defs, graph.store_file("fbcode/a/defs0.bzl"));
+        // CI attributes: a new row, a changed row and a removed row.
+        let ci_attributes = |json: &str| serde_json::from_str::<CiAttributesJson>(json).ok();
+        graph.store_ci_attributes(new, ci_attributes(r#"{"args":{"workflow":"new ✓"}}"#));
+        graph.store_ci_attributes(relabelled, ci_attributes(r#"{"ci_diff_gk":"changed"}"#));
+        graph.store_ci_attributes(target("fbcode//é:ñ"), None);
         // A no-op override: read-modify-write that restores the loaded value.
         let untouched = target("fbcode//a:t10");
         let rdeps = graph.get_rdeps(untouched).expect("rdeps");
@@ -1087,6 +1095,9 @@ mod tests {
         let package = base.store_package("fbcode//p");
         base.add_error(package, "old".to_owned());
         base.mark_target_has_sudo_label(users[1]);
+        let ci_attributes = |json: &str| serde_json::from_str::<CiAttributesJson>(json).ok();
+        base.store_ci_attributes(users[3], ci_attributes(r#"{"args":{"v":1}}"#));
+        base.store_ci_attributes(users[4], ci_attributes(r#"{"ci_diff_gk":"gk"}"#));
 
         let changed = read(&snapshot_bytes(&base));
         let new = changed.store_target("fbcode//n:n");
@@ -1115,6 +1126,9 @@ mod tests {
         changed.unmark_target_has_sudo_label(users[1]);
         changed.mark_target_has_sudo_label(users[2]);
         changed.remove_targets_batch(&[users[7]].into_iter().collect());
+        changed.store_ci_attributes(new, ci_attributes(r#"{"workflow_deps":["//n:d"]}"#));
+        changed.store_ci_attributes(users[3], ci_attributes(r#"{"args":{"v":2}}"#));
+        changed.store_ci_attributes(users[4], None);
         changed
     }
 
@@ -1132,7 +1146,7 @@ mod tests {
         // this digest: give it a new DELTA_VERSION, then update the digest.
         assert_eq!(
             (DELTA_VERSION, body.len(), fnv1a(&body)),
-            (1, 519, 0xd44c_e3a8_3ead_31e9),
+            (2, 606, 0x2017_01f8_48d6_1545),
             "the graph delta body encoding changed"
         );
         Ok(())
@@ -1358,6 +1372,24 @@ mod tests {
         1,
         [7u64.to_le_bytes().as_slice(), &[PATCHED, 0, 0]].concat(),
         "a patch needs a loaded row"
+    )]
+    #[case::ci_attributes_that_are_not_an_object(
+        "ci_attributes",
+        1,
+        stored_target(7, b"[]"),
+        "CI attributes are not a JSON object"
+    )]
+    #[case::ci_attributes_that_are_not_utf8(
+        "ci_attributes",
+        1,
+        stored_target(7, b"{\"args\":\"\xff\"}"),
+        "CI attributes are not UTF-8 text"
+    )]
+    #[case::ci_attributes_with_whitespace_around_the_object(
+        "ci_attributes",
+        1,
+        stored_target(7, br#" {"args":{}}"#),
+        "CI attributes have whitespace around the JSON object"
     )]
     fn a_malformed_body_is_rejected(
         #[case] field: &str,

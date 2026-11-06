@@ -597,6 +597,13 @@ impl<'g> Tables<'g> {
         missing
             .target
             .extend(self.target.missing(sudo.into_par_iter()));
+        missing.target.extend(
+            self.target.missing(
+                g.target_id_to_ci_attributes
+                    .par_iter()
+                    .map(|e| e.key().raw()),
+            ),
+        );
         missing.rule.extend(
             self.rule
                 .missing(minimized().map(|e| e.value().rule_type.raw())),
@@ -1084,6 +1091,7 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
         targets_with_sudo_label,
         ci_hint_to_affected: _,
         affected_to_ci_hints: _,
+        target_id_to_ci_attributes,
     } = graph;
 
     let dangling_label_sets = minimized_targets
@@ -1215,6 +1223,17 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
         }
     });
     out.stream("errors", blocks)?;
+    drop(rows);
+
+    let rows = Rows::new(target_id_to_ci_attributes, &tables.target, layout, |m| {
+        m.text_bytes().len()
+    });
+    let blocks = rows.blocks::<0, 1, _>(|_, v, [], [text]| {
+        let json = v.text_bytes();
+        put(text, json.len() as u64);
+        text.extend_from_slice(json);
+    });
+    out.stream("ci_attributes", blocks)?;
     drop(rows);
     out.finish()
 }
@@ -1686,6 +1705,20 @@ impl<'a> Reader<'a> {
             .with_context(|| format!("building runtime field {}", stream.stream.name))?;
         Ok(field)
     }
+
+    /// `Map::from_chunks` validates each entry as a JSON object.
+    fn ci_attributes(self, target_ids: &[u64]) -> anyhow::Result<Map<TargetId, CiAttributesJson>> {
+        let stream = self.stream("ci_attributes")?;
+        let chunks = stream.packed_entries(0, 1, |key, _, data, chunk| {
+            let text = &mut data[0];
+            let len = text.index()?;
+            chunk.data.extend_from_slice(text.bytes(len)?);
+            at(target_ids, key as u64)
+        })?;
+        let field = Map::from_chunks(chunks, self.check_cancelled)
+            .with_context(|| format!("building runtime field {}", stream.stream.name))?;
+        Ok(field)
+    }
 }
 
 impl Checked<'_> {
@@ -1866,6 +1899,7 @@ pub(super) fn read(
     let mut sets_and_targets = None;
     let mut targets_with_sudo_label = None;
     let mut package_id_to_errors = None;
+    let mut target_id_to_ci_attributes = None;
     macro_rules! read_lists {
         ($(($name:literal, $field:ident, $k:ident, $v:ident, $mode:ident)),* $(,)?) => {{
             $(let mut $field = None;)*
@@ -1886,6 +1920,7 @@ pub(super) fn read(
                 });
                 s.spawn(|_| targets_with_sudo_label = Some(r.sudo(&ids.target)));
                 s.spawn(|_| package_id_to_errors = Some(r.errors(&ids.package)));
+                s.spawn(|_| target_id_to_ci_attributes = Some(r.ci_attributes(&ids.target)));
             });
             let (label_set_id_to_labels, minimized_targets) =
                 sets_and_targets.expect("spawned above")?;
@@ -1903,6 +1938,7 @@ pub(super) fn read(
                 ci_deps_pattern_id_to_string: ci_deps_pattern_id_to_string.expect("spawned above")?,
                 package_id_to_errors: package_id_to_errors.expect("spawned above")?,
                 targets_with_sudo_label: targets_with_sudo_label.expect("spawned above")?,
+                target_id_to_ci_attributes: target_id_to_ci_attributes.expect("spawned above")?,
                 $($field: $field.expect("spawned above")?,)*
             }
         }};
@@ -1944,7 +1980,7 @@ fn streams_read() -> Vec<(String, StreamKind)> {
     }
     list_streams!(lists);
     streams.extend(
-        ["labelsets", "minimized", "sudo", "errors"]
+        ["labelsets", "minimized", "sudo", "errors", "ci_attributes"]
             .map(|name| (name.to_owned(), StreamKind::Plain)),
     );
     streams
@@ -2005,8 +2041,8 @@ pub(super) mod tests {
 
     /// Exercises every field: hub and duplicate edges, ids without a string in
     /// every id space, a target hash that is not 32 hex characters, non-ASCII
-    /// strings, order-sensitive lists, sudo, errors, ci_hint edges and file
-    /// imports.
+    /// strings, order-sensitive lists, sudo, errors, ci_hint edges, file
+    /// imports and CI attributes.
     pub(in super::super) fn sample_graph() -> TargetGraph {
         let g = TargetGraph::new();
         let rule = g.store_rule_type("prelude//rules.bzl:cxx_library");
@@ -2072,6 +2108,13 @@ pub(super) mod tests {
         g.add_ci_deps_package_pattern(targets[2], patterns[1]);
         g.add_ci_deps_package_pattern(targets[2], patterns[0]);
         g.add_ci_deps_recursive_pattern(targets[3], patterns[0]);
+        g.store_ci_attributes(
+            targets[4],
+            Some(ci_attributes(
+                r#"{"args":{"workflow":"build ✓"},"workflow_deps":[":a"]}"#,
+            )),
+        );
+        g.store_ci_attributes(unicode, Some(ci_attributes(r#"{"ci_diff_gk":"gk_é"}"#)));
         let files: Vec<FileId> = (0..4)
             .map(|i| g.store_file(&format!("fbcode/a/defs{i}.bzl")))
             .collect();
@@ -2100,7 +2143,12 @@ pub(super) mod tests {
         g.add_ci_deps_recursive_pattern(targets[9], "fbcode//ghost/...".parse().unwrap());
         g.add_error("fbcode//ghost_pkg".parse().unwrap(), "lost".to_owned());
         g.mark_target_has_sudo_label(ghost);
+        g.store_ci_attributes(target("fbcode//ghost:ci"), Some(ci_attributes("{}")));
         g
+    }
+
+    fn ci_attributes(json: &str) -> CiAttributesJson {
+        serde_json::from_str(json).expect("a JSON object")
     }
 
     /// Every field in a canonical form. Unordered edge lists are sorted, so
@@ -2114,11 +2162,18 @@ pub(super) mod tests {
         ordered: Vec<BTreeMap<u64, Vec<u64>>>,
         errors: BTreeMap<u64, Vec<String>>,
         sudo: BTreeSet<u64>,
+        ci_attributes: BTreeMap<u64, String>,
     }
 
     fn strings<K: RawId>(f: &Map<K, String>) -> BTreeMap<u64, String> {
         f.iter()
             .map(|e| (e.key().raw(), e.to_owned_value()))
+            .collect()
+    }
+
+    fn json_texts(f: &Map<TargetId, CiAttributesJson>) -> BTreeMap<u64, String> {
+        f.iter()
+            .map(|e| (e.key().raw(), e.value().as_str().to_owned()))
             .collect()
     }
 
@@ -2161,6 +2216,7 @@ pub(super) mod tests {
             targets_with_sudo_label,
             ci_hint_to_affected,
             affected_to_ci_hints,
+            target_id_to_ci_attributes,
         } = g;
         Snapshot {
             strings: vec![
@@ -2201,6 +2257,7 @@ pub(super) mod tests {
                 .map(|e| (e.key().raw(), e.to_owned_value()))
                 .collect(),
             sudo: targets_with_sudo_label.iter().map(|k| k.raw()).collect(),
+            ci_attributes: json_texts(target_id_to_ci_attributes),
         }
     }
 
@@ -2258,6 +2315,26 @@ pub(super) mod tests {
         let graph = sample_graph();
         let loaded = decode(&encode(&graph, layout)).expect("read");
         assert_eq!(snapshot(&loaded), snapshot(&graph));
+    }
+
+    /// A JSON graph checks its CI attributes as the binary layout does.
+    #[test]
+    fn a_json_graph_rejects_ci_attributes_that_are_not_objects() {
+        let mut json = serde_json::to_value(sample_graph()).expect("serialize");
+        let attributes = json["target_id_to_ci_attributes"]
+            .as_object_mut()
+            .expect("a map of CI attributes");
+        let key = attributes.keys().next().expect("an entry").clone();
+        attributes.insert(key, serde_json::Value::from(r#"{"args":"#));
+
+        let error = serde_json::from_value::<TargetGraph>(json).expect_err("not an object");
+
+        assert!(
+            error
+                .to_string()
+                .contains("CI attributes are not a JSON object"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2337,6 +2414,12 @@ pub(super) mod tests {
             );
             graph.add_target_to_package(graph.store_package("fbcode//a"), restored);
             graph.add_rdep(new, restored);
+            graph.store_ci_attributes(
+                target("fbcode//a:t04"),
+                Some(ci_attributes(r#"{"args":{"workflow":"edited"}}"#)),
+            );
+            graph.store_ci_attributes(target("fbcode//é:ñ"), None);
+            graph.store_ci_attributes(new, Some(ci_attributes(r#"{"ci_diff_gk":"new"}"#)));
         }
         assert_eq!(snapshot(&fresh), snapshot(&loaded));
         let expected = encode(&fresh, layout);
