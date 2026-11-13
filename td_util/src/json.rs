@@ -111,20 +111,97 @@ where
     R: Read + Send,
     T: for<'a> Deserialize<'a> + Send,
 {
-    let mut per_chunk = map_reader_chunks_indexed(reader, parse_chunk::<T>)?;
-    per_chunk.sort_unstable_by_key(|(index, _)| *index);
-    Ok(concat_chunks(
-        per_chunk.into_iter().map(|(_, chunk)| chunk).collect(),
-    ))
+    let per_chunk = map_reader_chunks_pipeline_ordered(reader, parse_chunk::<T>)?;
+    Ok(concat_chunks(per_chunk))
+}
+
+/// The records of a JSON-lines file that a filter kept.
+#[derive(Debug)]
+pub struct FilteredLines<T> {
+    /// The kept records in file order, each with its index among the records
+    /// of the file. Empty lines are not records.
+    pub records: Vec<(usize, T)>,
+    /// How many records the file holds, kept or not.
+    pub total: usize,
+}
+
+impl<T> FilteredLines<T> {
+    /// The kept records in file order, without their indices.
+    pub fn into_records(self) -> Vec<T> {
+        self.records.into_iter().map(|(_, record)| record).collect()
+    }
+}
+
+/// Read a JSON-lines file keeping only the records `keep` accepts.
+///
+/// Every record is still parsed, but each one `keep` rejects is dropped as
+/// soon as it is parsed, so peak memory is the kept records plus the chunk
+/// buffers of [`read_reader_lines_chunked_pipeline`], not the whole file
+/// deserialized. `keep` runs on the rayon pool, concurrently and in arbitrary
+/// order.
+pub fn read_file_lines_filtered<T, F>(filename: &Path, keep: F) -> anyhow::Result<FilteredLines<T>>
+where
+    T: for<'a> Deserialize<'a> + Send,
+    F: Fn(&T) -> bool + Sync,
+{
+    let inner = || -> anyhow::Result<FilteredLines<T>> {
+        read_reader_lines_filtered_sized(
+            open_file(filename)?,
+            CHUNK_SIZE,
+            BUFFERS_PER_THREAD,
+            &keep,
+        )
+    };
+    inner().with_context(|| format!("When reading file `{}`", filename.display()))
+}
+
+fn read_reader_lines_filtered_sized<R, T, F>(
+    reader: R,
+    chunk_size: usize,
+    buffers_per_thread: usize,
+    keep: F,
+) -> anyhow::Result<FilteredLines<T>>
+where
+    R: Read + Send,
+    T: for<'a> Deserialize<'a> + Send,
+    F: Fn(&T) -> bool + Sync,
+{
+    // Each chunk yields its record count and the records it keeps, indexed
+    // within the chunk; the indices become indices in the file once the
+    // counts of the chunks before it are known.
+    let chunks =
+        map_reader_chunks_ordered_sized(reader, chunk_size, buffers_per_thread, |chunk| {
+            json_lines(chunk).enumerate().try_fold(
+                (0, Vec::new()),
+                |(count, mut kept), (index, line)| {
+                    let record = parse_line_bytes::<T>(line)?;
+                    if keep(&record) {
+                        kept.push((index, record));
+                    }
+                    anyhow::Ok((count + 1, kept))
+                },
+            )
+        })?;
+
+    let mut records = Vec::new();
+    let mut total = 0;
+    for (count, kept) in chunks {
+        records.extend(
+            kept.into_iter()
+                .map(|(index_in_chunk, record)| (total + index_in_chunk, record)),
+        );
+        total += count;
+    }
+    Ok(FilteredLines { records, total })
+}
+
+fn parse_line_bytes<T: for<'a> Deserialize<'a>>(line: &[u8]) -> anyhow::Result<T> {
+    serde_json::from_slice::<T>(line)
+        .with_context(|| format!("When parsing line: {}", String::from_utf8_lossy(line)))
 }
 
 fn parse_chunk<T: for<'a> Deserialize<'a>>(chunk: &[u8]) -> anyhow::Result<Vec<T>> {
-    json_lines(chunk)
-        .map(|line| {
-            serde_json::from_slice::<T>(line)
-                .with_context(|| format!("When parsing line: {}", String::from_utf8_lossy(line)))
-        })
-        .collect()
+    json_lines(chunk).map(parse_line_bytes).collect()
 }
 
 /// `flatten().collect()` cannot size the result from a nested iterator, so
@@ -160,11 +237,41 @@ where
 
 /// Buffer size of [`map_reader_chunks_pipeline`]; a longer record gets a
 /// buffer of its own length.
-const CHUNK_SIZE: usize = 16 * 1024 * 1024;
+pub const CHUNK_SIZE: usize = 16 * 1024 * 1024;
 /// Peak memory of [`map_reader_chunks_pipeline`] is
 /// `CHUNK_SIZE * BUFFERS_PER_THREAD * threads`, plus any record longer than
 /// a chunk.
 const BUFFERS_PER_THREAD: usize = 2;
+
+/// [`map_reader_chunks_pipeline`], with the results in the order of the
+/// chunks in the input.
+pub fn map_reader_chunks_pipeline_ordered<R, T, F>(
+    reader: R,
+    per_chunk: F,
+) -> anyhow::Result<Vec<T>>
+where
+    R: Read + Send,
+    T: Send,
+    F: Fn(&[u8]) -> anyhow::Result<T> + Sync,
+{
+    map_reader_chunks_ordered_sized(reader, CHUNK_SIZE, BUFFERS_PER_THREAD, per_chunk)
+}
+
+fn map_reader_chunks_ordered_sized<R, T, F>(
+    reader: R,
+    chunk_size: usize,
+    buffers_per_thread: usize,
+    per_chunk: F,
+) -> anyhow::Result<Vec<T>>
+where
+    R: Read + Send,
+    T: Send,
+    F: Fn(&[u8]) -> anyhow::Result<T> + Sync,
+{
+    let mut results = map_reader_chunks_sized(reader, chunk_size, buffers_per_thread, per_chunk)?;
+    results.sort_unstable_by_key(|(index, _)| *index);
+    Ok(results.into_iter().map(|(_, result)| result).collect())
+}
 
 /// [`map_reader_chunks_pipeline`], with each result paired with the position
 /// of its chunk in the input; the results are still in arbitrary order.
@@ -616,11 +723,14 @@ mod tests {
     use crate::json::MAX_RECORDS_PER_BLOCK;
     use crate::json::RenderShape;
     use crate::json::json_lines;
+    use crate::json::map_reader_chunks_ordered_sized;
     use crate::json::map_reader_chunks_sized;
     use crate::json::read_file_lines;
+    use crate::json::read_file_lines_filtered;
     use crate::json::read_file_lines_parallel;
     use crate::json::read_file_lines_parallel_ordered;
     use crate::json::read_reader_lines_chunked_pipeline_ordered;
+    use crate::json::read_reader_lines_filtered_sized;
     use crate::json::render_in_order_with_shape;
     use crate::json::write_json_lines;
     use crate::json::write_json_lines_parallel;
@@ -975,6 +1085,114 @@ mod tests {
         };
         let (a, b) = pool.install(|| rayon::join(read, read));
         assert_eq!((a, b), (20_000, 20_000));
+    }
+
+    /// Records numbered `0..n`, several per 64-byte chunk.
+    fn numbered_records(n: u64) -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| format!("{{\"n\":{i}}}\n").into_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn ordered_chunk_map_returns_results_in_input_order() {
+        let input = numbered_records(2_000);
+        let firsts = map_reader_chunks_ordered_sized(input.as_slice(), 64, 1, |chunk| {
+            let first = json_lines(chunk).next().context("a chunk holds a record")?;
+            anyhow::Ok(serde_json::from_slice::<HashMap<String, u64>>(first)?["n"])
+        })
+        .unwrap();
+
+        // Every chunk starts on a record, and the chunks are disjoint and in
+        // input order, so their first records must be strictly increasing.
+        assert!(firsts.len() > 1, "64-byte chunks split 2,000 records");
+        assert_eq!(firsts[0], 0);
+        assert!(
+            firsts.windows(2).all(|pair| pair[0] < pair[1]),
+            "{firsts:?}"
+        );
+    }
+
+    #[test]
+    fn filtered_read_keeps_file_order_and_record_indices_across_chunks() {
+        let input = numbered_records(1_000);
+        let filtered = read_reader_lines_filtered_sized(
+            input.as_slice(),
+            64,
+            1,
+            |record: &HashMap<String, u64>| record["n"] % 100 == 7,
+        )
+        .unwrap();
+
+        assert_eq!(filtered.total, 1_000);
+        // A record's index is its own number, so a kept record's index
+        // must match its `n` even though its chunk's position in the file is
+        // only known once every chunk has been parsed.
+        let kept: Vec<(usize, u64)> = filtered
+            .records
+            .iter()
+            .map(|(index, record)| (*index, record["n"]))
+            .collect();
+        let expected: Vec<(usize, u64)> =
+            (0..10).map(|k| (k * 100 + 7, k as u64 * 100 + 7)).collect();
+        assert_eq!(kept, expected);
+    }
+
+    #[test]
+    fn filtered_read_does_not_count_empty_lines_as_records() {
+        let input = b"{\"n\":0}\n\n{\"n\":1}\n";
+        let filtered =
+            read_reader_lines_filtered_sized(&input[..], 64, 1, |_: &HashMap<String, u64>| true)
+                .unwrap();
+        let kept: Vec<(usize, u64)> = filtered
+            .records
+            .iter()
+            .map(|(index, record)| (*index, record["n"]))
+            .collect();
+        assert_eq!(kept, vec![(0, 0), (1, 1)]);
+        assert_eq!(filtered.total, 2);
+    }
+
+    #[test]
+    fn filtered_read_counts_records_it_keeps_none_of() {
+        let input = numbered_records(300);
+        let filtered = read_reader_lines_filtered_sized(
+            input.as_slice(),
+            64,
+            1,
+            |_: &HashMap<String, u64>| false,
+        )
+        .unwrap();
+        assert_eq!(filtered.total, 300);
+        assert!(filtered.records.is_empty());
+    }
+
+    #[test]
+    fn filtered_file_read_applies_the_predicate_per_record() {
+        let mut file = NamedTempFile::new().unwrap();
+        let data: Vec<i32> = (0..100).collect();
+        write_json_lines(file.as_file_mut(), &data).unwrap();
+
+        let filtered = read_file_lines_filtered::<i32, _>(file.path(), |n| n % 25 == 0).unwrap();
+        assert_eq!(filtered.total, 100);
+        assert_eq!(
+            filtered.records,
+            vec![(0, 0), (25, 25), (50, 50), (75, 75)],
+            "a record's index equals its value here"
+        );
+        assert_eq!(filtered.into_records(), vec![0, 25, 50, 75]);
+    }
+
+    #[test]
+    fn filtered_read_reports_a_malformed_record_even_if_it_would_be_dropped() {
+        let input = b"{\"n\":1}\nnot json\n{\"n\":3}\n";
+        let err =
+            read_reader_lines_filtered_sized(&input[..], 64, 1, |_: &HashMap<String, u64>| false)
+                .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not json"),
+            "the error names the offending line: {err:#}"
+        );
     }
 
     /// Time after which a test that waits for another rayon task fails.
