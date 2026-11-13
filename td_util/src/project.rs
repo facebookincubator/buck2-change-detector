@@ -55,6 +55,7 @@ pub enum TdProject {
     Www,
     Xplat,
     Fasttrack,
+    Nest,
 }
 
 impl TdProject {
@@ -97,6 +98,7 @@ mod tests {
     #[case::waserver(TdProject::Waserver, true)]
     #[case::xplat(TdProject::Xplat, true)]
     #[case::fasttrack(TdProject::Fasttrack, true)]
+    #[case::nest(TdProject::Nest, true)]
     #[case::configerator(TdProject::Configerator, false)]
     #[case::www(TdProject::Www, false)]
     fn test_is_fbsource(#[case] project: TdProject, #[case] expected: bool) {
