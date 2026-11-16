@@ -1138,6 +1138,11 @@ impl TargetGraph {
             .map(|path| f(path.text()))
     }
 
+    /// Whether the graph records any import of `file_id`.
+    pub fn has_file_deps(&self, file_id: FileId) -> bool {
+        self.file_id_to_deps.contains_key(&file_id)
+    }
+
     pub fn get_file_deps(&self, file_id: FileId) -> Option<Vec<FileId>> {
         self.file_id_to_deps
             .get(&file_id)
