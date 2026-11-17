@@ -114,6 +114,7 @@ macro_rules! list_streams {
             ("ci_srcs_mm", target_id_to_ci_srcs_must_match, target, glob, Raw),
             ("cidep_pkg", target_id_to_ci_deps_package_patterns, target, cidep, Raw),
             ("cidep_rec", target_id_to_ci_deps_recursive_patterns, target, cidep, Raw),
+            ("cidep_targets", target_id_to_ci_deps_targets, target, target, Gaps),
             ("hint_to_affected", ci_hint_to_affected, target, target, Gaps),
             ("affected_to_hints", affected_to_ci_hints, target, target, Gaps),
         }
@@ -1088,6 +1089,7 @@ fn write_with(graph: &TargetGraph, writer: &mut dyn Write, layout: Layout) -> an
         target_id_to_ci_srcs_must_match: _,
         target_id_to_ci_deps_package_patterns: _,
         target_id_to_ci_deps_recursive_patterns: _,
+        target_id_to_ci_deps_targets: _,
         targets_with_sudo_label,
         ci_hint_to_affected: _,
         affected_to_ci_hints: _,
@@ -2106,6 +2108,8 @@ pub(super) mod tests {
         g.add_ci_src(targets[1], globs[0]);
         g.add_ci_src_must_match(targets[1], globs[0]);
         g.add_ci_deps_package_pattern(targets[2], patterns[1]);
+        g.add_ci_deps_target(targets[2], targets[7]);
+        g.add_ci_deps_target(targets[3], targets[8]);
         g.add_ci_deps_package_pattern(targets[2], patterns[0]);
         g.add_ci_deps_recursive_pattern(targets[3], patterns[0]);
         g.store_ci_attributes(
@@ -2213,6 +2217,7 @@ pub(super) mod tests {
             target_id_to_ci_srcs_must_match,
             target_id_to_ci_deps_package_patterns,
             target_id_to_ci_deps_recursive_patterns,
+            target_id_to_ci_deps_targets,
             targets_with_sudo_label,
             ci_hint_to_affected,
             affected_to_ci_hints,
@@ -2245,6 +2250,7 @@ pub(super) mod tests {
                 lists(file_id_to_rdeps, true),
                 lists(ci_hint_to_affected, true),
                 lists(affected_to_ci_hints, true),
+                lists(target_id_to_ci_deps_targets, true),
             ],
             ordered: vec![
                 lists(target_id_to_ci_srcs, false),

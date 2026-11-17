@@ -61,7 +61,8 @@ use super::*;
 const MAGIC: [u8; 4] = *b"TGRD";
 /// Version of the layout above. A reader rejects every other version.
 /// Version 2 adds the `ci_attributes` field.
-const DELTA_VERSION: u32 = 2;
+/// Version 3 adds the `cidep_targets` field.
+const DELTA_VERSION: u32 = 3;
 const REMOVED: u8 = 0;
 const STORED: u8 = 1;
 const PATCHED: u8 = 2;
@@ -105,6 +106,7 @@ macro_rules! delta_fields {
             ("ci_srcs_mm", target_id_to_ci_srcs_must_match, whole),
             ("cidep_pkg", target_id_to_ci_deps_package_patterns, whole),
             ("cidep_rec", target_id_to_ci_deps_recursive_patterns, whole),
+            ("cidep_targets", target_id_to_ci_deps_targets, unordered),
             ("hint_to_affected", ci_hint_to_affected, unordered),
             ("affected_to_hints", affected_to_ci_hints, unordered),
             ("sudo", targets_with_sudo_label, set),
@@ -795,6 +797,7 @@ mod tests {
         graph.add_ci_src_must_match(relabelled, graph.store_glob_pattern("0/new/**"));
         graph.add_ci_deps_package_pattern(relabelled, graph.store_ci_deps_pattern("fbcode//0"));
         graph.add_ci_deps_recursive_pattern(relabelled, graph.store_ci_deps_pattern("fbcode//b"));
+        graph.add_ci_deps_target(relabelled, target("fbcode//a:t09"));
         graph.clear_errors(graph.store_package("fbcode//é"));
         graph.add_error(graph.store_package("fbcode//0"), "new error ✓".to_owned());
         graph.unmark_target_has_sudo_label(target("fbcode//a:t02"));
@@ -1146,7 +1149,7 @@ mod tests {
         // this digest: give it a new DELTA_VERSION, then update the digest.
         assert_eq!(
             (DELTA_VERSION, body.len(), fnv1a(&body)),
-            (2, 606, 0x2017_01f8_48d6_1545),
+            (3, 621, 0x9943_60af_2fce_6c24),
             "the graph delta body encoding changed"
         );
         Ok(())

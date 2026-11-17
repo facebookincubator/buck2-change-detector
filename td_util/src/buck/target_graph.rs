@@ -50,8 +50,9 @@ fn is_ci_hint_rule_type_name(full: &str) -> bool {
 /// Version 15 stores the graph in the layout of `dense`.
 /// Version 16 canonicalizes directory-symlink target labels at ingestion.
 /// Version 17 stores the CI attributes of CI targets.
+/// Version 18 stores the specific targets that `ci_deps` names.
 /// Increment for incompatible layout or graph-maintenance changes.
-pub const SCHEMA_VERSION: u32 = 17;
+pub const SCHEMA_VERSION: u32 = 18;
 
 /// Keeps decoding and runtime construction independent of the caller's closure type.
 type CheckCancelled<'a> = dyn Fn() -> anyhow::Result<()> + Sync + 'a;
@@ -242,6 +243,9 @@ pub struct TargetGraph {
     target_id_to_ci_srcs_must_match: Map<TargetId, Vec<GlobPatternId>>,
     target_id_to_ci_deps_package_patterns: Map<TargetId, Vec<CiDepsPatternId>>,
     target_id_to_ci_deps_recursive_patterns: Map<TargetId, Vec<CiDepsPatternId>>,
+    /// The specific targets that a target's `ci_deps` names. They are also
+    /// stored as regular deps; Buck does not hash them as deps.
+    target_id_to_ci_deps_targets: Map<TargetId, Vec<TargetId>>,
     targets_with_sudo_label: Set<TargetId>,
     ci_hint_to_affected: Map<TargetId, Vec<TargetId>>,
     affected_to_ci_hints: Map<TargetId, Vec<TargetId>>,
@@ -472,6 +476,16 @@ impl TargetGraph {
         ci_deps_recursive_patterns_len,
         iter_ci_deps_recursive_patterns,
         target_id_to_ci_deps_recursive_patterns
+    );
+    impl_collection_storage!(
+        TargetId,
+        TargetId,
+        store_ci_deps_targets,
+        add_ci_deps_target,
+        get_ci_deps_targets,
+        ci_deps_targets_len,
+        iter_ci_deps_targets,
+        target_id_to_ci_deps_targets
     );
 
     /// Stores the CI attributes of a target, or removes them when
@@ -739,6 +753,7 @@ impl TargetGraph {
             .discard(&target_id);
         self.target_id_to_ci_deps_recursive_patterns
             .discard(&target_id);
+        self.target_id_to_ci_deps_targets.discard(&target_id);
         self.target_id_to_ci_attributes.discard(&target_id);
         self.targets_with_sudo_label.discard(&target_id);
         self.minimized_targets.discard(&target_id);
@@ -919,6 +934,7 @@ impl TargetGraph {
                 .discard(&target_id);
             self.target_id_to_ci_deps_recursive_patterns
                 .discard(&target_id);
+            self.target_id_to_ci_deps_targets.discard(&target_id);
             self.target_id_to_ci_attributes.discard(&target_id);
             self.targets_with_sudo_label.discard(&target_id);
             self.minimized_targets.discard(&target_id);
@@ -1236,6 +1252,7 @@ impl TargetGraph {
                 "ci_deps_recursive_patterns",
                 self.ci_deps_recursive_patterns_len(),
             ),
+            ("ci_deps_targets", self.ci_deps_targets_len()),
             (
                 "targets_with_sudo_label",
                 self.targets_with_sudo_label_len(),
@@ -2651,6 +2668,31 @@ mod tests {
         assert_eq!(graph.get_ci_attributes(survivor), attributes());
     }
 
+    /// Both ways to remove a target drop the specific targets of its
+    /// `ci_deps`, and other targets keep theirs.
+    #[test]
+    fn removing_a_target_drops_its_ci_deps_targets() {
+        let graph = TargetGraph::new();
+        let named = graph.store_target("fbcode//a:named");
+        let [single, batched, survivor] = [
+            "fbcode//a:single",
+            "fbcode//a:batched",
+            "fbcode//a:survivor",
+        ]
+        .map(|label| {
+            let id = graph.store_target(label);
+            graph.store_ci_deps_targets(id, vec![named]);
+            id
+        });
+
+        graph.remove_target(single);
+        graph.remove_targets_batch(&[batched].into_iter().collect());
+
+        assert_eq!(graph.get_ci_deps_targets(single), None);
+        assert_eq!(graph.get_ci_deps_targets(batched), None);
+        assert_eq!(graph.get_ci_deps_targets(survivor), Some(vec![named]));
+    }
+
     /// The graph stores `CI_ATTRIBUTES`, and only `SCHEMA_VERSION` separates
     /// cached graphs. A cached graph keeps the attributes of the version that
     /// built it, so a change of `CI_ATTRIBUTES` needs a new `SCHEMA_VERSION`.
@@ -2660,7 +2702,7 @@ mod tests {
         assert_eq!(
             (SCHEMA_VERSION, crate::ci_attributes::CI_ATTRIBUTES),
             (
-                17,
+                18,
                 [
                     "args",
                     "artifact_flags",
