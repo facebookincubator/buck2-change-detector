@@ -78,6 +78,8 @@ pub enum Event {
     /// Emitted once per requested mobile incremental-coverage evaluation.
     /// Reports the terminal decision and aggregate target/verifiable counts.
     MOBILE_INCREMENTAL_COVERAGE_DECISION,
+    /// The sentinel-outcome consumer requires this lowercase event name.
+    syntax_only_decision,
     VERSE_SUCCESS,
     VERSE_PG_DEMAND_RESPONSE_VERIFIABLES_COUNT,
     VERSE_PG_GUARANTEED_VERIFIABLES_COUNT,
