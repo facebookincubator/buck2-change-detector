@@ -58,6 +58,8 @@ enum Args {
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Verse(verse_citadel_adaptor::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
+    CheckAdmissionPolicies(selection::check::Args),
+    #[cfg(all(fbcode_build, target_os = "linux"))]
     LlmSelect(llm_select::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Orchestrator(orchestrator::Args),
@@ -166,6 +168,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Targets(args) => targets::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Verse(args) => verse_citadel_adaptor::main(fb, args).await,
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::CheckAdmissionPolicies(args) => selection::check::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::LlmSelect(args) => llm_select::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
