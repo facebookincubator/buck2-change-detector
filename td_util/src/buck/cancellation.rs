@@ -21,6 +21,7 @@ use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Context as _;
 use thiserror::Error;
@@ -121,6 +122,31 @@ impl Cancellation {
         Ok(())
     }
 
+    /// Waits for `duration`, and stops early when cancelled.
+    pub fn sleep(&self, duration: Duration) -> Result<(), Cancelled> {
+        let deadline = Instant::now() + duration;
+        // `cancel` sets the flag and wakes waiters while it holds this mutex,
+        // so a request between the check and the wait is not missed.
+        let mut children = self
+            .state
+            .children
+            .lock()
+            .expect("cancellation mutex poisoned");
+        loop {
+            self.check()?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            children = self
+                .state
+                .wake
+                .wait_timeout(children, remaining)
+                .expect("cancellation mutex poisoned")
+                .0;
+        }
+    }
+
     pub(crate) fn spawn(
         &self,
         spawn: impl FnOnce() -> io::Result<OwnedChild>,
@@ -189,6 +215,43 @@ mod tests {
                 .spawn(|| panic!("cancelled preparations must not spawn"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn sleep_waits_for_its_duration() {
+        let cancellation = Cancellation::default();
+        let started = std::time::Instant::now();
+
+        cancellation.sleep(Duration::from_millis(20)).unwrap();
+
+        assert!(started.elapsed() >= Duration::from_millis(20));
+    }
+
+    #[test]
+    fn cancellation_stops_a_sleep() {
+        let cancellation = Cancellation::default();
+        let sleeper = cancellation.clone();
+        let started = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let sleeper_started = started.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            sleeper_started.wait();
+            sender
+                .send(sleeper.sleep(Duration::from_secs(3600)).is_err())
+                .unwrap()
+        });
+        // Give the sleeper time to start waiting, so that the cancellation
+        // must wake it. A cancellation before the wait also passes.
+        started.wait();
+        std::thread::sleep(Duration::from_millis(100));
+
+        cancellation.cancel().unwrap();
+
+        let cancelled = receiver
+            .recv_timeout(Duration::from_secs(60))
+            .expect("a cancellation must stop the sleep");
+        assert!(cancelled);
+        handle.join().unwrap();
     }
 
     #[test]

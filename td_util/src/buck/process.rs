@@ -25,10 +25,22 @@ use anyhow::Context as _;
 use anyhow::anyhow;
 use td_util::command::BuckClient;
 use tempfile::TempDir;
+use thiserror::Error;
 use tracing::info;
 use tracing::warn;
 
 use crate::cancellation::Cancellation;
+
+/// Buck ran and exited with a failure status. Callers can tell this from
+/// errors in their own handling of Buck's output.
+#[derive(Debug, Error)]
+#[error("Buck command failed with {status}{diagnostic}")]
+pub struct BuckCommandFailed {
+    status: ExitStatus,
+    /// A `; ...` suffix with a link to the build or a failure to read the
+    /// build ID, or empty.
+    diagnostic: String,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 /// Controls how a nested Buck invocation reports diagnostics.
@@ -486,7 +498,7 @@ impl BuckProcess {
         let status = status.with_context(|| format!("waiting for Buck{diagnostic}"))?;
         match (status.success(), output) {
             (true, Ok(output)) => Ok(output),
-            (false, Ok(_)) => Err(anyhow!("Buck command failed with {status}{diagnostic}")),
+            (false, Ok(_)) => Err(BuckCommandFailed { status, diagnostic }.into()),
             (_, Err(error)) => Err(error.context(format!(
                 "Buck stdout processing failed (command {status}){diagnostic}"
             ))),
@@ -818,6 +830,28 @@ mod tests {
             .expect("panic cleanup must finish")
             .expect_err("reader panic must propagate");
         assert_eq!(payload.downcast_ref::<&str>(), Some(&"reader invariant"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_failed_command_is_a_typed_error() {
+        use super::test_support::*;
+
+        let gate = Gate::new();
+        fs::write(gate.directory.path().join("targets"), "exit 3").unwrap();
+        let mut command = BuckCommand::targets(
+            "/bin/sh",
+            None,
+            BuckClient::SupertdBtd,
+            BuckDiagnostics::Inherit,
+        )
+        .unwrap();
+        command.current_dir(gate.directory.path());
+
+        let error = command.spawn().unwrap().wait().unwrap_err();
+
+        assert!(error.is::<BuckCommandFailed>());
+        assert_eq!(error.to_string(), "Buck command failed with exit status: 3");
     }
 
     #[test]
