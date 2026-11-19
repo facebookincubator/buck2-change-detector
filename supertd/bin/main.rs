@@ -160,7 +160,7 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         #[cfg(fbcode_build)]
         Args::Rerun(args) => rerun::main(fb, args).await,
         #[cfg(fbcode_build)]
-        Args::ResolveScope(args) => resolve_scope::main(args),
+        Args::ResolveScope(args) => resolve_scope::main(fb, args),
         #[cfg(fbcode_build)]
         Args::Scheduler(args) => scheduler::main(fb, args).await,
         #[cfg(fbcode_build)]
