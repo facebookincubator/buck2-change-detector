@@ -41,7 +41,7 @@ fn acl_to_tag(acl: &str) -> Option<String> {
 pub struct RestrictedPath {
     /// Repo-relative restricted path prefix (e.g. `"fbcode/genai/secret"`).
     pub path: String,
-    /// ACL names protecting this path (e.g. `["REPO_REGION:repos/hg/fbsource/=titan"]`).
+    /// ACL names protecting this path (e.g. `["REPO_REGION:repos/hg/fbsource/=example"]`).
     pub acls: Vec<String>,
 }
 
@@ -228,9 +228,9 @@ mod tests {
         vec!["tent_genai"]
     )]
     #[case::with_multiple_repo_region_acls(
-        vec![("fbcode/genai", vec!["REPO_REGION:repos/hg/fbsource/=genai", "REPO_REGION:repos/hg/fbsource/=titan"])],
+        vec![("fbcode/genai", vec!["REPO_REGION:repos/hg/fbsource/=genai", "REPO_REGION:repos/hg/fbsource/=example"])],
         "fbcode//genai/secret",
-        vec!["tent_genai", "tent_titan"]
+        vec!["tent_genai", "tent_example"]
     )]
     #[case::non_repo_region_acl_skipped(
         vec![("fbcode/genai", vec!["TIER:my-acl"])],
@@ -244,9 +244,9 @@ mod tests {
     )]
     #[case::no_match(vec![("fbcode/genai", vec!["REPO_REGION:repos/hg/fbsource/=genai"])], "fbcode//other", vec![])]
     #[case::path_differs_from_region_name(
-        vec![("fbcode/secret_project", vec!["REPO_REGION:repos/hg/fbsource/=titan"])],
+        vec![("fbcode/secret_project", vec!["REPO_REGION:repos/hg/fbsource/=example"])],
         "fbcode//secret_project/src",
-        vec!["tent_titan"]
+        vec!["tent_example"]
     )]
     fn test_tenting_tags(
         #[case] entries: Vec<(&str, Vec<&str>)>,
@@ -267,7 +267,7 @@ mod tests {
 
     #[rstest]
     #[case::standard_repo_region("REPO_REGION:repos/hg/fbsource/=genai", Some("tent_genai"))]
-    #[case::different_region("REPO_REGION:repos/hg/fbsource/=titan", Some("tent_titan"))]
+    #[case::different_region("REPO_REGION:repos/hg/fbsource/=example", Some("tent_example"))]
     #[case::different_repo("REPO_REGION:repos/hg/configerator/=secrets", Some("tent_secrets"))]
     #[case::tier_acl_skipped("TIER:my-acl", None)]
     #[case::no_colon_skipped("malformed", None)]
