@@ -111,6 +111,7 @@ pub enum Event {
     TENTING_FAILURE,
     TENTING_SUCCESS,
     TENTING_SCS_CALL,
+    PRIORITY_LANE_NODES,
     XGBOOST_LASER_STAT,
     /// Emitted when a Laser target-feature query returns per-key retryable
     /// failures (timeout / transport / no-leaf). Previously these were
