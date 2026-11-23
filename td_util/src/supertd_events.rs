@@ -53,6 +53,9 @@ pub enum Event {
     /// registered dynamically through `SubstepRecorder`, so new scoped work is
     /// included without extending this event's fixed schema.
     RANKER_SUBSTEP_TIMING,
+    /// Emitted once per ranker run with SuperCuts selection on: the tests the
+    /// per-test maps would leave out, or why the run can leave out none.
+    SUPERCUTS_SELECTION,
     SCHEDULER_SUCCESS,
     SCHEDULER_FAILURE,
     /// Per-phase timing breakdown for a scheduler run. Emitted alongside
