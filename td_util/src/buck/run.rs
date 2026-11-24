@@ -30,7 +30,6 @@ use crate::process::BuckDiagnostics;
 use crate::types::CellPath;
 use crate::types::Package;
 use crate::types::ProjectRelativePath;
-use crate::types::TargetLabel;
 use crate::types::TargetPattern;
 
 /// A struct to represent running Buck2 commands.
@@ -243,10 +242,10 @@ impl Buck2 {
         self.run_with_atfile(owners_arguments(), changes, extra_args, "owners query")
     }
 
-    pub fn target_attributes(
+    pub fn target_attributes<T: AsRef<str>>(
         &mut self,
         extra_args: &[String],
-        targets: &[TargetLabel],
+        targets: &[T],
     ) -> anyhow::Result<String> {
         self.run_with_atfile(
             target_attributes_arguments(),
@@ -321,7 +320,7 @@ pub fn owners_arguments() -> Vec<&'static str> {
 
 static TARGET_ATTRIBUTES_OUTPUT_ATTRIBUTE: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "--output-attribute=^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^name$|^labels$|^ci_srcs_must_match$|{}",
+        "--output-attribute=^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^buck\\.deps$|^name$|^labels$|^ci_srcs_must_match$|{}",
         crate::ci_attributes::ci_attributes_regex()
     )
 });
