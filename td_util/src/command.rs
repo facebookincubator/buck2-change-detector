@@ -101,6 +101,8 @@ pub enum BuckClient {
     SupertdGraphSelect,
     /// `supertd llm-select`.
     SupertdLlmSelect,
+    /// `supertd ptd`.
+    SupertdPtd,
     /// `supertd proof-store`.
     SupertdProofStore,
     /// `supertd ranker`.

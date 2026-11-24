@@ -30,6 +30,7 @@ use crate::process::BuckDiagnostics;
 use crate::types::CellPath;
 use crate::types::Package;
 use crate::types::ProjectRelativePath;
+use crate::types::TargetLabel;
 use crate::types::TargetPattern;
 
 /// A struct to represent running Buck2 commands.
@@ -242,6 +243,19 @@ impl Buck2 {
         self.run_with_atfile(owners_arguments(), changes, extra_args, "owners query")
     }
 
+    pub fn target_attributes(
+        &mut self,
+        extra_args: &[String],
+        targets: &[TargetLabel],
+    ) -> anyhow::Result<String> {
+        self.run_with_atfile(
+            target_attributes_arguments(),
+            targets,
+            extra_args,
+            "target attributes lookup",
+        )
+    }
+
     /// Read package values (including `visibility_cap`) for a set of packages.
     /// Returns package-keyed JSON: `{"cell//pkg": {"visibility_cap": ...}, ...}`.
     ///
@@ -305,6 +319,23 @@ pub fn owners_arguments() -> Vec<&'static str> {
     [PREFIX, HASH_NORMALIZED_CONFIGS].concat()
 }
 
+static TARGET_ATTRIBUTES_OUTPUT_ATTRIBUTE: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "--output-attribute=^buck\\.type$|^buck\\.package$|^buck\\.package_values$|^buck\\.oncall$|^name$|^labels$|^ci_srcs_must_match$|{}",
+        crate::ci_attributes::ci_attributes_regex()
+    )
+});
+
+pub fn target_attributes_arguments() -> Vec<&'static str> {
+    [
+        &["targets", "--json-lines"][..],
+        &[TARGET_ATTRIBUTES_OUTPUT_ATTRIBUTE.as_str()],
+        &["--package-values-regex=^citadel\\.labels$"],
+        HASH_NORMALIZED_CONFIGS,
+    ]
+    .concat()
+}
+
 /// Optimized variant of `targets_arguments` for BTDv2/graph_compressor.
 ///
 /// Excludes `buck.inputs`, `tests`, and `remote_execution` from the output
@@ -351,6 +382,27 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn test_target_attributes_fail_on_any_broken_target_and_read_the_gate() {
+        let arguments = target_attributes_arguments();
+        assert_eq!(arguments[0], "targets");
+        assert!(
+            !arguments.contains(&"--keep-going"),
+            "a broken owner must fail the lookup, not drop out of it"
+        );
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument.contains("^ci_srcs_must_match$"))
+        );
+        assert!(
+            HASH_NORMALIZED_CONFIGS
+                .iter()
+                .all(|config| arguments.contains(config)),
+            "the lookup keeps the owners query's daemon configuration"
+        );
+    }
 
     #[test]
     fn test_owners_command() {
