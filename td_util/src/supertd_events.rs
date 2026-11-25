@@ -44,6 +44,8 @@ pub enum Event {
     /// Terminal publication event, including skips and failures. Success requires
     /// both the Manifold object and saved-state XDB record to be available.
     BTD_GRAPH_PUBLICATION_FINISHED,
+    /// Terminal event for an attempted compact neighborhood publication.
+    BTD_COMPACT_GRAPH_PUBLICATION_FINISHED,
     BTD_SUCCESS,
     BTD_SCOPE_CREATED,
     GRAPH_COMPRESSOR_SUCCESS,
