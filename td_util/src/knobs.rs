@@ -20,7 +20,18 @@ pub fn check_boolean_knob(_name: &str) -> bool {
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
 pub fn check_boolean_knob(name: &str) -> bool {
-    eval_cached(name, None, None).unwrap_or(false)
+    read_boolean_knob(name).unwrap_or(false)
+}
+
+/// Reads a boolean knob and preserves a missing or failed value.
+#[cfg(any(not(fbcode_build), not(target_os = "linux")))]
+pub fn read_boolean_knob(_name: &str) -> Option<bool> {
+    None
+}
+
+#[cfg(all(fbcode_build, target_os = "linux"))]
+pub fn read_boolean_knob(name: &str) -> Option<bool> {
+    eval_cached(name, None, None)
 }
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
@@ -105,14 +116,19 @@ pub fn check_boolean_knob_with_switch_and_consistent_pass_rate(
     eval_cached(name, hash_val, switch_val).unwrap_or(default)
 }
 
+pub fn check_integer_knob(name: &str, default_value: i64) -> i64 {
+    read_integer_knob(name).unwrap_or(default_value)
+}
+
+/// Reads an integer knob and preserves a missing or failed value.
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
-pub fn check_integer_knob(_name: &str, default_value: i64) -> i64 {
-    default_value
+pub fn read_integer_knob(_name: &str) -> Option<i64> {
+    None
 }
 
 #[cfg(all(fbcode_build, target_os = "linux"))]
-pub fn check_integer_knob(name: &str, default_value: i64) -> i64 {
-    get_cached(name, None).unwrap_or(default_value)
+pub fn read_integer_knob(name: &str) -> Option<i64> {
+    get_cached(name, None)
 }
 
 #[cfg(any(not(fbcode_build), not(target_os = "linux")))]
