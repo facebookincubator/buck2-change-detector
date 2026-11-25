@@ -570,6 +570,26 @@ impl TargetGraph {
             .push(target_id);
     }
 
+    /// Stored regular neighbor counts, read without copying or traversing the lists.
+    pub fn regular_neighbor_counts(&self, target_id: TargetId) -> (usize, usize) {
+        (
+            self.target_id_to_deps
+                .get(&target_id)
+                .map_or(0, |list| list.ids_len()),
+            self.target_id_to_rdeps
+                .get(&target_id)
+                .map_or(0, |list| list.ids_len()),
+        )
+    }
+
+    /// Visits each regular reverse dependency without copying the stored list.
+    /// The visitor runs under a read lock and must not write to the rdeps map.
+    pub fn for_each_rdep(&self, target_id: TargetId, visitor: impl FnMut(TargetId)) {
+        if let Some(rdeps) = self.target_id_to_rdeps.get(&target_id) {
+            rdeps.for_each_id(visitor);
+        }
+    }
+
     pub fn get_rdeps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
         self.target_id_to_rdeps
             .get(&target_id)
@@ -664,6 +684,14 @@ impl TargetGraph {
             .filter(|entry| is_ci_hint_rule_type_name(entry.text()))
             .map(|entry| *entry.key())
             .collect()
+    }
+
+    /// Visits each direct dependency without copying the stored list.
+    /// The visitor runs under a read lock and must not write to the deps map.
+    pub fn for_each_dep(&self, target_id: TargetId, visitor: impl FnMut(TargetId)) {
+        if let Some(deps) = self.target_id_to_deps.get(&target_id) {
+            deps.for_each_id(visitor);
+        }
     }
 
     pub fn get_deps(&self, target_id: TargetId) -> Option<Vec<TargetId>> {
@@ -2028,6 +2056,31 @@ mod tests {
 
         graph.set_deps(t, vec![d3]);
         assert_eq!(graph.get_deps(t).unwrap(), vec![d3]);
+    }
+
+    #[test]
+    fn neighbor_visitors_match_copied_lists() {
+        let graph = TargetGraph::new();
+        let t = graph.store_target("fbcode//a:t");
+        let d1 = graph.store_target("fbcode//b:d1");
+        let d2 = graph.store_target("fbcode//c:d2");
+        let r = graph.store_target("fbcode//d:r");
+        graph.store_deps_with_rdeps(t, vec![d1, d2]);
+        graph.store_deps_with_rdeps(r, vec![t]);
+
+        let mut deps = Vec::new();
+        graph.for_each_dep(t, |id| deps.push(id));
+        assert_eq!(deps, graph.get_deps(t).unwrap());
+        let mut rdeps = Vec::new();
+        graph.for_each_rdep(t, |id| rdeps.push(id));
+        assert_eq!(rdeps, graph.get_rdeps(t).unwrap());
+        assert_eq!(graph.regular_neighbor_counts(t), (2, 1));
+
+        let mut visited = 0;
+        graph.for_each_dep(d1, |_| visited += 1);
+        graph.for_each_rdep(r, |_| visited += 1);
+        assert_eq!(visited, 0, "targets without stored edges visit nothing");
+        assert_eq!(graph.regular_neighbor_counts(d1), (0, 1));
     }
 
     #[test]
