@@ -66,6 +66,8 @@ enum Args {
     #[cfg(all(fbcode_build, target_os = "linux"))]
     Ptd(ptd::Args),
     #[cfg(all(fbcode_build, target_os = "linux"))]
+    PtdAudit(ptd::audit::Args),
+    #[cfg(all(fbcode_build, target_os = "linux"))]
     ProofStore(proof_store_cli::Args),
     #[cfg(fbcode_build)]
     Select(select::Args),
@@ -178,6 +180,8 @@ pub async fn main(fb: FacebookInit) -> ExitCode {
         Args::Orchestrator(args) => orchestrator::main(fb, args).await,
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::Ptd(args) => ptd::main(args).await,
+        #[cfg(all(fbcode_build, target_os = "linux"))]
+        Args::PtdAudit(args) => ptd::audit::main(args),
         #[cfg(all(fbcode_build, target_os = "linux"))]
         Args::ProofStore(args) => proof_store_cli::main(fb, args).await,
         #[cfg(fbcode_build)]
