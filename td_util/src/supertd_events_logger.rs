@@ -15,6 +15,10 @@ pub use linux::*;
 #[cfg(not(target_os = "linux"))]
 pub use non_linux::*;
 
+pub fn build_revision() -> &'static str {
+    build_info::BuildInfo::get_revision()
+}
+
 #[cfg(not(target_os = "linux"))]
 mod non_linux {
     use std::env;
